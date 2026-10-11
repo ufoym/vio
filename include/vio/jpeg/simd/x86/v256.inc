@@ -1,0 +1,89 @@
+// vio::jpeg::simd::x86 - 256-bit integer vector operations (AVX2), with the
+// interface of v128.inc.  Every operation acts on the two 128-bit lanes
+// independently (AVX2's unpack/pack/byte-shift instructions already do), so
+// a lane-generic kernel processes two independent groups of data per vector.
+// Included inside namespace vio::jpeg::simd::avx2 in an AVX2 target region.
+
+struct V {
+  using T = __m256i;
+  static constexpr int kLanes = 2;
+
+  static VIO_INLINE T zero() { return _mm256_setzero_si256(); }
+  static VIO_INLINE T set1_8(int v) { return _mm256_set1_epi8(static_cast<char>(v)); }
+  static VIO_INLINE T set1_16(int v) { return _mm256_set1_epi16(static_cast<short>(v)); }
+  static VIO_INLINE T set1_32(int v) { return _mm256_set1_epi32(v); }
+  static VIO_INLINE T set2_16(int a, int b) {
+    return _mm256_set1_epi32(static_cast<int>((static_cast<unsigned>(b) << 16) |
+                                              (static_cast<unsigned>(a) & 0xFFFF)));
+  }
+
+  static VIO_INLINE T loadu(const void* p) {
+    return _mm256_loadu_si256(static_cast<const T*>(p));
+  }
+  static VIO_INLINE void storeu(void* p, T v) { _mm256_storeu_si256(static_cast<T*>(p), v); }
+  static VIO_INLINE T loadu_lanes(const void* p, std::ptrdiff_t stride) {
+    const char* c = static_cast<const char*>(p);
+    return _mm256_inserti128_si256(
+        _mm256_castsi128_si256(_mm_loadu_si128(reinterpret_cast<const __m128i*>(c))),
+        _mm_loadu_si128(reinterpret_cast<const __m128i*>(c + stride)), 1);
+  }
+  static VIO_INLINE void storeu_lanes(void* p, std::ptrdiff_t stride, T v) {
+    char* c = static_cast<char*>(p);
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(c), _mm256_castsi256_si128(v));
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(c + stride), _mm256_extracti128_si256(v, 1));
+  }
+
+  static VIO_INLINE T add_8(T a, T b) { return _mm256_add_epi8(a, b); }
+  static VIO_INLINE T add_16(T a, T b) { return _mm256_add_epi16(a, b); }
+  static VIO_INLINE T add_32(T a, T b) { return _mm256_add_epi32(a, b); }
+  static VIO_INLINE T sub_16(T a, T b) { return _mm256_sub_epi16(a, b); }
+  static VIO_INLINE T sub_32(T a, T b) { return _mm256_sub_epi32(a, b); }
+  static VIO_INLINE T adds_16(T a, T b) { return _mm256_adds_epi16(a, b); }
+  static VIO_INLINE T mullo_16(T a, T b) { return _mm256_mullo_epi16(a, b); }
+  static VIO_INLINE T mulhi_16(T a, T b) { return _mm256_mulhi_epi16(a, b); }
+  static VIO_INLINE T madd_16(T a, T b) { return _mm256_madd_epi16(a, b); }
+
+  template <int N> static VIO_INLINE T slli_16(T a) { return _mm256_slli_epi16(a, N); }
+  template <int N> static VIO_INLINE T srli_16(T a) { return _mm256_srli_epi16(a, N); }
+  template <int N> static VIO_INLINE T srai_16(T a) { return _mm256_srai_epi16(a, N); }
+  template <int N> static VIO_INLINE T slli_32(T a) { return _mm256_slli_epi32(a, N); }
+  template <int N> static VIO_INLINE T srli_32(T a) { return _mm256_srli_epi32(a, N); }
+  template <int N> static VIO_INLINE T srai_32(T a) { return _mm256_srai_epi32(a, N); }
+  template <int I> static VIO_INLINE T shuffle_32(T a) { return _mm256_shuffle_epi32(a, I); }
+  template <int N> static VIO_INLINE T bslli(T a) { return _mm256_slli_si256(a, N); }
+  template <int N> static VIO_INLINE T bsrli(T a) { return _mm256_srli_si256(a, N); }
+
+  static VIO_INLINE T unpacklo_8(T a, T b) { return _mm256_unpacklo_epi8(a, b); }
+  static VIO_INLINE T unpackhi_8(T a, T b) { return _mm256_unpackhi_epi8(a, b); }
+  static VIO_INLINE T unpacklo_16(T a, T b) { return _mm256_unpacklo_epi16(a, b); }
+  static VIO_INLINE T unpackhi_16(T a, T b) { return _mm256_unpackhi_epi16(a, b); }
+  static VIO_INLINE T unpacklo_32(T a, T b) { return _mm256_unpacklo_epi32(a, b); }
+  static VIO_INLINE T unpackhi_32(T a, T b) { return _mm256_unpackhi_epi32(a, b); }
+  static VIO_INLINE T unpacklo_64(T a, T b) { return _mm256_unpacklo_epi64(a, b); }
+  static VIO_INLINE T unpackhi_64(T a, T b) { return _mm256_unpackhi_epi64(a, b); }
+  static VIO_INLINE T packs_32(T a, T b) { return _mm256_packs_epi32(a, b); }
+  static VIO_INLINE T packs_16(T a, T b) { return _mm256_packs_epi16(a, b); }
+  static VIO_INLINE T packus_16(T a, T b) { return _mm256_packus_epi16(a, b); }
+
+  static VIO_INLINE T and_(T a, T b) { return _mm256_and_si256(a, b); }
+  static VIO_INLINE T or_(T a, T b) { return _mm256_or_si256(a, b); }
+  static VIO_INLINE T xor_(T a, T b) { return _mm256_xor_si256(a, b); }
+  static VIO_INLINE T andnot(T a, T b) { return _mm256_andnot_si256(a, b); }
+  static VIO_INLINE T cmpeq_16(T a, T b) { return _mm256_cmpeq_epi16(a, b); }
+  static VIO_INLINE T cmpgt_16(T a, T b) { return _mm256_cmpgt_epi16(a, b); }
+
+  static VIO_INLINE T mulhi_u16(T a, T b) { return _mm256_mulhi_epu16(a, b); }
+
+  // Endianness-neutral helpers (byte k = k-th byte in memory).
+  // Bytes 0-7 / 8-15 zero-extended to 16 bits.
+  static VIO_INLINE T widenlo_u8(T a) { return unpacklo_8(a, zero()); }
+  static VIO_INLINE T widenhi_u8(T a) { return unpackhi_8(a, zero()); }
+  // Even- / odd-numbered bytes zero-extended to 16 bits.
+  static VIO_INLINE T even_u8(T a) { return and_(a, set1_16(0xFF)); }
+  static VIO_INLINE T odd_u8(T a) { return srli_16<8>(a); }
+  // Inverse of even_u8/odd_u8 for 16-bit values < 256.
+  static VIO_INLINE T interleave_u8(T even, T odd) { return or_(even, slli_16<8>(odd)); }
+  // 16-bit elements 0-3 / 4-7 as 32-bit values times 65536.
+  static VIO_INLINE T lo16_shl16(T a) { return unpacklo_16(zero(), a); }
+  static VIO_INLINE T hi16_shl16(T a) { return unpackhi_16(zero(), a); }
+};
