@@ -1,0 +1,257 @@
+# Every push / pull request:
+#   test    the full conformance suite (simd + scalar variants) on every
+#           supported architecture; real hardware where GitHub has it, QEMU
+#           user-mode emulation for the rest.  Jobs with several "runs" repeat
+#           the suite with the JSIMD_* variables (or QEMU CPU model) selecting
+#           each instruction-set level; repeats skip the scalar variant.
+#   bench   tjbench throughput, vio vs libjpeg-turbo built from the test
+#           submodule on the same runner, per instruction-set level.  Only on
+#           real hardware: emulated timings say nothing.
+#   report  one Markdown report (job summary) + HTML report (artifact).
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test · ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # runs: one per line, "label|VAR=value ...|extra ctest args"
+          - name: linux-x64-gcc
+            os: ubuntu-24.04
+            runs: |
+              avx2||
+              sse2|JSIMD_FORCESSE2=1|-E scalar
+          - name: linux-x64-clang
+            os: ubuntu-24.04
+            cc: clang
+            cxx: clang++
+            runs: |
+              avx2||
+          - name: linux-i686
+            os: ubuntu-24.04
+            apt: g++-i686-linux-gnu
+            triple: i686-linux-gnu
+            proc: i686
+            runs: |
+              avx2||
+              sse2|JSIMD_FORCESSE2=1|-E scalar
+              sse+mmx|JSIMD_FORCESSE=1|-E scalar
+          - name: linux-arm64-gcc
+            os: ubuntu-24.04-arm
+            runs: |
+              neon||
+          - name: macos-arm64
+            os: macos-15
+            runs: |
+              neon||
+          - name: macos-x64
+            os: macos-15-intel
+            runs: |
+              avx2||
+              sse2|JSIMD_FORCESSE2=1|-E scalar
+          - name: linux-armhf-neon (qemu)
+            os: ubuntu-24.04
+            apt: g++-arm-linux-gnueabihf qemu-user
+            triple: arm-linux-gnueabihf
+            proc: arm
+            flags: -mfpu=neon
+            emulator: qemu-arm
+            runs: |
+              neon|QEMU_CPU=cortex-a15|
+          - name: linux-armhf-runtime (qemu)
+            os: ubuntu-24.04
+            apt: g++-arm-linux-gnueabihf qemu-user
+            triple: arm-linux-gnueabihf
+            proc: armrt
+            emulator: qemu-arm
+            runs: |
+              neon-detected|QEMU_CPU=cortex-a15|
+              no-neon|QEMU_CPU=cortex-r5f|-E scalar
+          - name: linux-ppc64le (qemu)
+            os: ubuntu-24.04
+            apt: g++-powerpc64le-linux-gnu qemu-user
+            triple: powerpc64le-linux-gnu
+            proc: ppc64le
+            flags: -mcpu=power8
+            emulator: qemu-ppc64le
+            runs: |
+              altivec+vsx||
+          - name: linux-ppc32-be (qemu)
+            os: ubuntu-24.04
+            apt: g++-14-powerpc-linux-gnu qemu-user
+            triple: powerpc-linux-gnu
+            sfx: "-14"
+            proc: ppc
+            flags: -mcpu=7450 -maltivec
+            emulator: qemu-ppc
+            runs: |
+              altivec|QEMU_CPU=7450_v2.0|
+          - name: linux-mips64el (qemu)
+            os: ubuntu-24.04
+            apt: g++-mips64el-linux-gnuabi64 qemu-user
+            triple: mips64el-linux-gnuabi64
+            proc: mips64el
+            flags: -march=loongson3a
+            emulator: qemu-mips64el
+            runs: |
+              mmi|QEMU_CPU=Loongson-3A1000|
+          - name: linux-riscv64 (qemu)
+            os: ubuntu-24.04
+            apt: g++-14-riscv64-linux-gnu qemu-user
+            triple: riscv64-linux-gnu
+            sfx: "-14"
+            proc: riscv64
+            flags: -march=rv64gcv
+            emulator: qemu-riscv64
+            runs: |
+              rvv-vlen128|QEMU_CPU=rv64,v=true,vlen=128|
+              rvv-vlen256|QEMU_CPU=rv64,v=true,vlen=256|-E scalar
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - name: Install toolchain
+        if: matrix.apt
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends ${{ matrix.apt }}
+
+      - name: Configure
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: |
+          args=(-DCMAKE_BUILD_TYPE=Release)
+          if [ -n "${{ matrix.triple }}" ]; then
+            t=${{ matrix.triple }} s=${{ matrix.sfx }}
+            args+=(-DCMAKE_SYSTEM_NAME=Linux
+                   -DCMAKE_SYSTEM_PROCESSOR=${{ matrix.proc }}
+                   -DCMAKE_C_COMPILER=$t-gcc$s -DCMAKE_CXX_COMPILER=$t-g++$s
+                   "-DCMAKE_C_FLAGS=${{ matrix.flags }}"
+                   "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}"
+                   -DCMAKE_EXE_LINKER_FLAGS=-static)
+            if [ -n "${{ matrix.emulator }}" ]; then
+              args+=(-DCMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/${{ matrix.emulator }})
+            fi
+          fi
+          [ -z "$CC" ] && unset CC CXX
+          cmake -S . -B build/ci "${args[@]}"
+
+      - name: Build
+        run: cmake --build build/ci --parallel
+
+      - name: Test
+        env:
+          NAME: ${{ matrix.name }}
+          RUNS: ${{ matrix.runs }}
+        run: |
+          while IFS='|' read -r label envs ctargs; do
+            [ -n "$label" ] || continue
+            echo "::group::$NAME · $label"
+            # shellcheck disable=SC2086
+            .github/scripts/run-ctest.sh build/ci "$NAME" "$label" \
+              $envs -- $ctargs
+            echo "::endgroup::"
+          done <<< "$RUNS"
+          if [ -f results/.failed ]; then
+            echo "::error::failing runs: $(paste -sd, results/.failed)"
+            exit 1
+          fi
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-${{ strategy.job-index }}
+          path: results/
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+  bench:
+    name: bench · ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-24.04
+            isas: --isa avx2= --isa sse2=JSIMD_FORCESSE2=1 --isa none=JSIMD_FORCENONE=1
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            isas: --isa neon= --isa none=JSIMD_FORCENONE=1
+          - name: macos-arm64
+            os: macos-15
+            isas: --isa neon= --isa none=JSIMD_FORCENONE=1
+          - name: macos-x64
+            os: macos-15-intel
+            isas: --isa avx2= --isa sse2=JSIMD_FORCESSE2=1 --isa none=JSIMD_FORCENONE=1
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - name: Install NASM
+        if: contains(matrix.name, 'x64')
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then brew install nasm
+          else sudo apt-get update -q && sudo apt-get install -yq nasm; fi
+
+      - name: Build vio tjbench
+        run: |
+          cmake -S . -B build/vio -DCMAKE_BUILD_TYPE=Release -DVIO_TEST_SCALAR=OFF
+          cmake --build build/vio --parallel --target tjbench
+
+      - name: Build libjpeg-turbo tjbench
+        run: |
+          cmake -S tests/libjpeg-turbo -B build/ljt -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/ljt --parallel --target tjbench
+
+      - name: Benchmark
+        run: |
+          python3 .github/scripts/bench.py --platform ${{ matrix.name }} \
+            --vio build/vio/tjbench --ref build/ljt/tjbench ${{ matrix.isas }} \
+            --out results/bench-${{ matrix.name }}.json
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ matrix.name }}
+          path: results/
+
+  report:
+    needs: [test, bench]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          path: results
+      - name: Build report
+        run: |
+          mkdir -p report
+          python3 .github/scripts/report.py results report/report.md report/index.html
+          cat report/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: report
+          path: report/
