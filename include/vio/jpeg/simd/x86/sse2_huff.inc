@@ -7,12 +7,6 @@ namespace detail_huff {
 
 using T = __m128i;
 
-// Natural-order index of each zig-zag position.
-alignas(16) inline constexpr std::uint8_t zigzag[64] = {
-    0,  1,  8,  16, 9,  2,  3,  10, 17, 24, 32, 25, 18, 11, 4,  5,  12, 19, 26, 33, 40, 48,
-    41, 34, 27, 20, 13, 6,  7,  14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23,
-    30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63};
-
 VIO_INLINE unsigned ctz64(std::uint64_t v) {
 #if defined(_MSC_VER) && !defined(__clang__)
   unsigned long i;
@@ -44,6 +38,16 @@ VIO_INLINE int clz64(std::uint64_t v) {  // v != 0
 #endif
 }
 
+VIO_INLINE int bit_length_nonzero(unsigned v) {  // number of bits in v != 0
+#if defined(_MSC_VER) && !defined(__clang__)
+  unsigned long i;
+  _BitScanReverse(&i, v);
+  return static_cast<int>(i) + 1;
+#else
+  return 32 - __builtin_clz(v);
+#endif
+}
+
 VIO_INLINE int bit_length(unsigned v) {  // number of bits in v (0 for 0)
 #if defined(_MSC_VER) && !defined(__clang__)
   unsigned long i;
@@ -65,52 +69,123 @@ VIO_INLINE std::uint64_t movemask64(const T* r) {
 
 }  // namespace detail_huff
 
+namespace detail_huff {
+
+// Loads coefficients 1..63 of a natural-order block in zig-zag order into
+// eight vectors (z[r] lane i = zig-zag position 8r+i+1; z[7] lane 7 = 0),
+// using shuffles and a few word inserts instead of a round trip through
+// memory, which would defeat store-to-load forwarding.
+VIO_INLINE void load_zigzag(const std::int16_t* block, T z[8]) {
+  auto ld = [&](int i) { return _mm_loadu_si128(reinterpret_cast<const T*>(block + i)); };
+  auto ldl = [&](int i) { return _mm_loadl_epi64(reinterpret_cast<const T*>(block + i)); };
+  auto ps = [](T v) { return _mm_castsi128_ps(v); };
+  auto pd = [](T v) { return _mm_castsi128_pd(v); };
+  T r0 = ld(0), r1 = ld(8), r6 = ld(48), r7 = ld(56);
+
+  // Row 0: 01 08 16 09 02 03 10 17
+  T a = _mm_shufflelo_epi16(_mm_unpacklo_epi32(r0, r1), 0xC9);  // 01 08 xx 09 02 03 10 11
+  a = _mm_insert_epi16(a, block[16], 2);
+  z[0] = _mm_insert_epi16(a, block[17], 7);
+
+  // Row 1: 24 32 25 18 11 04 05 12
+  T d = _mm_unpackhi_epi32(r0, r1);                              // 04 05 12 13 06 07 14 15
+  T b = _mm_slli_si128(_mm_unpacklo_epi64(r1, d), 2);            // -- 08 09 10 11 04 05 12
+  T c = _mm_shufflelo_epi16(ldl(24), 0xD8);                      // 24 26 25 27 -- -- -- --
+  b = _mm_castpd_si128(_mm_move_sd(pd(b), pd(c)));               // 24 26 25 27 11 04 05 12
+  b = _mm_insert_epi16(b, block[32], 1);
+  z[1] = _mm_insert_epi16(b, block[18], 3);
+
+  // Row 2: 19 26 33 40 48 41 34 27
+  c = _mm_unpacklo_epi64(c, r6);                                 // 24 26 25 27 48 49 50 51
+  c = _mm_insert_epi16(c, block[19], 0);
+  c = _mm_insert_epi16(c, block[33], 2);
+  c = _mm_insert_epi16(c, block[40], 3);
+  c = _mm_insert_epi16(c, block[41], 5);
+  c = _mm_insert_epi16(c, block[34], 6);
+  z[2] = _mm_insert_epi16(c, block[27], 7);
+
+  // Row 3: 20 13 06 07 14 21 28 35
+  d = _mm_srli_si128(d, 4);                                      // 12 13 06 07 14 15 -- --
+  d = _mm_insert_epi16(d, block[20], 0);
+  d = _mm_insert_epi16(d, block[21], 5);
+  d = _mm_insert_epi16(d, block[28], 6);
+  z[3] = _mm_insert_epi16(d, block[35], 7);
+
+  // Row 4: 42 49 56 57 50 43 36 29
+  T e = _mm_castps_si128(_mm_unpacklo_ps(ps(r6), ps(r7)));      // 48 49 56 57 50 51 58 59
+  T f = _mm_unpacklo_epi32(ldl(36), ldl(44));                    // 36 37 44 45 38 39 46 47
+  T g = _mm_srli_si128(f, 2);                                    // 37 44 45 38 39 46 47 --
+  f = _mm_castpd_si128(_mm_shuffle_pd(pd(f), pd(e), 2));         // 36 37 44 45 50 51 58 59
+  e = _mm_insert_epi16(e, block[42], 0);
+  e = _mm_insert_epi16(e, block[43], 5);
+  e = _mm_insert_epi16(e, block[36], 6);
+  z[4] = _mm_insert_epi16(e, block[29], 7);
+
+  // Row 5: 22 15 23 30 37 44 51 58
+  f = _mm_shuffle_epi32(_mm_slli_si128(f, 2), 0xD8);             // -- 36 45 50 37 44 51 58
+  f = _mm_castps_si128(_mm_loadl_pi(ps(f), reinterpret_cast<const __m64*>(block + 20)));
+  f = _mm_shufflelo_epi16(f, 0x72);                              // 22 20 23 21 37 44 51 58
+  f = _mm_insert_epi16(f, block[15], 1);
+  z[5] = _mm_insert_epi16(f, block[30], 3);
+
+  // Row 6: 59 52 45 38 31 39 46 53
+  g = _mm_shufflehi_epi16(g, 0xD3);                              // 37 44 45 38 -- 39 46 --
+  g = _mm_insert_epi16(g, block[59], 0);
+  g = _mm_insert_epi16(g, block[52], 1);
+  g = _mm_insert_epi16(g, block[31], 4);
+  z[6] = _mm_insert_epi16(g, block[53], 7);
+
+  // Row 7: 60 61 54 47 55 62 63 (lane 7 = 0)
+  T h = _mm_srli_si128(_mm_unpackhi_epi32(r6, r7), 2);           // 53 60 61 54 55 62 63 --
+  h = _mm_shufflelo_epi16(h, 0x39);                              // 60 61 54 53 55 62 63 --
+  z[7] = _mm_insert_epi16(h, block[47], 3);
+}
+
+}  // namespace detail_huff
+
 template <class Table>
 inline std::uint8_t* encode_one_block(HuffBitState& st, std::uint8_t* buffer,
                                       const std::int16_t* block, int last_dc_val,
                                       const Table& dctbl, const Table& actbl) {
   using namespace detail_huff;
-  alignas(16) std::int16_t zz[64];
-  zz[0] = 0;
-  for (int k = 1; k < 64; k++) zz[k] = block[zigzag[k]];
-  T eq[8];
+  // t[i]: zig-zag coefficient i+1, negative values minus one (the bits to
+  // emit); `index` bit i is set when it is non-zero.
+  alignas(16) std::int16_t t[64];
+  T z[8];
+  load_zigzag(block, z);
   const T zero = _mm_setzero_si128();
-  for (int i = 0; i < 8; i++)
-    eq[i] = _mm_cmpeq_epi16(_mm_load_si128(reinterpret_cast<const T*>(zz + i * 8)), zero);
-  std::uint64_t nonzero = ~movemask64(eq) & ~std::uint64_t(1);
+  T eq[8];
+  for (int i = 0; i < 8; i++) {
+    T v = _mm_add_epi16(z[i], _mm_cmpgt_epi16(zero, z[i]));
+    _mm_store_si128(reinterpret_cast<T*>(t + 8 * i), v);
+    eq[i] = _mm_cmpeq_epi16(v, zero);
+  }
+  std::uint64_t index = ~movemask64(eq);
 
   HuffBitWriter w(st, buffer);
   // DC difference (32-bit, as in the scalar encoder).
   int temp = block[0] - last_dc_val;
-  int temp2 = temp;
-  if (temp < 0) {
-    temp = -temp;
-    temp2--;
-  }
-  int nbits = bit_length(static_cast<unsigned>(temp));
+  int sign = temp >> 31;
+  int nbits = bit_length(static_cast<unsigned>(temp ^ sign) - static_cast<unsigned>(sign));
   w.put_code(dctbl.ehufco[nbits], dctbl.ehufsi[nbits],
-             static_cast<unsigned>(temp2) & ((1u << nbits) - 1), nbits);
+             static_cast<unsigned>(temp + sign) & ((1u << nbits) - 1), nbits);
 
-  int last = 0;
-  const unsigned code_0xf0 = actbl.ehufco[0xf0];
-  const int size_0xf0 = actbl.ehufsi[0xf0];
-  while (nonzero) {
-    const int k = static_cast<int>(ctz64(nonzero));
-    nonzero &= nonzero - 1;
-    int run = k - last - 1;
-    last = k;
+  const std::int16_t* p = t - 1;  // coefficient k is p[k]
+  while (index) {
+    unsigned run = ctz64(index);
+    index = (index >> run) >> 1;
+    p += run + 1;
     while (run > 15) {
-      w.put_bits(code_0xf0, size_0xf0);
+      w.put_bits(actbl.ehufco[0xf0], actbl.ehufsi[0xf0]);
       run -= 16;
     }
-    int c = zz[k];
-    int bits = c + (c >> 31);  // one's complement for negative values
-    nbits = bit_length(static_cast<unsigned>(c < 0 ? -c : c));
-    const int rs = (run << 4) + nbits;
-    w.put_code(actbl.ehufco[rs], actbl.ehufsi[rs], static_cast<unsigned>(bits) & ((1u << nbits) - 1),
+    const int code = *p;
+    nbits = bit_length_nonzero(static_cast<unsigned>(code ^ (code >> 31)));
+    const unsigned rs = (run << 4) + static_cast<unsigned>(nbits);
+    w.put_code(actbl.ehufco[rs], actbl.ehufsi[rs], static_cast<unsigned>(code) & ((1u << nbits) - 1),
                nbits);
   }
-  if (last != 63) w.put_bits(actbl.ehufco[0], actbl.ehufsi[0]);
+  if (p != t + 62) w.put_bits(actbl.ehufco[0], actbl.ehufsi[0]);
   st = w.state();
   return w.buffer;
 }
