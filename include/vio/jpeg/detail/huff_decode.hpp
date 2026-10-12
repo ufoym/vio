@@ -2,6 +2,7 @@
 #pragma once
 
 #include "decompress_state.hpp"
+#include "../simd/common.hpp"
 
 namespace vio::jpeg::detail {
 
@@ -170,6 +171,23 @@ class BitReader {
   }
 
   VIO_INLINE void fill(int nbits, bool& insuff) {
+    // Fast path: the bytes needed are in the buffer and none is 0xFF; they
+    // are shifted in at once (as many as the byte loop below would take).
+    if (VIO_LIKELY(st_->bytes_in_buffer >= 8 && st_->unread_marker == 0 && bits_left < MIN_GET_BITS)) {
+      std::uint64_t v;
+      std::memcpy(&v, st_->next_input_byte, 8);
+      v = ::vio::jpeg::simd::HuffBitWriter::to_big_endian(v);
+      const int k = (BIT_BUF_SIZE - bits_left) >> 3;  // 1..8
+      const std::uint64_t ones = ~v;                  // 0xFF bytes -> 0x00
+      const std::uint64_t ff = (ones - 0x0101010101010101ULL) & v & 0x8080808080808080ULL;
+      if ((ff >> (BIT_BUF_SIZE - 8 * k)) == 0) {
+        get_buffer = k == 8 ? v : (get_buffer << (8 * k)) | (v >> (BIT_BUF_SIZE - 8 * k));
+        bits_left += 8 * k;
+        st_->next_input_byte += k;
+        st_->bytes_in_buffer -= static_cast<std::size_t>(k);
+        return;
+      }
+    }
     State bs = fill(st_, State{get_buffer, bits_left}, nbits, insuff);
     get_buffer = bs.get_buffer;
     bits_left = bs.bits_left;

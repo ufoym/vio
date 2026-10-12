@@ -608,11 +608,12 @@ class LosslessDecompressor {
 
  private:
   static void undiff_1d(const int* diff_buf, int* undiff_buf, unsigned width, int initial) {
-    int Ra = (*diff_buf++ + initial) & 0xFFFF;
-    *undiff_buf++ = Ra;
-    while (--width) {
-      Ra = (*diff_buf++ + Ra) & 0xFFFF;
-      *undiff_buf++ = Ra;
+    // Sums modulo 2^16: the running sum wraps modulo 2^32 and only the
+    // stored values are masked, which keeps the mask off the dependency chain.
+    unsigned Ra = static_cast<unsigned>(initial);
+    for (unsigned i = 0; i < width; i++) {
+      Ra += static_cast<unsigned>(diff_buf[i]);
+      undiff_buf[i] = static_cast<int>(Ra & 0xFFFF);
     }
   }
 
