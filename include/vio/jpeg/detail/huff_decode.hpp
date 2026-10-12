@@ -661,6 +661,17 @@ class PhuffDecoder final : public EntropyDecoder {
     br_ = br;
   }
 
+  // Applies a correction bit to a non-zero coefficient: if the bit is set and
+  // the coefficient's bit Al is not, its magnitude grows by p1 = 1 << Al.
+  // Branch-free, since the coefficient's sign is unpredictable.
+  static VIO_INLINE void refine_coef(Coef* thiscoef, int bit, int p1) {
+    int c = *thiscoef;
+    int sign = c >> (CHAR_BIT * sizeof(int) - 1);
+    int add = (p1 ^ sign) - sign;  // p1, or m1 = -p1 for a negative coefficient
+    int apply = bit & static_cast<int>((c & p1) == 0);
+    *thiscoef = static_cast<Coef>(c + (add & -apply));
+  }
+
   void ac_refine(Block** MCU_data) {
     if (insufficient_data) return;
     bool& insuff = insufficient_data;
@@ -696,12 +707,7 @@ class PhuffDecoder final : public EntropyDecoder {
           Coef* thiscoef = block + natural_order[k];
           if (*thiscoef != 0) {
             br.check(1, insuff);
-            if (br.get_bits(1)) {
-              if ((*thiscoef & p1) == 0) {
-                if (*thiscoef >= 0) *thiscoef = static_cast<Coef>(*thiscoef + p1);
-                else *thiscoef = static_cast<Coef>(*thiscoef + m1);
-              }
-            }
+            refine_coef(thiscoef, br.get_bits(1), p1);
           } else {
             if (--r < 0) break;
           }
@@ -715,12 +721,7 @@ class PhuffDecoder final : public EntropyDecoder {
         Coef* thiscoef = block + natural_order[k];
         if (*thiscoef != 0) {
           br.check(1, insuff);
-          if (br.get_bits(1)) {
-            if ((*thiscoef & p1) == 0) {
-              if (*thiscoef >= 0) *thiscoef = static_cast<Coef>(*thiscoef + p1);
-              else *thiscoef = static_cast<Coef>(*thiscoef + m1);
-            }
-          }
+          refine_coef(thiscoef, br.get_bits(1), p1);
         }
       }
       EOBRUN--;
