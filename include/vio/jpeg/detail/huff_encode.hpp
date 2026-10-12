@@ -437,6 +437,53 @@ struct SimpleBitWriter {
   }
 };
 
+// Bit writer of the progressive encoder: bits collect in a 64-bit buffer and
+// are written 32 at a time (0xFF bytes followed by a stuffed 0x00).
+struct WordBitWriter {
+  std::uint64_t acc = 0;  // the low n bits are pending (higher bits: stale)
+  int n = 0;              // < 32 between calls
+
+  // Appends the low `size` (<= 32) bits of `code`, which has no higher bits.
+  VIO_INLINE void put(ByteSink& dest, std::uint32_t code, int size) {
+    acc = (acc << size) | code;
+    n += size;
+    if (n >= 32) {
+      n -= 32;
+      write32(dest, static_cast<std::uint32_t>(acc >> n));
+    }
+  }
+  void flush(ByteSink& dest) {
+    put(dest, 0x7F, 7);  // pad the last byte with 1 bits
+    while (n >= 8) {
+      n -= 8;
+      write_byte(dest, static_cast<std::uint8_t>(acc >> n));
+    }
+    acc = 0;
+    n = 0;
+  }
+
+ private:
+  static VIO_INLINE void write32(ByteSink& dest, std::uint32_t w) {
+    dest.ensure(9);  // at most 8 bytes, and put() needs room for one more
+    // Any 0xFF byte (or, rarely, a false alarm) takes the byte-wise path.
+    if (VIO_UNLIKELY((~w - 0x01010101u) & w & 0x80808080u)) {
+      for (int sh = 24; sh >= 0; sh -= 8) write_byte(dest, static_cast<std::uint8_t>(w >> sh));
+      return;
+    }
+    std::uint8_t* p = dest.next;
+    p[0] = static_cast<std::uint8_t>(w >> 24);
+    p[1] = static_cast<std::uint8_t>(w >> 16);
+    p[2] = static_cast<std::uint8_t>(w >> 8);
+    p[3] = static_cast<std::uint8_t>(w);
+    dest.next = p + 4;
+    dest.free_in_buffer -= 4;
+  }
+  static VIO_INLINE void write_byte(ByteSink& dest, std::uint8_t b) {
+    dest.put(b);
+    if (b == 0xFF) dest.put(0);
+  }
+};
+
 // ===========================================================================
 // Progressive Huffman encoder
 class PhuffEncoder final : public EntropyEncoder {
@@ -519,10 +566,11 @@ class PhuffEncoder final : public EntropyEncoder {
   enum Mode { DC_FIRST, AC_FIRST, DC_REFINE, AC_REFINE };
   static constexpr unsigned MAX_CORR_BITS = 1000;
 
+  // The low `size` (<= 16) bits of `code`.
   void emit_bits(unsigned code, int size) {
     if (size == 0) VIO_FAIL("Missing Huffman code table entry");
     if (gather_) return;
-    bw_.emit_bits(cs_.dest, code, size);
+    bw_.put(cs_.dest, code & ((1u << size) - 1), size);
   }
 
   void emit_symbol(int tbl_no, int symbol) {
@@ -530,12 +578,28 @@ class PhuffEncoder final : public EntropyEncoder {
     else emit_bits(derived_[tbl_no].ehufco[symbol], derived_[tbl_no].ehufsi[symbol]);
   }
 
+  // emit_symbol() followed by emit_bits(bits, nb), 0 < nb <= 15, in one write.
+  void emit_symbol_bits(int tbl_no, int symbol, unsigned bits, int nb) {
+    if (gather_) {
+      count_[tbl_no][symbol]++;
+      return;
+    }
+    int size = derived_[tbl_no].ehufsi[symbol];
+    if (size == 0) VIO_FAIL("Missing Huffman code table entry");
+    bw_.put(cs_.dest, (derived_[tbl_no].ehufco[symbol] << nb) | (bits & ((1u << nb) - 1)),
+            size + nb);
+  }
+
+  // The correction bits (one per char), up to 16 per write.
   void emit_buffered_bits(const char* bufstart, unsigned nb) {
     if (gather_) return;
     while (nb > 0) {
-      emit_bits(static_cast<unsigned>(*bufstart), 1);
-      bufstart++;
-      nb--;
+      int n = nb < 16 ? static_cast<int>(nb) : 16;
+      unsigned w = 0;
+      for (int i = 0; i < n; i++) w = (w << 1) | static_cast<unsigned>(bufstart[i] & 1);
+      bw_.put(cs_.dest, w, n);
+      bufstart += n;
+      nb -= static_cast<unsigned>(n);
     }
   }
 
@@ -629,8 +693,7 @@ class PhuffEncoder final : public EntropyEncoder {
       int nb = nbits_nonzero(static_cast<unsigned>(temp));
       if (nb > max_coef_bits)
         VIO_FAIL("DCT coefficient (lossy) or spatial difference (lossless) out of range");
-      emit_symbol(ac_tbl_no_, (r << 4) + nb);
-      emit_bits(static_cast<unsigned>(temp2), nb);
+      emit_symbol_bits(ac_tbl_no_, (r << 4) + nb, static_cast<unsigned>(temp2), nb);
       cvalue++;
       zerobits >>= 1;
     }
@@ -700,9 +763,7 @@ class PhuffEncoder final : public EntropyEncoder {
         continue;
       }
       emit_eobrun();
-      emit_symbol(ac_tbl_no_, (r << 4) + 1);
-      temp = static_cast<int>(signbits & 1);
-      emit_bits(static_cast<unsigned>(temp), 1);
+      emit_symbol_bits(ac_tbl_no_, (r << 4) + 1, static_cast<unsigned>(signbits & 1), 1);
       emit_buffered_bits(BR_buffer, BR);
       BR_buffer = bit_buffer_;
       BR = 0;
@@ -722,7 +783,7 @@ class PhuffEncoder final : public EntropyEncoder {
   simd::PhuffKernels simd_;
   bool gather_ = false;
   Mode mode_ = DC_FIRST;
-  SimpleBitWriter bw_;
+  WordBitWriter bw_;
   int last_dc_val_[MAX_COMPS_IN_SCAN]{};
   int ac_tbl_no_ = 0;
   unsigned EOBRUN_ = 0, BE_ = 0;
