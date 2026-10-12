@@ -14,6 +14,11 @@
 #include "../../types.hpp"
 #include "../common.hpp"
 
+// The helpers below leave MMX state live on purpose (see above).
+#if defined(_MSC_VER) && !defined(__clang__)
+#pragma warning(push)
+#pragma warning(disable : 4799)
+#endif
 VIO_TARGET_PUSH_("mmx")
 namespace vio::jpeg::simd::mmx {
 
@@ -92,3 +97,6 @@ inline constexpr auto idct_2x2 = Emms<impl::idct_2x2>::call;
 
 }  // namespace vio::jpeg::simd::mmx
 VIO_TARGET_POP()
+#if defined(_MSC_VER) && !defined(__clang__)
+#pragma warning(pop)
+#endif
