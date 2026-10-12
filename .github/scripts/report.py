@@ -206,7 +206,7 @@ h.append("</table>")
 for b in bench:
     for isa in b["isas"]:
         h.append(f"<h3>{e(b['platform'])} · {e(isa['isa'])} "
-                 f"<small>Mpixels/s, {e(b['image'])} image, median of "
+                 f"<small>Mpixels/s, {e(b['image'])} image, best of "
                  f"{b['reps']}</small></h3>")
         h.append("<table><tr><th>Config</th><th>Compress vio</th><th>ref</th>"
                  "<th>%</th><th>Decompress vio</th><th>ref</th><th>%</th></tr>")

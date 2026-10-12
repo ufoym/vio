@@ -6,14 +6,15 @@ bench.py --vio build/tjbench --ref build/ljt/tjbench --platform linux-x64 \
 
 Each --isa is LABEL=[VAR=value,...]; both libraries honour the same JSIMD_*
 variables, so every row compares like with like.  The two programs are run
-alternately, several times, and the median throughput is kept, which keeps
-shared-runner noise from favouring either side.
+alternately, several times, and the best throughput of each is kept:
+interference from other jobs on a shared runner can only slow a run down,
+so the best of several runs is far more stable than the median.
 
 When a sampling profiler is available (perf on Linux, sample on macOS), the
 compression of PROFILE_CONFIG is also profiled per ISA, so that the report
 shows where the time goes in both libraries.
 """
-import argparse, json, os, platform, re, shutil, statistics, subprocess, sys
+import argparse, json, os, platform, re, shutil, subprocess, sys
 import tempfile, time
 
 CONFIGS = [
@@ -149,7 +150,7 @@ def main():
     ap.add_argument("--platform", required=True)
     ap.add_argument("--isa", action="append", required=True)
     ap.add_argument("--src", default="tests/libjpeg-turbo/testimages/testorig.ppm")
-    ap.add_argument("--reps", type=int, default=3)
+    ap.add_argument("--reps", type=int, default=5)
     ap.add_argument("--benchtime", type=float, default=1.0)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
@@ -173,11 +174,11 @@ def main():
                 for who, exe in (("ref", a.ref), ("vio", a.vio)):
                     samples[who].append(tjbench(exe, image, args, env,
                                                 a.benchtime))
-            med = {who: [statistics.median(s[i] for s in v) for i in (0, 1)]
+            best = {who: [max(s[i] for s in v) for i in (0, 1)]
                    for who, v in samples.items()}
             rows.append({"config": name, "args": " ".join(args),
-                         "compress": {"vio": med["vio"][0], "ref": med["ref"][0]},
-                         "decompress": {"vio": med["vio"][1], "ref": med["ref"][1]}})
+                         "compress": {"vio": best["vio"][0], "ref": best["ref"][0]},
+                         "decompress": {"vio": best["vio"][1], "ref": best["ref"][1]}})
             c, d = rows[-1]["compress"], rows[-1]["decompress"]
             print(f"{a.platform:14} {label:6} {name:20} "
                   f"C {c['vio']:8.1f}/{c['ref']:8.1f} ({100 * c['vio'] / c['ref']:5.1f}%)  "
