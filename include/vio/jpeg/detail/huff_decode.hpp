@@ -348,16 +348,15 @@ class HuffDecoder final : public EntropyDecoder {
 
     auto get_byte = [&]() VIO_LAMBDA_INLINE {
       int c0 = *buffer++;
-      int c1 = *buffer;
       get_buffer = (get_buffer << 8) | static_cast<unsigned>(c0);
       bits_left += 8;
-      if (VIO_UNLIKELY(c0 == 0xFF)) {
+      if (VIO_UNLIKELY(c0 == 0xFF)) [[unlikely]] {
         branch_barrier();  // keep this rare path out of line (no if-conversion)
-        buffer++;
+        int c1 = *buffer++;
         if (c1 != 0) {
           marker = c1;
           buffer -= 2;
-          get_buffer &= ~static_cast<buf_t>(0xFF);
+          get_buffer ^= 0xFF;  // the low byte is c0 == 0xFF: clear it
         }
       }
     };

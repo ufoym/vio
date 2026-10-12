@@ -7,16 +7,18 @@ namespace detail_huff {
 
 using T = __m128i;
 
-VIO_INLINE unsigned ctz64(std::uint64_t v) {
+VIO_INLINE unsigned ctz64(std::uint64_t v) {  // v != 0
 #if defined(_MSC_VER) && !defined(__clang__)
-  unsigned long i;
 #if VIO_SIMD_X86_64
-  _BitScanForward64(&i, v);
+  // tzcnt runs as bsf on CPUs without BMI1 (same result for v != 0), and
+  // unlike bsf it does not depend on the previous value of its destination.
+  return static_cast<unsigned>(_tzcnt_u64(v));
 #else
+  unsigned long i;
   if (static_cast<std::uint32_t>(v)) _BitScanForward(&i, static_cast<std::uint32_t>(v));
   else { _BitScanForward(&i, static_cast<std::uint32_t>(v >> 32)); i += 32; }
-#endif
   return i;
+#endif
 #else
   return static_cast<unsigned>(__builtin_ctzll(v));
 #endif
@@ -39,7 +41,9 @@ VIO_INLINE int clz64(std::uint64_t v) {  // v != 0
 }
 
 VIO_INLINE int bit_length_nonzero(unsigned v) {  // number of bits in v != 0
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER) && !defined(__clang__) && VIO_HUFF_BMI2
+  return 32 - static_cast<int>(_lzcnt_u32(v));
+#elif defined(_MSC_VER) && !defined(__clang__)
   unsigned long i;
   _BitScanReverse(&i, v);
   return static_cast<int>(i) + 1;
@@ -49,7 +53,9 @@ VIO_INLINE int bit_length_nonzero(unsigned v) {  // number of bits in v != 0
 }
 
 VIO_INLINE int bit_length(unsigned v) {  // number of bits in v (0 for 0)
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER) && !defined(__clang__) && VIO_HUFF_BMI2
+  return 32 - static_cast<int>(_lzcnt_u32(v));
+#elif defined(_MSC_VER) && !defined(__clang__)
   unsigned long i;
   return _BitScanReverse(&i, v) ? static_cast<int>(i) + 1 : 0;
 #else
@@ -75,6 +81,18 @@ namespace detail_huff {
 alignas(64) inline constexpr std::uint32_t kMaskBits[17] = {
     0x0000, 0x0001, 0x0003, 0x0007, 0x000f, 0x001f, 0x003f, 0x007f, 0x00ff,
     0x01ff, 0x03ff, 0x07ff, 0x0fff, 0x1fff, 0x3fff, 0x7fff, 0xffff};
+
+// Variable shifts and low-bit masks.  MSVC has no per-function targets, so
+// the BMI2 build spells out shlx/shrx/bzhi; other compilers derive them.
+#if defined(_MSC_VER) && !defined(__clang__) && VIO_HUFF_BMI2 && VIO_SIMD_X86_64
+VIO_INLINE std::uint64_t shl64(std::uint64_t v, unsigned n) { return _shlx_u64(v, n); }
+VIO_INLINE std::uint64_t shr64(std::uint64_t v, unsigned n) { return _shrx_u64(v, n); }
+VIO_INLINE unsigned low_bits(unsigned v, int n) { return _bzhi_u32(v, static_cast<unsigned>(n)); }
+#else
+VIO_INLINE std::uint64_t shl64(std::uint64_t v, unsigned n) { return v << n; }
+VIO_INLINE std::uint64_t shr64(std::uint64_t v, unsigned n) { return v >> n; }
+VIO_INLINE unsigned low_bits(unsigned v, int n) { return v & kMaskBits[n]; }  // n <= 16
+#endif
 
 // Writes the 8 bytes of v (most significant first) with 0xFF 0x00 stuffing.
 VIO_NOINLINE inline std::uint8_t* emit_stuffed(std::uint8_t* buffer, std::uint64_t v) {
@@ -112,11 +130,12 @@ struct BitWriter {
   VIO_INLINE void put_bits(std::uint64_t code, int size) {
     free_bits -= size;
     if (free_bits < 0) {
-      flush((put_buffer << (size + free_bits)) | (code >> -free_bits));
+      flush(shl64(put_buffer, static_cast<unsigned>(size + free_bits)) |
+            shr64(code, static_cast<unsigned>(-free_bits)));
       free_bits += 64;
       put_buffer = code;
     } else {
-      put_buffer = (put_buffer << size) | code;
+      put_buffer = shl64(put_buffer, static_cast<unsigned>(size)) | code;
     }
   }
 };
@@ -217,14 +236,14 @@ inline std::uint8_t* encode_one_block(HuffBitState& st, std::uint8_t* buffer,
   int temp = block[0] - last_dc_val;
   int sign = temp >> 31;
   int nbits = bit_length(static_cast<unsigned>(temp ^ sign) - static_cast<unsigned>(sign));
-  w.put_bits((static_cast<std::uint64_t>(dctbl.ehufco[nbits]) << nbits) |
-                 (static_cast<unsigned>(temp + sign) & kMaskBits[nbits]),
+  w.put_bits(shl64(dctbl.ehufco[nbits], static_cast<unsigned>(nbits)) |
+                 low_bits(static_cast<unsigned>(temp + sign), nbits),
              dctbl.ehufsi[nbits] + nbits);
 
   unsigned k = 0;  // zig-zag position of the last coefficient coded
   while (index) {
     unsigned run = ctz64(index);
-    index = (index >> run) >> 1;
+    index = shr64(index, run) >> 1;
     k += run + 1;
     while (VIO_UNLIKELY(run > 15)) {
       w.put_bits(actbl.ehufco[0xf0], actbl.ehufsi[0xf0]);
@@ -233,12 +252,14 @@ inline std::uint8_t* encode_one_block(HuffBitState& st, std::uint8_t* buffer,
     const int code = t[k - 1];
     nbits = bit_length_nonzero(static_cast<unsigned>(code ^ (code >> 31)));
     const unsigned rs = (run << 4) + static_cast<unsigned>(nbits);
-    w.put_bits((static_cast<std::uint64_t>(actbl.ehufco[rs]) << nbits) |
-                   (static_cast<unsigned>(code) & kMaskBits[nbits]),
+    w.put_bits(shl64(actbl.ehufco[rs], static_cast<unsigned>(nbits)) |
+                   low_bits(static_cast<unsigned>(code), nbits),
                actbl.ehufsi[rs] + nbits);
   }
   if (k != 63) w.put_bits(actbl.ehufco[0], actbl.ehufsi[0]);
-  st = {w.put_buffer, w.free_bits};
+  // Member-wise: a 16-byte copy would read back two narrower stores.
+  st.put_buffer = w.put_buffer;
+  st.free_bits = w.free_bits;
   return w.buffer;
 }
 

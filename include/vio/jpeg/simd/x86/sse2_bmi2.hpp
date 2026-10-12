@@ -17,7 +17,9 @@
 VIO_TARGET_PUSH_SSE2_BMI2()
 namespace vio::jpeg::simd::sse2_bmi2 {
 
+#define VIO_HUFF_BMI2 1  // MSVC: spell out lzcnt, shlx, ... (no target attributes)
 #include "sse2_huff.inc"
+#undef VIO_HUFF_BMI2
 
 }  // namespace vio::jpeg::simd::sse2_bmi2
 VIO_TARGET_POP()

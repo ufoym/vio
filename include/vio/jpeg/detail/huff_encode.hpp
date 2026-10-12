@@ -32,7 +32,11 @@ VIO_INLINE int nbits_nonzero(unsigned x) {
   return static_cast<int>(i) + 1;
 }
 VIO_INLINE int ctz64(std::uint64_t x) {  // x != 0
-#if defined(_M_X64) || defined(_M_ARM64)
+#if defined(_M_X64)
+  // tzcnt runs as bsf on CPUs without BMI1 (same result for x != 0), and
+  // unlike bsf it does not depend on the previous value of its destination.
+  return static_cast<int>(_tzcnt_u64(x));
+#elif defined(_M_ARM64)
   unsigned long i;
   _BitScanForward64(&i, x);
   return static_cast<int>(i);

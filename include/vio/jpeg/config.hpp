@@ -7,7 +7,14 @@
 #if defined(_MSC_VER) && !defined(__clang__)
 #define VIO_INLINE __forceinline
 #define VIO_NOINLINE __declspec(noinline)
+#if defined(__has_cpp_attribute)
+#if __has_cpp_attribute(msvc::forceinline)
+#define VIO_LAMBDA_INLINE [[msvc::forceinline]]
+#endif
+#endif
+#ifndef VIO_LAMBDA_INLINE
 #define VIO_LAMBDA_INLINE
+#endif
 #define VIO_RESTRICT __restrict
 #define VIO_LIKELY(x) (x)
 #define VIO_UNLIKELY(x) (x)
