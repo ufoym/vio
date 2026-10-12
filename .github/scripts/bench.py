@@ -98,8 +98,10 @@ def profiler():
     return None
 
 
-def profile(tool, exe, image, args, env, tmp):
-    """[(percent, function)] of one compression run, and its throughput."""
+def profile(tool, exe, image, args, env, tmp, annotate=None):
+    """[(percent, function)] of one compression run, and its throughput.
+    With perf, the instruction-level profile of the two hottest functions is
+    also written to the file `annotate`."""
     cmd = [exe, image, *args, "-componly", "-benchtime", "3", "-warmup", "0.5",
            "-nowrite"]
     counts = {}
@@ -116,6 +118,18 @@ def profile(tool, exe, image, args, env, tmp):
             if m:
                 name = short_name(m[2])
                 counts[name] = counts.get(name, 0) + float(m[1])
+        if annotate:
+            raw = subprocess.run(["perf", "report", "-i", data, "--stdio", "-q",
+                                  "--no-children", "--sort", "sym", "--no-demangle"],
+                                 capture_output=True, text=True, timeout=600).stdout
+            syms = [m[1] for m in (re.match(r"\s*[\d.]+%\s+\[.\]\s+(\S+)", l)
+                                   for l in raw.splitlines()) if m][:2]
+            with open(annotate, "w") as f:
+                for sym in syms:
+                    ann = subprocess.run(["perf", "annotate", "-i", data, "--stdio",
+                                          "--no-source", "--symbol", sym],
+                                         capture_output=True, text=True, timeout=600)
+                    f.write(f"===== {sym}\n{ann.stdout}\n")
     else:
         report = os.path.join(tmp, "sample.txt")
         p = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE,
@@ -187,9 +201,11 @@ def main():
         entry = {"isa": label, "env": vars_, "rows": rows}
         if tool:
             try:
+                outdir = os.path.dirname(a.out) or "."
                 entry["profile"] = {
                     "tool": tool, "config": PROFILE_CONFIG[0],
-                    **{who: profile(tool, exe, image, PROFILE_CONFIG[1], env, tmp)
+                    **{who: profile(tool, exe, image, PROFILE_CONFIG[1], env, tmp,
+                                    os.path.join(outdir, f"annotate-{a.platform}-{label}-{who}.txt"))
                        for who, exe in (("vio", a.vio), ("ref", a.ref))}}
             except (OSError, subprocess.SubprocessError) as e:
                 print(f"profiling failed: {e}", flush=True)
