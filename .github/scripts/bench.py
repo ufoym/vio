@@ -8,8 +8,13 @@ Each --isa is LABEL=[VAR=value,...]; both libraries honour the same JSIMD_*
 variables, so every row compares like with like.  The two programs are run
 alternately, several times, and the median throughput is kept, which keeps
 shared-runner noise from favouring either side.
+
+When a sampling profiler is available (perf on Linux, sample on macOS), the
+compression of PROFILE_CONFIG is also profiled per ISA, so that the report
+shows where the time goes in both libraries.
 """
-import argparse, json, os, platform, re, statistics, subprocess, sys, tempfile
+import argparse, json, os, platform, re, shutil, statistics, subprocess, sys
+import tempfile, time
 
 CONFIGS = [
     ("4:4:4 q95", ["95", "-subsamp", "444"]),
@@ -21,6 +26,8 @@ CONFIGS = [
     ("4:2:0 arithmetic", ["95", "-subsamp", "420", "-arithmetic"]),
     ("lossless PSV1", ["1", "-lossless"]),
 ]
+
+PROFILE_CONFIG = ("4:2:0 q95", ["95", "-subsamp", "420"])
 
 
 def make_image(src, path, tiles=16):
@@ -63,6 +70,78 @@ def cpu_name():
         return platform.processor()
 
 
+def short_name(sym):
+    """Readable function name: no arguments, template arguments or library."""
+    sym = re.sub(r"\s+\(in [^)]*\)\s*$", "", sym.strip())
+    for open_, close in (("<", ">"), ("(", ")")):
+        out, depth = [], 0
+        for ch in sym:
+            if ch == open_:
+                depth += 1
+            elif ch == close and depth:
+                depth -= 1
+            elif not depth:
+                out.append(ch)
+        sym = "".join(out)
+    sym = sym.replace("vio::jpeg::", "").replace("detail::", "")
+    return re.sub(r"\s*\[clone[^]]*\]", "", sym).strip() or "?"
+
+
+def profiler():
+    if sys.platform == "darwin":
+        return "sample" if shutil.which("sample") else None
+    if shutil.which("perf"):
+        ok = subprocess.run(["perf", "stat", "-e", "cpu-clock", "true"],
+                            capture_output=True).returncode == 0
+        return "perf" if ok else None
+    return None
+
+
+def profile(tool, exe, image, args, env, tmp):
+    """[(percent, function)] of one compression run, and its throughput."""
+    cmd = [exe, image, *args, "-componly", "-benchtime", "3", "-warmup", "0.5",
+           "-nowrite"]
+    counts = {}
+    if tool == "perf":
+        data = os.path.join(tmp, "perf.data")
+        out = subprocess.run(["perf", "record", "-q", "-e", "cpu-clock",
+                              "-F", "1999", "-o", data, "--", *cmd], env=env,
+                             capture_output=True, text=True, timeout=600)
+        rep = subprocess.run(["perf", "report", "-i", data, "--stdio", "-q",
+                              "--no-children", "--sort", "sym"],
+                             capture_output=True, text=True, timeout=600).stdout
+        for line in rep.splitlines():
+            m = re.match(r"\s*([\d.]+)%\s+\[.\]\s+(.+)", line)
+            if m:
+                name = short_name(m[2])
+                counts[name] = counts.get(name, 0) + float(m[1])
+    else:
+        report = os.path.join(tmp, "sample.txt")
+        p = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, text=True)
+        time.sleep(1.0)
+        subprocess.run(["sample", str(p.pid), "2", "-f", report],
+                       capture_output=True, timeout=120)
+        out = subprocess.CompletedProcess(cmd, p.wait(), p.stdout.read(), "")
+        section = False
+        for line in open(report, errors="replace") if os.path.exists(report) else []:
+            if "Sort by top of stack" in line:
+                section = True
+            elif section and not line.strip():
+                break
+            elif section:
+                m = re.match(r"\s*(.+?)\s+(\d+)\s*$", line)
+                if m:
+                    name = short_name(m[1])
+                    counts[name] = counts.get(name, 0) + int(m[2])
+        total = sum(counts.values()) or 1
+        counts = {k: 100 * v / total for k, v in counts.items()}
+    tput = re.findall(r"Throughput:\s+([\d.]+)", out.stdout)
+    rows = sorted(((round(v, 2), k) for k, v in counts.items() if v >= 0.5),
+                  reverse=True)
+    return {"mpx": float(tput[0]) if tput else None, "rows": rows[:15]}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--vio", required=True)
@@ -80,6 +159,8 @@ def main():
     w, h = make_image(a.src, image)
     result = {"platform": a.platform, "cpu": cpu_name(),
               "image": f"{w}x{h}", "reps": a.reps, "isas": []}
+    tool = profiler()
+    print(f"profiler: {tool or 'none'}", flush=True)
 
     for spec in a.isa:
         label, _, vars_ = spec.partition("=")
@@ -102,7 +183,16 @@ def main():
                   f"C {c['vio']:8.1f}/{c['ref']:8.1f} ({100 * c['vio'] / c['ref']:5.1f}%)  "
                   f"D {d['vio']:8.1f}/{d['ref']:8.1f} ({100 * d['vio'] / d['ref']:5.1f}%)",
                   flush=True)
-        result["isas"].append({"isa": label, "env": vars_, "rows": rows})
+        entry = {"isa": label, "env": vars_, "rows": rows}
+        if tool:
+            try:
+                entry["profile"] = {
+                    "tool": tool, "config": PROFILE_CONFIG[0],
+                    **{who: profile(tool, exe, image, PROFILE_CONFIG[1], env, tmp)
+                       for who, exe in (("vio", a.vio), ("ref", a.ref))}}
+            except (OSError, subprocess.SubprocessError) as e:
+                print(f"profiling failed: {e}", flush=True)
+        result["isas"].append(entry)
 
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     json.dump(result, open(a.out, "w"), indent=1)

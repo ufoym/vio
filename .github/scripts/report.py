@@ -6,7 +6,7 @@ report.py <results-dir> <report.md> <report.html>
 <results-dir> holds the files written by run-ctest.sh (*.json + JUnit *.xml)
 and bench.py (bench-*.json), in any subdirectory layout.
 """
-import glob, html, json, math, os, sys, xml.etree.ElementTree as ET
+import glob, html, json, math, os, re, sys, xml.etree.ElementTree as ET
 
 root, md_path, html_path = sys.argv[1:4]
 meta = {"sha": os.environ.get("GITHUB_SHA", "")[:10],
@@ -39,6 +39,30 @@ for path in sorted(glob.glob(f"{root}/**/*.json", recursive=True)):
     tests.append({**info, "total": total, "failed": failed,
                   "skipped": skipped, "names": names, "ok": ok})
 
+# Merge the shards of a run (run on separate runners, so time is the slowest).
+merged = {}
+for t in tests:
+    shard = t.get("shard") or ""
+    t["ctest_args"] = re.sub(r"\s*-I \S+", "", t["ctest_args"]).strip()
+    m = merged.get((t["platform"], t["run"]))
+    if m is None:
+        m = merged[t["platform"], t["run"]] = {
+            **t, "shards": int(shard.split("/")[1]) if shard else 1, "got": 0}
+    else:
+        for k in ("total", "failed", "skipped"):
+            m[k] += t[k]
+        m["names"] += t["names"]
+        m["seconds"] = max(m["seconds"], t["seconds"])
+        m["ok"] = m["ok"] and t["ok"]
+    m["got"] += 1
+for m in merged.values():
+    if m["got"] < m["shards"]:  # a shard job died before reporting
+        m["ok"] = False
+        m["run"] += f" ({m['got']}/{m['shards']} shards reported)"
+    elif m["shards"] > 1:
+        m["run"] += f" ({m['shards']} shards)"
+tests = list(merged.values())
+
 # ---- performance ------------------------------------------------------------
 bench = [json.load(open(p)) for p in
          sorted(glob.glob(f"{root}/**/bench-*.json", recursive=True))]
@@ -50,6 +74,26 @@ def geomean(xs):
 
 def ratio(r, op):
     return r[op]["vio"] / r[op]["ref"]
+
+
+def profile_rows(prof, n=10):
+    """[(vio name, ms/Mpx, ref name, ms/Mpx)] for the top n functions."""
+    cols = []
+    for who in ("vio", "ref"):
+        p = prof.get(who) or {}
+        scale = 1000.0 / p["mpx"] if p.get("mpx") else None
+        cols.append([(name, pct / 100 * scale if scale else None)
+                     for pct, name in p.get("rows", [])[:n]])
+    rows = []
+    for i in range(max(map(len, cols))):
+        v = cols[0][i] if i < len(cols[0]) else ("", None)
+        r = cols[1][i] if i < len(cols[1]) else ("", None)
+        rows.append((v[0], v[1], r[0], r[1]))
+    return rows
+
+
+def ms(x):
+    return "" if x is None else f"{x:.2f}"
 
 
 for b in bench:
@@ -111,6 +155,15 @@ for b in bench:
             md.append(f"| {r['config']} | {c['vio']:.1f} | {c['ref']:.1f} | "
                       f"{pct(ratio(r, 'compress'))} | {d['vio']:.1f} | "
                       f"{d['ref']:.1f} | {pct(ratio(r, 'decompress'))} |")
+        if isa.get("profile"):
+            p = isa["profile"]
+            md += ["", f"Compression profile, {p['config']} ({p['tool']}), "
+                   "ms per Mpixel:", "",
+                   "| vio function | ms | libjpeg-turbo function | ms |",
+                   "| --- | ---: | --- | ---: |"]
+            code = lambda x: f"`{x}`" if x else ""
+            md += [f"| {code(v)} | {ms(vm)} | {code(r)} | {ms(rm)} |"
+                   for v, vm, r, rm in profile_rows(p)]
         md += ["", "</details>"]
 open(md_path, "w").write("\n".join(md) + "\n")
 
@@ -165,6 +218,16 @@ for b in bench:
                      f"<td class=num>{d['vio']:.1f}</td><td class=num>{d['ref']:.1f}</td>"
                      f"{cell(ratio(r, 'decompress'))}</tr>")
         h.append("</table>")
+        if isa.get("profile"):
+            p = isa["profile"]
+            h.append(f"<p><small>Compression profile, {e(p['config'])} "
+                     f"({e(p['tool'])}), ms per Mpixel</small></p>")
+            h.append("<table><tr><th>vio function</th><th>ms</th>"
+                     "<th>libjpeg-turbo function</th><th>ms</th></tr>")
+            for v, vm, r, rm in profile_rows(p):
+                h.append(f"<tr><td><code>{e(v)}</code></td><td class=num>{ms(vm)}</td>"
+                         f"<td><code>{e(r)}</code></td><td class=num>{ms(rm)}</td></tr>")
+            h.append("</table>")
 
 header = (f"Commit <code>{e(meta['sha'])}</code> on <code>{e(meta['ref'])}</code>"
           f" · <a href=\"{e(meta['run'])}\">workflow run</a>"

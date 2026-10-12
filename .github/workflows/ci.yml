@@ -5,8 +5,9 @@
 #           the suite with the JSIMD_* variables (or QEMU CPU model) selecting
 #           each instruction-set level; repeats skip the scalar variant.
 #   bench   tjbench throughput, vio vs libjpeg-turbo built from the test
-#           submodule on the same runner, per instruction-set level.  Only on
-#           real hardware: emulated timings say nothing.
+#           submodule on the same runner, per instruction-set level, plus a
+#           per-function compression profile of both.  Only on real hardware:
+#           emulated timings say nothing.
 #   report  one Markdown report (job summary) + HTML report (artifact).
 name: CI
 
@@ -24,13 +25,15 @@ permissions:
 
 jobs:
   test:
-    name: test · ${{ matrix.name }}
+    name: test · ${{ matrix.name }}${{ matrix.shard && format(' · {0} {1}', matrix.tag, matrix.shard) || '' }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
+    timeout-minutes: ${{ matrix.timeout || 120 }}
     strategy:
       fail-fast: false
       matrix:
         include:
+          # timeout: job limit in minutes (default 120); test_timeout: per-test
+          # limit in seconds (default 1800)
           # runs: one per line, "label|VAR=value ...|extra ctest args"
           - name: linux-x64-gcc
             os: ubuntu-24.04
@@ -111,6 +114,9 @@ jobs:
             emulator: qemu-mips64el
             runs: |
               mmi|QEMU_CPU=Loongson-3A1000|
+          # QEMU emulates RVV slowly: one run takes hours on a single runner, so
+          # the RISC-V runs are split into shards on separate runners, and the
+          # 8-bit tjunittest alone needs more than 30 minutes.
           - name: linux-riscv64 (qemu)
             os: ubuntu-24.04
             apt: g++-14-riscv64-linux-gnu qemu-user
@@ -119,8 +125,109 @@ jobs:
             proc: riscv64
             flags: -march=rv64gcv
             emulator: qemu-riscv64
+            timeout: 240
+            test_timeout: 10800
+            tag: vlen128
+            shard: 1/5
             runs: |
               rvv-vlen128|QEMU_CPU=rv64,v=true,vlen=128|
+          - name: linux-riscv64 (qemu)
+            os: ubuntu-24.04
+            apt: g++-14-riscv64-linux-gnu qemu-user
+            triple: riscv64-linux-gnu
+            sfx: "-14"
+            proc: riscv64
+            flags: -march=rv64gcv
+            emulator: qemu-riscv64
+            timeout: 240
+            test_timeout: 10800
+            tag: vlen128
+            shard: 2/5
+            runs: |
+              rvv-vlen128|QEMU_CPU=rv64,v=true,vlen=128|
+          - name: linux-riscv64 (qemu)
+            os: ubuntu-24.04
+            apt: g++-14-riscv64-linux-gnu qemu-user
+            triple: riscv64-linux-gnu
+            sfx: "-14"
+            proc: riscv64
+            flags: -march=rv64gcv
+            emulator: qemu-riscv64
+            timeout: 240
+            test_timeout: 10800
+            tag: vlen128
+            shard: 3/5
+            runs: |
+              rvv-vlen128|QEMU_CPU=rv64,v=true,vlen=128|
+          - name: linux-riscv64 (qemu)
+            os: ubuntu-24.04
+            apt: g++-14-riscv64-linux-gnu qemu-user
+            triple: riscv64-linux-gnu
+            sfx: "-14"
+            proc: riscv64
+            flags: -march=rv64gcv
+            emulator: qemu-riscv64
+            timeout: 240
+            test_timeout: 10800
+            tag: vlen128
+            shard: 4/5
+            runs: |
+              rvv-vlen128|QEMU_CPU=rv64,v=true,vlen=128|
+          - name: linux-riscv64 (qemu)
+            os: ubuntu-24.04
+            apt: g++-14-riscv64-linux-gnu qemu-user
+            triple: riscv64-linux-gnu
+            sfx: "-14"
+            proc: riscv64
+            flags: -march=rv64gcv
+            emulator: qemu-riscv64
+            timeout: 240
+            test_timeout: 10800
+            tag: vlen128
+            shard: 5/5
+            runs: |
+              rvv-vlen128|QEMU_CPU=rv64,v=true,vlen=128|
+          - name: linux-riscv64 (qemu)
+            os: ubuntu-24.04
+            apt: g++-14-riscv64-linux-gnu qemu-user
+            triple: riscv64-linux-gnu
+            sfx: "-14"
+            proc: riscv64
+            flags: -march=rv64gcv
+            emulator: qemu-riscv64
+            timeout: 240
+            test_timeout: 10800
+            tag: vlen256
+            shard: 1/3
+            runs: |
+              rvv-vlen256|QEMU_CPU=rv64,v=true,vlen=256|-E scalar
+          - name: linux-riscv64 (qemu)
+            os: ubuntu-24.04
+            apt: g++-14-riscv64-linux-gnu qemu-user
+            triple: riscv64-linux-gnu
+            sfx: "-14"
+            proc: riscv64
+            flags: -march=rv64gcv
+            emulator: qemu-riscv64
+            timeout: 240
+            test_timeout: 10800
+            tag: vlen256
+            shard: 2/3
+            runs: |
+              rvv-vlen256|QEMU_CPU=rv64,v=true,vlen=256|-E scalar
+          - name: linux-riscv64 (qemu)
+            os: ubuntu-24.04
+            apt: g++-14-riscv64-linux-gnu qemu-user
+            triple: riscv64-linux-gnu
+            sfx: "-14"
+            proc: riscv64
+            flags: -march=rv64gcv
+            emulator: qemu-riscv64
+            timeout: 240
+            test_timeout: 10800
+            tag: vlen256
+            shard: 3/3
+            runs: |
               rvv-vlen256|QEMU_CPU=rv64,v=true,vlen=256|-E scalar
     steps:
       - uses: actions/checkout@v5
@@ -161,10 +268,12 @@ jobs:
         env:
           NAME: ${{ matrix.name }}
           RUNS: ${{ matrix.runs }}
+          SHARD: ${{ matrix.shard }}
+          TEST_TIMEOUT: ${{ matrix.test_timeout || 1800 }}
         run: |
           while IFS='|' read -r label envs ctargs; do
             [ -n "$label" ] || continue
-            echo "::group::$NAME · $label"
+            echo "::group::$NAME · $label${SHARD:+ shard $SHARD}"
             # shellcheck disable=SC2086
             .github/scripts/run-ctest.sh build/ci "$NAME" "$label" \
               $envs -- $ctargs
@@ -177,7 +286,7 @@ jobs:
 
       - name: Upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-${{ strategy.job-index }}
           path: results/
@@ -215,6 +324,15 @@ jobs:
           if [ "$RUNNER_OS" = macOS ]; then brew install nasm
           else sudo apt-get update -q && sudo apt-get install -yq nasm; fi
 
+      - name: Install profiler
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq linux-tools-common "linux-tools-$(uname -r)" ||
+            sudo apt-get install -yq linux-tools-generic
+          sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
+
       - name: Build vio tjbench
         run: |
           cmake -S . -B build/vio -DCMAKE_BUILD_TYPE=Release -DVIO_TEST_SCALAR=OFF
@@ -232,7 +350,7 @@ jobs:
             --out results/bench-${{ matrix.name }}.json
 
       - name: Upload results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bench-${{ matrix.name }}
           path: results/
@@ -243,7 +361,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: results
       - name: Build report
@@ -251,7 +369,7 @@ jobs:
           mkdir -p report
           python3 .github/scripts/report.py results report/report.md report/index.html
           cat report/report.md >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: report
           path: report/
