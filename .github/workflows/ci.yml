@@ -29,6 +29,9 @@ jobs:
     name: test · ${{ matrix.name }}${{ matrix.shard && format(' · {0} {1}', matrix.tag, matrix.shard) || '' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout || 120 }}
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
@@ -66,6 +69,29 @@ jobs:
               neon||
           - name: macos-x64
             os: macos-15-intel
+            runs: |
+              avx2||
+              sse2|JSIMD_FORCESSE2=1|-E scalar
+          - name: windows-x64-msvc
+            os: windows-2025
+            msvc: x64
+            cc: cl
+            cxx: cl
+            runs: |
+              avx2||
+              sse2|JSIMD_FORCESSE2=1|-E scalar
+          - name: windows-x64-clang-cl
+            os: windows-2025
+            msvc: x64
+            cc: clang-cl
+            cxx: clang-cl
+            runs: |
+              avx2||
+          - name: windows-x86-msvc
+            os: windows-2025
+            msvc: x86
+            cc: cl
+            cxx: cl
             runs: |
               avx2||
               sse2|JSIMD_FORCESSE2=1|-E scalar
@@ -222,6 +248,12 @@ jobs:
         with:
           submodules: true
 
+      - name: Set up MSVC
+        if: matrix.msvc
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc }}
+
       - name: Install toolchain
         if: matrix.apt
         run: |
@@ -246,6 +278,7 @@ jobs:
               args+=(-DCMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/${{ matrix.emulator }})
             fi
           fi
+          [ "$RUNNER_OS" = Windows ] && args+=(-G Ninja)
           [ -z "$CC" ] && unset CC CXX
           cmake -S . -B build/ci "${args[@]}"
 
@@ -285,6 +318,9 @@ jobs:
     name: bench · ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
@@ -301,15 +337,25 @@ jobs:
           - name: macos-x64
             os: macos-15-intel
             isas: --isa avx2= --isa sse2=JSIMD_FORCESSE2=1 --isa none=JSIMD_FORCENONE=1
+          - name: windows-x64
+            os: windows-2025
+            isas: --isa avx2= --isa sse2=JSIMD_FORCESSE2=1 --isa none=JSIMD_FORCENONE=1
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: true
 
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Install NASM
         if: contains(matrix.name, 'x64')
         run: |
           if [ "$RUNNER_OS" = macOS ]; then brew install nasm
+          elif [ "$RUNNER_OS" = Windows ]; then
+            choco install -y --no-progress nasm
+            echo "C:\Program Files\NASM" >> "$GITHUB_PATH"
           else sudo apt-get update -q && sudo apt-get install -yq nasm; fi
 
       - name: Install profiler
@@ -340,19 +386,25 @@ jobs:
             libjpeg=""
             targets="tjbench"
           fi
-          cmake -S . -B build/vio -DCMAKE_BUILD_TYPE=Release -DVIO_TEST_SCALAR=OFF $libjpeg
+          gen=""
+          [ "$RUNNER_OS" = Windows ] && gen="-G Ninja"
+          cmake -S . -B build/vio $gen -DCMAKE_BUILD_TYPE=Release -DVIO_TEST_SCALAR=OFF $libjpeg
           cmake --build build/vio --parallel --target $targets
 
       - name: Build libjpeg-turbo tjbench
         run: |
-          cmake -S tests/libjpeg-turbo -B build/ljt -DCMAKE_BUILD_TYPE=Release
+          gen=""
+          [ "$RUNNER_OS" = Windows ] && gen="-G Ninja"
+          cmake -S tests/libjpeg-turbo -B build/ljt $gen -DCMAKE_BUILD_TYPE=Release
           cmake --build build/ljt --parallel --target tjbench
 
       - name: Benchmark
         run: |
           libjpeg=""
           if [ -x build/vio/tjbench-libjpeg ]; then libjpeg="--libjpeg build/vio/tjbench-libjpeg"; fi
-          python3 .github/scripts/bench.py --platform ${{ matrix.name }} \
+          py=python3
+          [ "$RUNNER_OS" = Windows ] && py=python
+          $py .github/scripts/bench.py --platform ${{ matrix.name }} \
             --vio build/vio/tjbench --ref build/ljt/tjbench ${{ matrix.isas }} \
             $libjpeg --out results/bench-${{ matrix.name }}.json
 

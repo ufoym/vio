@@ -22,10 +22,12 @@ out=$PWD/results
 mkdir -p "$out"
 base="$out/${platform}__${label}"
 shard=${SHARD-}
+py=python3
+python3 -c '' 2>/dev/null || py=python  # Windows
 select=(${args[@]+"${args[@]}"})
 if [ -n "$shard" ]; then
   base+="__${shard%/*}"
-  python3 "$(dirname "$0")/shard.py" "$build" "${shard%/*}" "${shard#*/}" \
+  "$py" "$(dirname "$0")/shard.py" "$build" "${shard%/*}" "${shard#*/}" \
     ${args[@]+"${args[@]}"} > "$base.tests" || exit 1
   select=(--tests-from-file "$base.tests")
 fi
@@ -37,7 +39,7 @@ start=$(date +%s)
 status=$?
 end=$(date +%s)
 
-python3 - "$base.json" "$platform" "$label" "$status" "$((end - start))" \
+"$py" - "$base.json" "$platform" "$label" "$status" "$((end - start))" \
   "${envs[*]-}" "${args[*]-}" "$shard" <<'EOF'
 import json, sys
 path, platform, label, status, secs, env, args, shard = sys.argv[1:]

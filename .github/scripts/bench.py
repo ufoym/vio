@@ -65,6 +65,11 @@ def cpu_name():
         if sys.platform == "darwin":
             return subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
                                   capture_output=True, text=True).stdout.strip()
+        if sys.platform == "win32":
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                                 r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+            return winreg.QueryValueEx(key, "ProcessorNameString")[0].strip()
         for line in open("/proc/cpuinfo"):
             if line.startswith(("model name", "Model")):
                 return line.split(":", 1)[1].strip()
