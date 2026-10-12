@@ -177,11 +177,13 @@ inline void fdct_islow(std::int16_t* data) {
   fdct_islow_pass<true>(p, q, r, s, A, B, C, D);
   transpose_pairs(A, B, C, D, p, q, r, s);
   fdct_islow_pass<false>(p, q, r, s, A, B, C, D);
-  const Y out[4] = {A, B, C, D};
-  for (int i = 0; i < 4; i++) {
-    _mm_storeu_si128(reinterpret_cast<X*>(data + i * 8), lo(out[i]));
-    _mm_storeu_si128(reinterpret_cast<X*>(data + (i + 4) * 8), hi(out[i]));
-  }
+  // Store whole row pairs: the quantizer reloads the block as 256-bit row
+  // pairs, and a load spanning two narrower stores cannot be forwarded.
+  auto st = [&](int i, Y v) { _mm256_storeu_si256(reinterpret_cast<Y*>(data + i * 8), v); };
+  st(0, _mm256_permute2x128_si256(A, B, 0x20));  // [o0|o1]
+  st(2, _mm256_permute2x128_si256(C, D, 0x20));  // [o2|o3]
+  st(4, _mm256_permute2x128_si256(A, B, 0x31));  // [o4|o5]
+  st(6, _mm256_permute2x128_si256(C, D, 0x31));  // [o6|o7]
 }
 
 inline void idct_islow(const std::int16_t* quantptr, const std::int16_t* coef_block,
