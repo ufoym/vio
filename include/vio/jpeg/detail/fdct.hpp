@@ -437,19 +437,13 @@ class ForwardDct {
         unsigned recip = static_cast<unsigned>(divisors[i + DCTSIZE2 * 0]);
         unsigned corr = static_cast<unsigned>(divisors[i + DCTSIZE2 * 1]);
         int shift = divisors[i + DCTSIZE2 * 3];
-        unsigned long long product;
-        if (temp < 0) {
-          temp = -temp;
-          product = static_cast<unsigned long long>(static_cast<unsigned>(temp) + corr) * recip;
-          product >>= shift + 32;
-          temp = static_cast<E>(product);
-          temp = -temp;
-        } else {
-          product = static_cast<unsigned long long>(static_cast<unsigned>(temp) + corr) * recip;
-          product >>= shift + 32;
-          temp = static_cast<E>(product);
-        }
-        output_ptr[i] = static_cast<Coef>(temp);
+        // |temp| is quantized and the sign restored without a branch (the
+        // sign of a coefficient is unpredictable).
+        E sign = temp >> (sizeof(E) * 8 - 1);
+        unsigned mag = static_cast<unsigned>((temp ^ sign) - sign);
+        unsigned long long product = static_cast<unsigned long long>(mag + corr) * recip;
+        temp = static_cast<E>(product >> (shift + 32));
+        output_ptr[i] = static_cast<Coef>((temp ^ sign) - sign);
       }
     } else {
       for (int i = 0; i < DCTSIZE2; i++) {
