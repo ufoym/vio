@@ -40,17 +40,27 @@ VIO_INLINE int clz64(std::uint64_t v) {  // v != 0
 #endif
 }
 
-VIO_INLINE int bit_length_nonzero(unsigned v) {  // number of bits in v != 0
-#if defined(_MSC_VER) && !defined(__clang__) && VIO_HUFF_BMI2
+#if VIO_HUFF_BMI2
+VIO_INLINE int ac_bit_length(unsigned v) {  // number of bits in v, 0 < v <= 32768
+#if defined(_MSC_VER) && !defined(__clang__)
   return 32 - static_cast<int>(_lzcnt_u32(v));
-#elif defined(_MSC_VER) && !defined(__clang__)
-  unsigned long i;
-  _BitScanReverse(&i, v);
-  return static_cast<int>(i) + 1;
 #else
   return 32 - __builtin_clz(v);
 #endif
 }
+#else
+// Bit lengths of 0..32768.  Without LZCNT, bsr would chain each coefficient
+// to the previous one: its destination register is also an input.
+inline constexpr auto kBitLength = [] {
+  std::array<std::uint8_t, 32769> t{};
+  for (unsigned v = 1, n = 1; v < t.size(); v++) {
+    if (v >> n) n++;
+    t[v] = static_cast<std::uint8_t>(n);
+  }
+  return t;
+}();
+VIO_INLINE int ac_bit_length(unsigned v) { return kBitLength[v]; }  // v <= 32768
+#endif
 
 VIO_INLINE int bit_length(unsigned v) {  // number of bits in v (0 for 0)
 #if defined(_MSC_VER) && !defined(__clang__) && VIO_HUFF_BMI2
@@ -256,7 +266,7 @@ inline std::uint8_t* encode_one_block(HuffBitState& st, std::uint8_t* buffer,
       run -= 16;
     }
     const int code = t[pos];
-    nbits = bit_length_nonzero(static_cast<unsigned>(code ^ (code >> 31)));
+    nbits = ac_bit_length(static_cast<unsigned>(code ^ (code >> 31)));
     const unsigned rs = (run << 4) + static_cast<unsigned>(nbits);
     w.put_bits(shl64(actbl.ehufco[rs], static_cast<unsigned>(nbits)) |
                    low_bits(static_cast<unsigned>(code), nbits),
