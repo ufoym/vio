@@ -15,8 +15,6 @@ constexpr int F_0_298 = 2446, F_0_390 = 3196, F_0_541 = 4433, F_0_765 = 6270, F_
               F_2_562 = 20995, F_3_072 = 25172;
 
 VIO_INLINE Y pair2(X lo, X hi) { return _mm256_inserti128_si256(_mm256_castsi128_si256(lo), hi, 1); }
-VIO_INLINE X lo(Y v) { return _mm256_castsi256_si128(v); }
-VIO_INLINE X hi(Y v) { return _mm256_extracti128_si256(v, 1); }
 VIO_INLINE Y swap(Y v) { return _mm256_permute2x128_si256(v, v, 0x01); }
 // [a.lo | b.lo]
 VIO_INLINE Y lows(Y a, Y b) { return _mm256_permute2x128_si256(a, b, 0x20); }
@@ -50,26 +48,6 @@ VIO_INLINE Y descale(D_ x) {
   const Y r = _mm256_set1_epi32(1 << (N - 1));
   return _mm256_packs_epi32(_mm256_srai_epi32(_mm256_add_epi32(x.lo, r), N),
                             _mm256_srai_epi32(_mm256_add_epi32(x.hi, r), N));
-}
-
-// 8x8 16-bit transpose of 8 row vectors.
-VIO_INLINE void transpose8(X* r) {
-  X a0 = _mm_unpacklo_epi16(r[0], r[1]), a1 = _mm_unpackhi_epi16(r[0], r[1]);
-  X a2 = _mm_unpacklo_epi16(r[2], r[3]), a3 = _mm_unpackhi_epi16(r[2], r[3]);
-  X a4 = _mm_unpacklo_epi16(r[4], r[5]), a5 = _mm_unpackhi_epi16(r[4], r[5]);
-  X a6 = _mm_unpacklo_epi16(r[6], r[7]), a7 = _mm_unpackhi_epi16(r[6], r[7]);
-  X b0 = _mm_unpacklo_epi32(a0, a2), b1 = _mm_unpackhi_epi32(a0, a2);
-  X b2 = _mm_unpacklo_epi32(a1, a3), b3 = _mm_unpackhi_epi32(a1, a3);
-  X b4 = _mm_unpacklo_epi32(a4, a6), b5 = _mm_unpackhi_epi32(a4, a6);
-  X b6 = _mm_unpacklo_epi32(a5, a7), b7 = _mm_unpackhi_epi32(a5, a7);
-  r[0] = _mm_unpacklo_epi64(b0, b4);
-  r[1] = _mm_unpackhi_epi64(b0, b4);
-  r[2] = _mm_unpacklo_epi64(b1, b5);
-  r[3] = _mm_unpackhi_epi64(b1, b5);
-  r[4] = _mm_unpacklo_epi64(b2, b6);
-  r[5] = _mm_unpackhi_epi64(b2, b6);
-  r[6] = _mm_unpacklo_epi64(b3, b7);
-  r[7] = _mm_unpackhi_epi64(b3, b7);
 }
 
 // Transposes an 8x8 block held as A = [r0|r4], B = [r1|r5], C = [r2|r6],
@@ -119,28 +97,48 @@ VIO_INLINE void fdct_islow_pass(Y p, Y q, Y r, Y s, Y& A, Y& B, Y& C, Y& D) {
   D = _mm256_permute2x128_si256(o13, o75, 0x21);  // [out3|out7]
 }
 
-// Accurate IDCT pass on dequantized in[0..7].
+// Accurate IDCT pass on the dequantized pairs e04 = [in0|in4],
+// e26 = [in2|in6], x75 = [in7|in5], y13 = [in1|in3]; returns the outputs as
+// A = [o0|o4], B = [o1|o5], C = [o2|o6], D = [o3|o7].
 template <bool kPass1>
-VIO_INLINE void idct_islow_pass(X* in) {
+VIO_INLINE void idct_islow_pass(Y e04, Y e26, Y x75, Y y13, Y& A, Y& B, Y& C, Y& D) {
   constexpr int DS = kPass1 ? CONST_BITS - PASS1_BITS : CONST_BITS + PASS1_BITS + 3;
-  Y e04 = pair2(in[0], in[4]), e26 = pair2(in[2], in[6]);
   // [tmp3|tmp2]
   D_ t32 = madd(e26, swap(e26), k2(F_0_541 + F_0_765, F_0_541, F_0_541 - F_1_847, F_0_541));
   Y s04 = swap(e04);
   D_ t01 = widen_shl<CONST_BITS>(lows(_mm256_add_epi16(e04, s04), _mm256_sub_epi16(e04, s04)));
   D_ t1011 = add(t01, t32), t1312 = sub(t01, t32);
-  Y x75 = pair2(in[7], in[5]), y13 = pair2(in[1], in[3]);
   Y z34 = _mm256_add_epi16(swap(y13), x75);  // [in3 + in7 | in1 + in5] = [z3|z4]
   D_ z = madd(z34, swap(z34), k2(F_1_175 - F_1_961, F_1_175, F_1_175 - F_0_390, F_1_175));
   D_ o01 = add(madd(x75, y13, k2(F_0_298 - F_0_899, -F_0_899, F_2_053 - F_2_562, -F_2_562)), z);
   D_ o32 = add(madd(x75, y13, k2(-F_0_899, F_1_501 - F_0_899, -F_2_562, F_3_072 - F_2_562)), swap(z));
   Y r01 = descale<DS>(add(t1011, o32)), r76 = descale<DS>(sub(t1011, o32));
   Y r32 = descale<DS>(add(t1312, o01)), r45 = descale<DS>(sub(t1312, o01));
-  in[0] = lo(r01); in[1] = hi(r01);
-  in[7] = lo(r76); in[6] = hi(r76);
-  in[3] = lo(r32); in[2] = hi(r32);
-  in[4] = lo(r45); in[5] = hi(r45);
+  A = _mm256_permute2x128_si256(r01, r45, 0x20);
+  B = _mm256_permute2x128_si256(r01, r45, 0x31);
+  C = _mm256_permute2x128_si256(r32, r76, 0x31);
+  D = _mm256_permute2x128_si256(r32, r76, 0x20);
 }
+
+// First steps of the transpose of an 8x8 block held as A = [r0|r4],
+// B = [r1|r5], C = [r2|r6], D = [r3|r7]: u0..u3 hold the columns (c0, c1),
+// (c2, c3), (c4, c5), (c6, c7) as 64-bit units
+// [cN rows 0-3, cN+1 rows 0-3 | cN rows 4-7, cN+1 rows 4-7].
+VIO_INLINE void transpose_units(Y A, Y B, Y C, Y D, Y& u0, Y& u1, Y& u2, Y& u3) {
+  Y ab0 = _mm256_unpacklo_epi16(A, B), ab1 = _mm256_unpackhi_epi16(A, B);
+  Y cd0 = _mm256_unpacklo_epi16(C, D), cd1 = _mm256_unpackhi_epi16(C, D);
+  u0 = _mm256_unpacklo_epi32(ab0, cd0);
+  u1 = _mm256_unpackhi_epi32(ab0, cd0);
+  u2 = _mm256_unpacklo_epi32(ab1, cd1);
+  u3 = _mm256_unpackhi_epi32(ab1, cd1);
+}
+
+// [a.cN|b.cN] from units a = [cN, x | cN, x], b = [cM, y | cM, y], in the
+// order the 64-bit permute `imm` selects.
+template <int imm>
+VIO_INLINE Y join_lo(Y a, Y b) { return _mm256_permute4x64_epi64(_mm256_unpacklo_epi64(a, b), imm); }
+template <int imm>
+VIO_INLINE Y join_hi(Y a, Y b) { return _mm256_permute4x64_epi64(_mm256_unpackhi_epi64(a, b), imm); }
 
 }  // namespace detail_dct
 
@@ -189,26 +187,40 @@ inline void fdct_islow(std::int16_t* data) {
 inline void idct_islow(const std::int16_t* quantptr, const std::int16_t* coef_block,
                        std::uint8_t** output_buf, unsigned output_col) {
   using namespace detail_dct;
-  X r[8];
-  X ac = _mm_setzero_si128();
-  for (int i = 0; i < 8; i++) {
-    X c = _mm_loadu_si128(reinterpret_cast<const X*>(coef_block + i * 8));
-    if (i) ac = _mm_or_si128(ac, c);
-    r[i] = _mm_mullo_epi16(c, _mm_loadu_si128(reinterpret_cast<const X*>(quantptr + i * 8)));
-  }
-  if (_mm_movemask_epi8(_mm_cmpeq_epi8(ac, _mm_setzero_si128())) == 0xFFFF) {
-    X dc = _mm_slli_epi16(r[0], PASS1_BITS);
-    for (int i = 0; i < 8; i++) r[i] = dc;
+  auto pair = [&](const std::int16_t* p, int a, int b) {
+    return pair2(_mm_loadu_si128(reinterpret_cast<const X*>(p + a * 8)),
+                 _mm_loadu_si128(reinterpret_cast<const X*>(p + b * 8)));
+  };
+  Y c04 = pair(coef_block, 0, 4), c26 = pair(coef_block, 2, 6);
+  Y c75 = pair(coef_block, 7, 5), c13 = pair(coef_block, 1, 3);
+  Y e04 = _mm256_mullo_epi16(c04, pair(quantptr, 0, 4));
+  Y A, B, C, D;
+  // Rows 1-7 all zero: every column is its DC term.
+  Y ac = _mm256_or_si256(_mm256_or_si256(c26, c75),
+                         _mm256_or_si256(c13, _mm256_blend_epi32(c04, _mm256_setzero_si256(), 0x0F)));
+  if (_mm256_testz_si256(ac, ac)) {
+    A = B = C = D = _mm256_slli_epi16(lows(e04, e04), PASS1_BITS);
   } else {
-    idct_islow_pass<true>(r);
+    idct_islow_pass<true>(e04, _mm256_mullo_epi16(c26, pair(quantptr, 2, 6)),
+                          _mm256_mullo_epi16(c75, pair(quantptr, 7, 5)),
+                          _mm256_mullo_epi16(c13, pair(quantptr, 1, 3)), A, B, C, D);
   }
-  transpose8(r);
-  idct_islow_pass<false>(r);
-  transpose8(r);
-  const X center = _mm_set1_epi8(static_cast<char>(-128));
-  for (int i = 0; i < 8; i += 2) {
-    X b = _mm_add_epi8(_mm_packs_epi16(r[i], r[i + 1]), center);
-    _mm_storel_epi64(reinterpret_cast<X*>(output_buf[i] + output_col), b);
-    _mm_storel_epi64(reinterpret_cast<X*>(output_buf[i + 1] + output_col), _mm_srli_si128(b, 8));
-  }
+  Y u0, u1, u2, u3;
+  transpose_units(A, B, C, D, u0, u1, u2, u3);
+  idct_islow_pass<false>(join_lo<0xD8>(u0, u2), join_lo<0xD8>(u1, u3),  // [c0|c4], [c2|c6]
+                         join_hi<0x8D>(u2, u3), join_hi<0xD8>(u0, u1),  // [c7|c5], [c1|c3]
+                         A, B, C, D);
+  transpose_units(A, B, C, D, u0, u1, u2, u3);
+  const Y center = _mm256_set1_epi8(static_cast<char>(-128));
+  // [rows i, i+1 | rows i+4, i+5] as bytes
+  auto store = [&](int i, Y lo, Y hi) {
+    Y b = _mm256_add_epi8(_mm256_packs_epi16(lo, hi), center);
+    X l = _mm256_castsi256_si128(b), h = _mm256_extracti128_si256(b, 1);
+    _mm_storel_epi64(reinterpret_cast<X*>(output_buf[i] + output_col), l);
+    _mm_storel_epi64(reinterpret_cast<X*>(output_buf[i + 1] + output_col), _mm_unpackhi_epi64(l, l));
+    _mm_storel_epi64(reinterpret_cast<X*>(output_buf[i + 4] + output_col), h);
+    _mm_storel_epi64(reinterpret_cast<X*>(output_buf[i + 5] + output_col), _mm_unpackhi_epi64(h, h));
+  };
+  store(0, join_lo<0xD8>(u0, u2), join_hi<0xD8>(u0, u2));  // [r0|r4], [r1|r5]
+  store(2, join_lo<0xD8>(u1, u3), join_hi<0xD8>(u1, u3));  // [r2|r6], [r3|r7]
 }
