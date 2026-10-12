@@ -2,6 +2,8 @@
 // transcoding, ICC profiles).
 #pragma once
 
+#include <span>
+
 #include "arith_encode.hpp"
 #include "compress_pipeline.hpp"
 
@@ -234,6 +236,8 @@ class Compressor {
   }
 
   std::vector<std::uint8_t> take_output() { return cs.dest.take(); }
+  // The output so far, left in place: the next datastream reuses the buffer.
+  std::span<const std::uint8_t> output() const { return {cs.dest.data(), cs.dest.size()}; }
 
   template <class T>
   CPipeline<T>& pipeline() {

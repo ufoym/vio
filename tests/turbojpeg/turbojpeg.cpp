@@ -186,7 +186,7 @@ R guarded(tjinstance* self, R error_value, F&& body, C&& cleanup) {
 
 // ---------------------------------------------------------------------------
 // Memory destination (jdatadst-tj.c semantics)
-void store_output(tjinstance* self, const std::vector<std::uint8_t>& data, unsigned char** buf,
+void store_output(tjinstance* self, std::span<const std::uint8_t> data, unsigned char** buf,
                   size_t* size, bool alloc) {
   if (!alloc) {
     if (data.size() > *size) {
@@ -429,7 +429,7 @@ int compress_impl(tjhandle handle, const T* srcBuf, int width, int pitch, int he
     while (cs.next_scanline < cs.image_height)
       self->c().write_scanlines<T>(&rows[cs.next_scanline], cs.image_height - cs.next_scanline);
     self->c().finish_compress();
-    store_output(self, self->c().take_output(), jpegBuf, jpegSize, alloc);
+    store_output(self, self->c().output(), jpegBuf, jpegSize, alloc);
     return 0;
   }, [&] {
     abort_compress(self);
@@ -1153,7 +1153,7 @@ DLLEXPORT int tj3CompressFromYUVPlanes8(tjhandle handle, const unsigned char* co
       self->c().write_raw_data<std::uint8_t>(yuvptr, static_cast<unsigned>(cs.max_v_samp_factor * vj::DCTSIZE));
     }
     self->c().finish_compress();
-    store_output(self, self->c().take_output(), jpegBuf, jpegSize, alloc);
+    store_output(self, self->c().output(), jpegBuf, jpegSize, alloc);
     return 0;
   }, [&] { abort_compress(self); });
   return (r == -1 || self->warning) ? -1 : 0;
@@ -1883,7 +1883,7 @@ DLLEXPORT int tj3Transform(tjhandle handle, const unsigned char* jpegBuf, size_t
       }
       if (output) {
         c.finish_compress();
-        store_output(self, c.take_output(), &dstBufs[i], &dstSizes[i], alloc);
+        store_output(self, c.output(), &dstBufs[i], &dstSizes[i], alloc);
       }
     }
     d.finish_decompress();
