@@ -3,6 +3,10 @@
 
 #include <climits>
 #include <utility>
+#if defined(_MSC_VER) && !defined(__clang__)
+#include <bit>
+#include <intrin.h>
+#endif
 
 #include "compress_state.hpp"
 #include "../simd/dispatch.hpp"
@@ -21,7 +25,25 @@ class EntropyEncoder {
   virtual void finish_pass() = 0;
 };
 
+#if defined(_MSC_VER) && !defined(__clang__)
+VIO_INLINE int nbits_nonzero(unsigned x) {
+  unsigned long i;
+  _BitScanReverse(&i, x);
+  return static_cast<int>(i) + 1;
+}
+VIO_INLINE int ctz64(std::uint64_t x) {  // x != 0
+#if defined(_M_X64) || defined(_M_ARM64)
+  unsigned long i;
+  _BitScanForward64(&i, x);
+  return static_cast<int>(i);
+#else
+  return std::countr_zero(x);
+#endif
+}
+#else
 VIO_INLINE int nbits_nonzero(unsigned x) { return 32 - __builtin_clz(x); }
+VIO_INLINE int ctz64(std::uint64_t x) { return __builtin_ctzll(x); }  // x != 0
+#endif
 VIO_INLINE int nbits(unsigned x) { return x ? nbits_nonzero(x) : 0; }
 
 struct CDerivedTable {
@@ -591,7 +613,7 @@ class PhuffEncoder final : public EntropyEncoder {
     if (zerobits && EOBRUN_ > 0) emit_eobrun();
     const std::uint16_t* cvalue = values;
     while (zerobits) {
-      int r = __builtin_ctzll(zerobits);
+      int r = ctz64(zerobits);
       zerobits >>= r;
       cvalue += r;
       int temp = cvalue[0];
@@ -653,7 +675,7 @@ class PhuffEncoder final : public EntropyEncoder {
     unsigned BR = 0;
     char* BR_buffer = bit_buffer_ + BE_;
     while (zerobits) {
-      int idx = __builtin_ctzll(zerobits);
+      int idx = ctz64(zerobits);
       zerobits >>= idx;
       r += idx;
       cabsvalue += idx;
@@ -856,7 +878,7 @@ class LhuffEncoder final : public EntropyEncoder {
       temp &= 0x7FFF;
       temp2 = temp;
     }
-    int nb = temp ? 32 - __builtin_clz(static_cast<unsigned>(temp)) : 0;
+    int nb = nbits(static_cast<unsigned>(temp));
     return {nb, temp2};
   }
   CState& cs_;

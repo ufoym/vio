@@ -138,7 +138,7 @@ inline unsigned detect() {
 
 // True if the environment variable `name` is set to exactly "1".
 inline bool env_is_1(const char* name) {
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER)
   char buf[2] = {};
   std::size_t len = 0;
   return getenv_s(&len, buf, sizeof(buf), name) == 0 && len == 2 && buf[0] == '1';

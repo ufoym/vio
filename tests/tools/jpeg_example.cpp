@@ -7,8 +7,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <strings.h>
 #include <vector>
+#ifdef _WIN32
+#define strcasecmp _stricmp
+#define strncasecmp _strnicmp
+#else
+#include <strings.h>
+#endif
 
 #include "cli.hpp"
 #include "vio/jpeg/decoder.hpp"

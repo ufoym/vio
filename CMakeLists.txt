@@ -32,6 +32,14 @@ if(VIO_X86_SSE2_MATH AND VIO_TARGET_ARCH MATCHES "^(i[3-6]86|x86)$" AND
   add_compile_options(-msse2 -mfpmath=sse)
 endif()
 
+# Sources are UTF-8; MSVC otherwise reads them in the system code page.
+# The test programs use the standard C I/O functions that the MSVC runtime
+# marks as deprecated.
+if(MSVC)
+  add_compile_options(/utf-8)
+  add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+endif()
+
 set(VIO_IS_TOP_LEVEL OFF)
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
   set(VIO_IS_TOP_LEVEL ON)

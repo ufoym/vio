@@ -14,8 +14,13 @@
 #include <cstring>
 #include <memory>
 #include <string>
-#include <strings.h>
 #include <vector>
+#ifdef _WIN32
+#define strcasecmp _stricmp
+#define strncasecmp _strnicmp
+#else
+#include <strings.h>
+#endif
 
 #include "vio/bmp.hpp"
 #include "vio/png.hpp"
