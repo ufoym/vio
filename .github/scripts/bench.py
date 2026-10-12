@@ -2,10 +2,13 @@
 """Throughput of vio's tjbench against libjpeg-turbo's on the same machine.
 
 bench.py --vio build/tjbench --ref build/ljt/tjbench --platform linux-x64 \
-         --isa avx2= --isa sse2=JSIMD_FORCESSE2=1 --out results/bench-linux-x64.json
+         --isa avx2= --isa sse2=JSIMD_FORCESSE2=1 --out results/bench-linux-x64.json \
+         [--libjpeg build/tjbench-libjpeg]
 
 Each --isa is LABEL=[VAR=value,...]; both libraries honour the same JSIMD_*
-variables, so every row compares like with like.  The two programs are run
+variables, so every row compares like with like.  --libjpeg adds tjbench
+built on IJG libjpeg, which has no SIMD code: it is measured once, with the
+first --isa, and configurations it does not support are recorded as null.  The two programs are run
 alternately, several times, and the best throughput of each is kept:
 interference from other jobs on a shared runner can only slow a run down,
 so the best of several runs is far more stable than the median.
@@ -17,18 +20,19 @@ shows where the time goes in both libraries.
 import argparse, json, os, platform, re, shutil, subprocess, sys
 import tempfile, time
 
+# RGB pixels: the pixel order every library supports (libjpeg has no BGR).
 CONFIGS = [
-    ("4:4:4 q95", ["95", "-subsamp", "444"]),
-    ("4:2:2 q95", ["95", "-subsamp", "422"]),
-    ("4:2:0 q95", ["95", "-subsamp", "420"]),
-    ("gray q95", ["95", "-subsamp", "gray"]),
-    ("4:2:0 fast DCT", ["95", "-subsamp", "420", "-fastdct"]),
-    ("4:2:0 progressive", ["95", "-subsamp", "420", "-progressive"]),
-    ("4:2:0 arithmetic", ["95", "-subsamp", "420", "-arithmetic"]),
-    ("lossless PSV1", ["1", "-lossless"]),
+    ("4:4:4 q95", ["95", "-rgb", "-subsamp", "444"]),
+    ("4:2:2 q95", ["95", "-rgb", "-subsamp", "422"]),
+    ("4:2:0 q95", ["95", "-rgb", "-subsamp", "420"]),
+    ("gray q95", ["95", "-rgb", "-subsamp", "gray"]),
+    ("4:2:0 fast DCT", ["95", "-rgb", "-subsamp", "420", "-fastdct"]),
+    ("4:2:0 progressive", ["95", "-rgb", "-subsamp", "420", "-progressive"]),
+    ("4:2:0 arithmetic", ["95", "-rgb", "-subsamp", "420", "-arithmetic"]),
+    ("lossless PSV1", ["1", "-rgb", "-lossless"]),
 ]
 
-PROFILE_CONFIG = ("4:2:0 q95", ["95", "-subsamp", "420"])
+PROFILE_CONFIG = ("4:2:0 q95", ["95", "-rgb", "-subsamp", "420"])
 
 
 def make_image(src, path, tiles=16):
@@ -161,6 +165,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--vio", required=True)
     ap.add_argument("--ref", required=True)
+    ap.add_argument("--libjpeg")
     ap.add_argument("--platform", required=True)
     ap.add_argument("--isa", action="append", required=True)
     ap.add_argument("--src", default="tests/libjpeg-turbo/testimages/testorig.ppm")
@@ -182,21 +187,36 @@ def main():
         env = dict(os.environ)
         env.update(v.split("=", 1) for v in vars_.split(",") if v)
         rows = []
+        progs = [("ref", a.ref), ("vio", a.vio)]
+        if a.libjpeg and not result["isas"]:
+            progs.append(("libjpeg", a.libjpeg))
         for name, args in CONFIGS:
-            samples = {"vio": [], "ref": []}
+            samples = {who: [] for who, _ in progs}
+            unsupported = set()
             for _ in range(a.reps):
-                for who, exe in (("ref", a.ref), ("vio", a.vio)):
-                    samples[who].append(tjbench(exe, image, args, env,
-                                                a.benchtime))
-            best = {who: [max(s[i] for s in v) for i in (0, 1)]
-                   for who, v in samples.items()}
+                for who, exe in progs:
+                    if who in unsupported:
+                        continue
+                    try:
+                        samples[who].append(tjbench(exe, image, args, env,
+                                                    a.benchtime))
+                    except RuntimeError:
+                        if who != "libjpeg":
+                            raise
+                        unsupported.add(who)
+            best = {who: [max(s[i] for s in v) for i in (0, 1)] if v else [None, None]
+                    for who, v in samples.items()}
             rows.append({"config": name, "args": " ".join(args),
-                         "compress": {"vio": best["vio"][0], "ref": best["ref"][0]},
-                         "decompress": {"vio": best["vio"][1], "ref": best["ref"][1]}})
+                         "compress": {who: b[0] for who, b in best.items()},
+                         "decompress": {who: b[1] for who, b in best.items()}})
             c, d = rows[-1]["compress"], rows[-1]["decompress"]
+            lj = ""
+            if "libjpeg" in c:
+                lj = (f"  libjpeg C {c['libjpeg']:8.1f} D {d['libjpeg']:8.1f}"
+                      if c["libjpeg"] else "  libjpeg n/a")
             print(f"{a.platform:14} {label:6} {name:20} "
                   f"C {c['vio']:8.1f}/{c['ref']:8.1f} ({100 * c['vio'] / c['ref']:5.1f}%)  "
-                  f"D {d['vio']:8.1f}/{d['ref']:8.1f} ({100 * d['vio'] / d['ref']:5.1f}%)",
+                  f"D {d['vio']:8.1f}/{d['ref']:8.1f} ({100 * d['vio'] / d['ref']:5.1f}%){lj}",
                   flush=True)
         entry = {"isa": label, "env": vars_, "rows": rows}
         if tool:

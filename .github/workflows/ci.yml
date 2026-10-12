@@ -6,7 +6,8 @@
 #           each instruction-set level; repeats skip the scalar variant.
 #   bench   tjbench throughput, vio vs libjpeg-turbo built from the test
 #           submodule on the same runner, per instruction-set level, plus a
-#           per-function compression profile of both.  Only on real hardware:
+#           per-function compression profile of both, and IJG libjpeg (no
+#           SIMD) as a baseline.  Only on real hardware:
 #           emulated timings say nothing.
 #   report  one Markdown report (job summary) + HTML report (artifact).
 name: CI
@@ -320,10 +321,27 @@ jobs:
             sudo apt-get install -yq linux-tools-generic
           sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
 
+      # IJG libjpeg, built with the vio tree (tjbench-libjpeg); the benchmark
+      # runs without it if the download fails.
+      - name: Download IJG libjpeg
+        continue-on-error: true
+        run: |
+          curl -fsSL --retry 3 -o jpegsrc.tar.gz https://www.ijg.org/files/jpegsrc.v10.tar.gz
+          echo "8b9eaa13242690ebd03e1728ab1edf97a81a78ed6e83624d493655f31ac95ab5  jpegsrc.tar.gz" |
+            shasum -a 256 -c -
+          mkdir -p build && tar xzf jpegsrc.tar.gz -C build
+
       - name: Build vio tjbench
         run: |
-          cmake -S . -B build/vio -DCMAKE_BUILD_TYPE=Release -DVIO_TEST_SCALAR=OFF
-          cmake --build build/vio --parallel --target tjbench
+          if [ -d build/jpeg-10 ]; then
+            libjpeg="-DVIO_LIBJPEG_SOURCE_DIR=$PWD/build/jpeg-10"
+            targets="tjbench tjbench-libjpeg"
+          else
+            libjpeg=""
+            targets="tjbench"
+          fi
+          cmake -S . -B build/vio -DCMAKE_BUILD_TYPE=Release -DVIO_TEST_SCALAR=OFF $libjpeg
+          cmake --build build/vio --parallel --target $targets
 
       - name: Build libjpeg-turbo tjbench
         run: |
@@ -332,9 +350,11 @@ jobs:
 
       - name: Benchmark
         run: |
+          libjpeg=""
+          if [ -x build/vio/tjbench-libjpeg ]; then libjpeg="--libjpeg build/vio/tjbench-libjpeg"; fi
           python3 .github/scripts/bench.py --platform ${{ matrix.name }} \
             --vio build/vio/tjbench --ref build/ljt/tjbench ${{ matrix.isas }} \
-            --out results/bench-${{ matrix.name }}.json
+            $libjpeg --out results/bench-${{ matrix.name }}.json
 
       - name: Upload results
         uses: actions/upload-artifact@v7

@@ -96,10 +96,33 @@ def ms(x):
     return "" if x is None else f"{x:.2f}"
 
 
+# libjpeg (no SIMD) is measured once per platform, with the first ISA; its
+# throughput per configuration is None where it lacks the feature.
 for b in bench:
+    b["libjpeg"] = {r["config"]: (r["compress"]["libjpeg"], r["decompress"]["libjpeg"])
+                    for isa in b["isas"] for r in isa["rows"]
+                    if "libjpeg" in r["compress"]}
     for isa in b["isas"]:
         isa["gc"] = geomean([ratio(r, "compress") for r in isa["rows"]])
         isa["gd"] = geomean([ratio(r, "decompress") for r in isa["rows"]])
+        if b["libjpeg"]:
+            for op, i in (("compress", 0), ("decompress", 1)):
+                for who in ("vio", "ref"):
+                    isa[f"lj_{who}_{op}"] = geomean(
+                        [r[op][who] / b["libjpeg"][r["config"]][i] for r in isa["rows"]
+                         if b["libjpeg"].get(r["config"], (None, None))[i]])
+
+
+def lj(b, config, i):
+    """libjpeg's throughput as a table cell."""
+    if config not in b["libjpeg"]:
+        return ""
+    v = b["libjpeg"][config][i]
+    return "n/a" if v is None else f"{v:.1f}"
+
+
+def times(x):
+    return f"{x:.2f}×"
 
 # ---- Markdown ---------------------------------------------------------------
 def pct(x):
@@ -144,17 +167,30 @@ for b in bench:
         md.append(f"| {b['platform']} | {b['cpu']} | {isa['isa']} | "
                   f"{flag(isa['gc'])} {pct(isa['gc'])} | "
                   f"{flag(isa['gd'])} {pct(isa['gd'])} |")
+if any(b["libjpeg"] for b in bench):
+    md += ["", "## Performance — speed-up over IJG libjpeg", "",
+           "Geometric mean over the configurations libjpeg supports "
+           "(all but lossless); libjpeg has no SIMD code.", "",
+           "| Platform | ISA | Compress vio | libjpeg-turbo | Decompress vio | libjpeg-turbo |",
+           "| --- | --- | ---: | ---: | ---: | ---: |"]
+    for b in bench:
+        for isa in b["isas"]:
+            if "lj_vio_compress" in isa:
+                md.append(f"| {b['platform']} | {isa['isa']} | "
+                          f"{times(isa['lj_vio_compress'])} | {times(isa['lj_ref_compress'])} | "
+                          f"{times(isa['lj_vio_decompress'])} | {times(isa['lj_ref_decompress'])} |")
 for b in bench:
     for isa in b["isas"]:
         md += ["", f"<details><summary>{b['platform']} · {isa['isa']} "
                f"(Mpixels/s, {b['image']} image)</summary>", "",
-               "| Config | Compress vio | ref | % | Decompress vio | ref | % |",
-               "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"]
+               "| Config | Compress vio | ref | % | libjpeg | Decompress vio | ref | % | libjpeg |",
+               "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
         for r in isa["rows"]:
             c, d = r["compress"], r["decompress"]
             md.append(f"| {r['config']} | {c['vio']:.1f} | {c['ref']:.1f} | "
-                      f"{pct(ratio(r, 'compress'))} | {d['vio']:.1f} | "
-                      f"{d['ref']:.1f} | {pct(ratio(r, 'decompress'))} |")
+                      f"{pct(ratio(r, 'compress'))} | {lj(b, r['config'], 0)} | "
+                      f"{d['vio']:.1f} | {d['ref']:.1f} | "
+                      f"{pct(ratio(r, 'decompress'))} | {lj(b, r['config'], 1)} |")
         if isa.get("profile"):
             p = isa["profile"]
             md += ["", f"Compression profile, {p['config']} ({p['tool']}), "
@@ -203,20 +239,37 @@ for b in bench:
         h.append(f"<tr><td>{e(b['platform'])}</td><td>{e(b['cpu'])}</td>"
                  f"<td>{e(isa['isa'])}</td>{cell(isa['gc'])}{cell(isa['gd'])}</tr>")
 h.append("</table>")
+if any(b["libjpeg"] for b in bench):
+    h.append("<h2>Speed-up over IJG libjpeg <small>geometric mean over the "
+             "configurations libjpeg supports</small></h2>")
+    h.append("<table><tr><th>Platform</th><th>ISA</th><th>Compress vio</th>"
+             "<th>libjpeg-turbo</th><th>Decompress vio</th><th>libjpeg-turbo</th></tr>")
+    for b in bench:
+        for isa in b["isas"]:
+            if "lj_vio_compress" in isa:
+                h.append(f"<tr><td>{e(b['platform'])}</td><td>{e(isa['isa'])}</td>"
+                         + "".join(f"<td class=num>{times(isa[k])}</td>" for k in
+                                   ("lj_vio_compress", "lj_ref_compress",
+                                    "lj_vio_decompress", "lj_ref_decompress"))
+                         + "</tr>")
+    h.append("</table>")
 for b in bench:
     for isa in b["isas"]:
         h.append(f"<h3>{e(b['platform'])} · {e(isa['isa'])} "
                  f"<small>Mpixels/s, {e(b['image'])} image, best of "
                  f"{b['reps']}</small></h3>")
         h.append("<table><tr><th>Config</th><th>Compress vio</th><th>ref</th>"
-                 "<th>%</th><th>Decompress vio</th><th>ref</th><th>%</th></tr>")
+                 "<th>%</th><th>libjpeg</th><th>Decompress vio</th><th>ref</th>"
+                 "<th>%</th><th>libjpeg</th></tr>")
         for r in isa["rows"]:
             c, d = r["compress"], r["decompress"]
             h.append(f"<tr><td>{e(r['config'])}</td>"
                      f"<td class=num>{c['vio']:.1f}</td><td class=num>{c['ref']:.1f}</td>"
                      f"{cell(ratio(r, 'compress'))}"
+                     f"<td class=num>{lj(b, r['config'], 0)}</td>"
                      f"<td class=num>{d['vio']:.1f}</td><td class=num>{d['ref']:.1f}</td>"
-                     f"{cell(ratio(r, 'decompress'))}</tr>")
+                     f"{cell(ratio(r, 'decompress'))}"
+                     f"<td class=num>{lj(b, r['config'], 1)}</td></tr>")
         h.append("</table>")
         if isa.get("profile"):
             p = isa["profile"]

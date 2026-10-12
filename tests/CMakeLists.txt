@@ -74,6 +74,39 @@ add_executable(md5cmp ${LJT_DIR}/md5/md5cmp.c ${LJT_DIR}/md5/md5.c
   ${LJT_DIR}/md5/md5hl.c)
 vio_ljt_program(md5cmp)
 
+# Optional, for performance comparisons: tjbench on IJG libjpeg (9 or later),
+# built from an unpacked jpegsrc.v*.tar.gz with the same compiler and flags.
+set(VIO_LIBJPEG_SOURCE_DIR "" CACHE PATH
+  "IJG libjpeg source tree; builds tjbench-libjpeg when set")
+if(VIO_LIBJPEG_SOURCE_DIR)
+  set(IJG_SOURCES jaricom jcapimin jcapistd jcarith jccoefct jccolor jcdctmgr
+    jchuff jcinit jcmainct jcmarker jcmaster jcomapi jcparam jcprepct jcsample
+    jctrans jdapimin jdapistd jdarith jdatadst jdatasrc jdcoefct jdcolor
+    jddctmgr jdhuff jdinput jdmainct jdmarker jdmaster jdmerge jdpostct
+    jdsample jdtrans jerror jfdctflt jfdctfst jfdctint jidctflt jidctfst
+    jidctint jquant1 jquant2 jutils jmemmgr jmemnobs)
+  list(TRANSFORM IJG_SOURCES PREPEND ${VIO_LIBJPEG_SOURCE_DIR}/)
+  list(TRANSFORM IJG_SOURCES APPEND .c)
+  add_library(ijg-jpeg STATIC ${IJG_SOURCES})
+  # libjpeg/jconfig.h stands in for the header configure would generate.
+  target_include_directories(ijg-jpeg PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/libjpeg ${VIO_LIBJPEG_SOURCE_DIR})
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(ijg-jpeg PRIVATE -w)
+  endif()
+
+  add_library(turbojpeg-libjpeg STATIC libjpeg/turbojpeg.c)
+  target_include_directories(turbojpeg-libjpeg PUBLIC ${LJT_DIR})
+  target_link_libraries(turbojpeg-libjpeg PUBLIC ijg-jpeg)
+
+  add_executable(tjbench-libjpeg ${LJT_DIR}/tjbench.c ${LJT_DIR}/tjutil.c)
+  target_link_libraries(tjbench-libjpeg PRIVATE turbojpeg-libjpeg)
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(tjbench-libjpeg PRIVATE m)
+  endif()
+  vio_ljt_program(tjbench-libjpeg)
+endif()
+
 # Inputs of libjpeg-turbo.cmake.
 set(TEST_LIBTYPES ${VIO_VARIANTS})
 # The x86 SIMD variant uses libjpeg-turbo's SSE floating-point DCT kernels
