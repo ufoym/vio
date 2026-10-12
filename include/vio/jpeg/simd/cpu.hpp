@@ -44,6 +44,7 @@ enum : unsigned {
   kAVX2 = 0x080,
   kMMI = 0x100,
   kRVV = 0x200,
+  kBMI2 = 0x400,  // x86 BMI1, BMI2 and LZCNT (scalar bit manipulation)
 };
 
 struct Support {
@@ -95,9 +96,16 @@ inline unsigned detect_x86() {
   // operating-system management of the YMM state (XCR0 bits 1-2).
   if (max_leaf >= 7) {
     cpuid(7, 0, r);
-    if (r[1] & (1u << 5)) {
+    const unsigned ebx7 = r[1];
+    if (ebx7 & (1u << 5)) {
       cpuid(1, 0, r);
       if ((r[2] & (1u << 27)) && (r[2] & (1u << 28)) && (xgetbv0() & 6) == 6) flags |= kAVX2;
+    }
+    // BMI1 (leaf 7 EBX bit 3), BMI2 (bit 8) and LZCNT (leaf 0x80000001 ECX bit 5)
+    cpuid(0x80000000u, 0, r);
+    if ((ebx7 & (1u << 3)) && (ebx7 & (1u << 8)) && r[0] >= 0x80000001u) {
+      cpuid(0x80000001u, 0, r);
+      if (r[2] & (1u << 5)) flags |= kBMI2;
     }
   }
 #endif

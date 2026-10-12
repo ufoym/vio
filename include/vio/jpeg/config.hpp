@@ -101,6 +101,7 @@
 #define VIO_STR_(...) #__VA_ARGS__
 #define VIO_TARGET_PUSH_SSE2() VIO_TARGET_PUSH_("sse2")
 #define VIO_TARGET_PUSH_AVX2() VIO_TARGET_PUSH_("avx2")
+#define VIO_TARGET_PUSH_SSE2_BMI2() VIO_TARGET_PUSH_("sse2,bmi,bmi2,lzcnt")
 
 namespace vio {
 

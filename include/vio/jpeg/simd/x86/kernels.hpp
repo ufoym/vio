@@ -7,6 +7,7 @@
 #include "sse2.hpp"
 #if VIO_SIMD_AVX2
 #include "avx2.hpp"
+#include "sse2_bmi2.hpp"
 #endif
 #if !VIO_SIMD_X86_64
 #include "mmx.hpp"
@@ -138,6 +139,9 @@ inline void idct_kernels(const Support& s, IdctKernels& k) {
 }
 template <class Table>
 inline HuffEncodeFn<Table> huff_encode_kernel(const Support& s) {
+#if VIO_SIMD_AVX2
+  if (s.has(kSSE2) && s.has(kBMI2)) return vio::jpeg::simd::sse2_bmi2::encode_one_block<Table>;
+#endif
   if (s.has(kSSE2)) return vio::jpeg::simd::sse2::encode_one_block<Table>;
   return nullptr;
 }
