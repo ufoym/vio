@@ -71,6 +71,56 @@ VIO_INLINE std::uint64_t movemask64(const T* r) {
 
 namespace detail_huff {
 
+// (1 << n) - 1
+alignas(64) inline constexpr std::uint32_t kMaskBits[17] = {
+    0x0000, 0x0001, 0x0003, 0x0007, 0x000f, 0x001f, 0x003f, 0x007f, 0x00ff,
+    0x01ff, 0x03ff, 0x07ff, 0x0fff, 0x1fff, 0x3fff, 0x7fff, 0xffff};
+
+// Writes the 8 bytes of v (most significant first) with 0xFF 0x00 stuffing.
+VIO_NOINLINE inline std::uint8_t* emit_stuffed(std::uint8_t* buffer, std::uint64_t v) {
+  for (int sh = 56; sh >= 0; sh -= 8) {
+    std::uint8_t b = static_cast<std::uint8_t>(v >> sh);
+    buffer[0] = b;
+    buffer[1] = 0;
+    buffer += 1 + (b == 0xFF);
+  }
+  return buffer;
+}
+
+// Bit writer for the encoder loop.  It keeps few general-purpose registers
+// live: 0xFF bytes are detected with an SSE2 compare, the 8 bytes are
+// stored speculatively, and the rare byte-stuffing path is out of line.
+struct BitWriter {
+  std::uint64_t put_buffer;
+  int free_bits;
+  std::uint8_t* buffer;
+
+  VIO_INLINE void flush(std::uint64_t v) {
+    std::uint64_t be = HuffBitWriter::to_big_endian(v);
+    std::memcpy(buffer, &be, 8);
+#if VIO_SIMD_X86_64
+    T x = _mm_cvtsi64_si128(static_cast<long long>(v));
+#else
+    T x = _mm_loadl_epi64(reinterpret_cast<const T*>(&v));
+#endif
+    if (VIO_UNLIKELY(_mm_movemask_epi8(_mm_cmpeq_epi8(x, _mm_set1_epi8(-1))) & 0xFF))
+      buffer = emit_stuffed(buffer, v);
+    else
+      buffer += 8;
+  }
+  // Appends the low `size` bits of `code` (no higher bits set).
+  VIO_INLINE void put_bits(std::uint64_t code, int size) {
+    free_bits -= size;
+    if (free_bits < 0) {
+      flush((put_buffer << (size + free_bits)) | (code >> -free_bits));
+      free_bits += 64;
+      put_buffer = code;
+    } else {
+      put_buffer = (put_buffer << size) | code;
+    }
+  }
+};
+
 // Loads coefficients 1..63 of a natural-order block in zig-zag order into
 // eight vectors (z[r] lane i = zig-zag position 8r+i+1; z[7] lane 7 = 0),
 // using shuffles and a few word inserts instead of a round trip through
@@ -162,31 +212,33 @@ inline std::uint8_t* encode_one_block(HuffBitState& st, std::uint8_t* buffer,
   }
   std::uint64_t index = ~movemask64(eq);
 
-  HuffBitWriter w(st, buffer);
+  BitWriter w{st.put_buffer, st.free_bits, buffer};
   // DC difference (32-bit, as in the scalar encoder).
   int temp = block[0] - last_dc_val;
   int sign = temp >> 31;
   int nbits = bit_length(static_cast<unsigned>(temp ^ sign) - static_cast<unsigned>(sign));
-  w.put_code(dctbl.ehufco[nbits], dctbl.ehufsi[nbits],
-             static_cast<unsigned>(temp + sign) & ((1u << nbits) - 1), nbits);
+  w.put_bits((static_cast<std::uint64_t>(dctbl.ehufco[nbits]) << nbits) |
+                 (static_cast<unsigned>(temp + sign) & kMaskBits[nbits]),
+             dctbl.ehufsi[nbits] + nbits);
 
-  const std::int16_t* p = t - 1;  // coefficient k is p[k]
+  unsigned k = 0;  // zig-zag position of the last coefficient coded
   while (index) {
     unsigned run = ctz64(index);
     index = (index >> run) >> 1;
-    p += run + 1;
-    while (run > 15) {
+    k += run + 1;
+    while (VIO_UNLIKELY(run > 15)) {
       w.put_bits(actbl.ehufco[0xf0], actbl.ehufsi[0xf0]);
       run -= 16;
     }
-    const int code = *p;
+    const int code = t[k - 1];
     nbits = bit_length_nonzero(static_cast<unsigned>(code ^ (code >> 31)));
     const unsigned rs = (run << 4) + static_cast<unsigned>(nbits);
-    w.put_code(actbl.ehufco[rs], actbl.ehufsi[rs], static_cast<unsigned>(code) & ((1u << nbits) - 1),
-               nbits);
+    w.put_bits((static_cast<std::uint64_t>(actbl.ehufco[rs]) << nbits) |
+                   (static_cast<unsigned>(code) & kMaskBits[nbits]),
+               actbl.ehufsi[rs] + nbits);
   }
-  if (p != t + 62) w.put_bits(actbl.ehufco[0], actbl.ehufsi[0]);
-  st = w.state();
+  if (k != 63) w.put_bits(actbl.ehufco[0], actbl.ehufsi[0]);
+  st = {w.put_buffer, w.free_bits};
   return w.buffer;
 }
 
@@ -202,33 +254,51 @@ VIO_INLINE void gather_band(const std::int16_t* block, const int* order, int Sl,
 inline std::uint64_t ac_first_prepare(const std::int16_t* block, const int* order, int Sl, int Al,
                                       std::uint16_t* values) {
   using namespace detail_huff;
+  // Bands starting at coefficient 1 (the usual case) are loaded in
+  // registers; lanes past the band only need their bitmap bits cleared.
+  const bool from1 = order[0] == 1;
   alignas(16) std::int16_t c[64];
-  gather_band(block, order, Sl, c);
+  T z[8];
+  if (from1) {
+    load_zigzag(block, z);
+  } else {
+    gather_band(block, order, Sl, c);
+    for (int i = 0; i < 8; i++) z[i] = _mm_load_si128(reinterpret_cast<const T*>(c + i * 8));
+  }
   const T zero = _mm_setzero_si128();
   const T shift = _mm_cvtsi32_si128(Al);
   T eq[8];
   for (int i = 0; i < 8; i++) {
-    T x = _mm_load_si128(reinterpret_cast<const T*>(c + i * 8));
+    T x = z[i];
     T sign = _mm_srai_epi16(x, 15);
     T a = _mm_srl_epi16(_mm_sub_epi16(_mm_xor_si128(x, sign), sign), shift);
     _mm_storeu_si128(reinterpret_cast<T*>(values + i * 8), a);
     _mm_storeu_si128(reinterpret_cast<T*>(values + 64 + i * 8), _mm_xor_si128(a, sign));
     eq[i] = _mm_cmpeq_epi16(a, zero);
   }
-  return ~movemask64(eq);
+  std::uint64_t bits = ~movemask64(eq);
+  if (from1) bits &= (std::uint64_t(1) << Sl) - 1;  // Sl <= 63
+  return bits;
 }
 
 inline int ac_refine_prepare(const std::int16_t* block, const int* order, int Sl, int Al,
                              std::uint16_t* absvalues, std::uint64_t* zerobits,
                              std::uint64_t* signbits) {
   using namespace detail_huff;
+  const bool from1 = order[0] == 1;  // see ac_first_prepare()
   alignas(16) std::int16_t c[64];
-  gather_band(block, order, Sl, c);
+  T z[8];
+  if (from1) {
+    load_zigzag(block, z);
+  } else {
+    gather_band(block, order, Sl, c);
+    for (int i = 0; i < 8; i++) z[i] = _mm_load_si128(reinterpret_cast<const T*>(c + i * 8));
+  }
   const T zero = _mm_setzero_si128(), one = _mm_set1_epi16(1);
   const T shift = _mm_cvtsi32_si128(Al);
   T eq0[8], neg[8], eq1[8];
   for (int i = 0; i < 8; i++) {
-    T x = _mm_load_si128(reinterpret_cast<const T*>(c + i * 8));
+    T x = z[i];
     T sign = _mm_srai_epi16(x, 15);
     T a = _mm_srl_epi16(_mm_sub_epi16(_mm_xor_si128(x, sign), sign), shift);
     _mm_storeu_si128(reinterpret_cast<T*>(absvalues + i * 8), a);
@@ -236,8 +306,10 @@ inline int ac_refine_prepare(const std::int16_t* block, const int* order, int Sl
     neg[i] = sign;
     eq1[i] = _mm_cmpeq_epi16(a, one);
   }
-  *zerobits = ~movemask64(eq0);
-  *signbits = ~movemask64(neg);
-  std::uint64_t eob = movemask64(eq1);
+  // Lanes past the band count as zero coefficients.
+  const std::uint64_t band = from1 ? (std::uint64_t(1) << Sl) - 1 : ~std::uint64_t(0);
+  *zerobits = ~movemask64(eq0) & band;
+  *signbits = ~(movemask64(neg) & band);
+  std::uint64_t eob = movemask64(eq1) & band;
   return eob ? 63 - clz64(eob) : 0;
 }
