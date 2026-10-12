@@ -88,10 +88,12 @@ alignas(64) inline constexpr std::uint32_t kMaskBits[17] = {
 VIO_INLINE std::uint64_t shl64(std::uint64_t v, unsigned n) { return _shlx_u64(v, n); }
 VIO_INLINE std::uint64_t shr64(std::uint64_t v, unsigned n) { return _shrx_u64(v, n); }
 VIO_INLINE unsigned low_bits(unsigned v, int n) { return _bzhi_u32(v, static_cast<unsigned>(n)); }
+VIO_INLINE std::uint64_t clear_lowest(std::uint64_t v) { return _blsr_u64(v); }
 #else
 VIO_INLINE std::uint64_t shl64(std::uint64_t v, unsigned n) { return v << n; }
 VIO_INLINE std::uint64_t shr64(std::uint64_t v, unsigned n) { return v >> n; }
 VIO_INLINE unsigned low_bits(unsigned v, int n) { return v & kMaskBits[n]; }  // n <= 16
+VIO_INLINE std::uint64_t clear_lowest(std::uint64_t v) { return v & (v - 1); }
 #endif
 
 // Writes the 8 bytes of v (most significant first) with 0xFF 0x00 stuffing.
@@ -240,16 +242,20 @@ inline std::uint8_t* encode_one_block(HuffBitState& st, std::uint8_t* buffer,
                  low_bits(static_cast<unsigned>(temp + sign), nbits),
              dctbl.ehufsi[nbits] + nbits);
 
+  // Each non-zero coefficient is found from the bitmap with its lowest bit
+  // cleared, so the only dependency between iterations is that one
+  // operation (shifting the bitmap by the run would chain tzcnt and shifts).
   unsigned k = 0;  // zig-zag position of the last coefficient coded
   while (index) {
-    unsigned run = ctz64(index);
-    index = shr64(index, run) >> 1;
-    k += run + 1;
+    const unsigned pos = ctz64(index);  // coefficient pos + 1
+    index = clear_lowest(index);
+    unsigned run = pos - k;
+    k = pos + 1;
     while (VIO_UNLIKELY(run > 15)) {
       w.put_bits(actbl.ehufco[0xf0], actbl.ehufsi[0xf0]);
       run -= 16;
     }
-    const int code = t[k - 1];
+    const int code = t[pos];
     nbits = bit_length_nonzero(static_cast<unsigned>(code ^ (code >> 31)));
     const unsigned rs = (run << 4) + static_cast<unsigned>(nbits);
     w.put_bits(shl64(actbl.ehufco[rs], static_cast<unsigned>(nbits)) |
