@@ -115,8 +115,11 @@ same configurations (100% = same speed).
 | macOS x86-64  | Intel Core i7-8700B | scalar | 1.83× (128%) |         1.43× |   1.18× (96%)  |         1.22× |
 | Linux AArch64 | Neoverse-N2         | NEON   | 3.36× (99%)  |         3.40× |   1.57× (100%) |         1.57× |
 | Linux AArch64 | Neoverse-N2         | scalar | 1.90× (93%)  |         2.05× |   1.07× (102%) |         1.06× |
-| macOS AArch64 | Apple M1 (virtual)  | NEON   | 4.20× (95%)  |         4.42× |   1.71× (99%)  |         1.73× |
-| macOS AArch64 | Apple M1 (virtual)  | scalar | 2.31× (100%) |         2.31× |   1.04× (93%)  |         1.11× |
+| macOS AArch64 | Apple M4¹           | NEON   | 4.32× (98%)  |         4.41× |   1.59× (98%)  |         1.63× |
+| macOS AArch64 | Apple M4¹           | scalar | 2.52× (103%) |         2.45× |   1.07× (96%)  |         1.11× |
+
+¹ Measured on a local Mac (native, same build and benchmark script)
+instead of the GitHub-hosted runner, which is a virtualized Apple M1.
 
 Per configuration, Mpixels/s, vio / libjpeg-turbo / libjpeg:
 
