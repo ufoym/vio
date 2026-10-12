@@ -115,8 +115,9 @@ jobs:
             runs: |
               mmi|QEMU_CPU=Loongson-3A1000|
           # QEMU emulates RVV slowly: one run takes hours on a single runner, so
-          # the RISC-V runs are split into shards on separate runners, and the
-          # 8-bit tjunittest alone needs more than 30 minutes.
+          # the RISC-V runs are split into shards (tests that depend on each
+          # other stay together, see shard.py), and the 8-bit tjunittest alone
+          # can need more than 30 minutes.
           - name: linux-riscv64 (qemu)
             os: ubuntu-24.04
             apt: g++-14-riscv64-linux-gnu qemu-user
@@ -128,7 +129,7 @@ jobs:
             timeout: 240
             test_timeout: 10800
             tag: vlen128
-            shard: 1/5
+            shard: 1/4
             runs: |
               rvv-vlen128|QEMU_CPU=rv64,v=true,vlen=128|
           - name: linux-riscv64 (qemu)
@@ -142,7 +143,7 @@ jobs:
             timeout: 240
             test_timeout: 10800
             tag: vlen128
-            shard: 2/5
+            shard: 2/4
             runs: |
               rvv-vlen128|QEMU_CPU=rv64,v=true,vlen=128|
           - name: linux-riscv64 (qemu)
@@ -156,7 +157,7 @@ jobs:
             timeout: 240
             test_timeout: 10800
             tag: vlen128
-            shard: 3/5
+            shard: 3/4
             runs: |
               rvv-vlen128|QEMU_CPU=rv64,v=true,vlen=128|
           - name: linux-riscv64 (qemu)
@@ -170,21 +171,7 @@ jobs:
             timeout: 240
             test_timeout: 10800
             tag: vlen128
-            shard: 4/5
-            runs: |
-              rvv-vlen128|QEMU_CPU=rv64,v=true,vlen=128|
-          - name: linux-riscv64 (qemu)
-            os: ubuntu-24.04
-            apt: g++-14-riscv64-linux-gnu qemu-user
-            triple: riscv64-linux-gnu
-            sfx: "-14"
-            proc: riscv64
-            flags: -march=rv64gcv
-            emulator: qemu-riscv64
-            timeout: 240
-            test_timeout: 10800
-            tag: vlen128
-            shard: 5/5
+            shard: 4/4
             runs: |
               rvv-vlen128|QEMU_CPU=rv64,v=true,vlen=128|
           - name: linux-riscv64 (qemu)

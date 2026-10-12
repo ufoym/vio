@@ -4,8 +4,8 @@
 # Runs the conformance suite once with the given environment, writes
 # results/<platform>__<run-label>.{xml,json} and records a failure in
 # results/.failed instead of stopping, so that every run of a job is reported.
-# SHARD=i/n runs only every n-th test starting at test i (the report merges
-# the shards of a run back together).  TEST_TIMEOUT overrides the per-test
+# SHARD=i/n runs only shard i of n (see shard.py; the report merges the shards
+# of a run back together).  TEST_TIMEOUT overrides the per-test
 # time limit (seconds).
 set -u
 build=$1 platform=$2 label=$3
@@ -22,15 +22,18 @@ out=$PWD/results
 mkdir -p "$out"
 base="$out/${platform}__${label}"
 shard=${SHARD-}
+select=(${args[@]+"${args[@]}"})
 if [ -n "$shard" ]; then
-  args+=(-I "${shard%/*},,${shard#*/}")
   base+="__${shard%/*}"
+  python3 "$(dirname "$0")/shard.py" "$build" "${shard%/*}" "${shard#*/}" \
+    ${args[@]+"${args[@]}"} > "$base.tests" || exit 1
+  select=(--tests-from-file "$base.tests")
 fi
 jobs=$( (nproc || sysctl -n hw.ncpu) 2>/dev/null )
 
 start=$(date +%s)
 (cd "$build" && env ${envs[@]+"${envs[@]}"} ctest -j "$jobs" --timeout "${TEST_TIMEOUT:-1800}" \
-  --output-on-failure --output-junit "$base.xml" ${args[@]+"${args[@]}"})
+  --output-on-failure --output-junit "$base.xml" ${select[@]+"${select[@]}"})
 status=$?
 end=$(date +%s)
 
