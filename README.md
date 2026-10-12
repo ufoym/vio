@@ -52,11 +52,11 @@ Toolchains:
 | Linux, GCC                     |  ✓  |       ✓       |    ✓    |
 | Linux, Clang                   |  ✓  |       ✓       |    ✓    |
 | macOS, Apple Clang             |  ✓  |       ✓       |    ✓    |
-| Windows, MSVC                  |  ✗⁴ |       ✓       |    ✓    |
+| Windows, MSVC                  |  ✓  |       ✓       |    ✓    |
+| Windows, clang-cl              |  ✓  |       ✓       |    ✓    |
 | Compilers without C++20        |  ✗  |       ✓       |    ✓    |
 
 ¹ GCC only. ² Little-endian only. ³ GCC ≥ 14 or Clang ≥ 17.
-⁴ Code paths exist but are not yet tested.
 
 ## Features
 
@@ -96,8 +96,8 @@ Toolchains:
 Throughput measured by `tjbench` on GitHub-hosted runners: vio, libjpeg-turbo
 3.2 (built from the test submodule) and IJG libjpeg 10 (driven through a thin
 TurboJPEG layer, `tests/libjpeg/`), all built on the same machine with the
-same compiler (GCC on Linux, Apple Clang on macOS; NASM for libjpeg-turbo's
-x86 SIMD).  The image is a 3632×2384 RGB tiling of `testorig.ppm`; each number
+same compiler (GCC on Linux, Apple Clang on macOS, MSVC on Windows; NASM for
+libjpeg-turbo's x86 SIMD).  The image is a 3632×2384 RGB tiling of `testorig.ppm`; each number
 is the best of 5 runs.  Results from commit `aeef3f9`.
 
 Speed relative to libjpeg (1.00× = libjpeg; libjpeg has no SIMD code),
@@ -105,21 +105,29 @@ geometric mean over the configurations below except lossless, which libjpeg
 does not support.  In parentheses: vio relative to libjpeg-turbo over the
 same configurations (100% = same speed).
 
-| Platform      | CPU                 | SIMD   | Compress vio | libjpeg-turbo | Decompress vio | libjpeg-turbo |
-| ------------- | ------------------- | ------ | -----------: | ------------: | -------------: | ------------: |
-| Linux x86-64  | AMD EPYC 7763       | AVX2   | 4.46× (94%)  |         4.73× |   2.08× (97%)  |         2.15× |
-| Linux x86-64  | AMD EPYC 7763       | SSE2   | 3.96× (90%)  |         4.39× |   1.98× (99%)  |         2.00× |
-| Linux x86-64  | AMD EPYC 7763       | scalar | 1.40× (99%)  |         1.41× |   1.18× (98%)  |         1.21× |
-| macOS x86-64  | Intel Core i7-8700B | AVX2   | 4.31× (94%)  |         4.59× |   1.92× (95%)  |         2.02× |
-| macOS x86-64  | Intel Core i7-8700B | SSE2   | 3.72× (88%)  |         4.23× |   1.90× (97%)  |         1.96× |
-| macOS x86-64  | Intel Core i7-8700B | scalar | 1.83× (128%) |         1.43× |   1.18× (96%)  |         1.22× |
-| Linux AArch64 | Neoverse-N2         | NEON   | 3.36× (99%)  |         3.40× |   1.57× (100%) |         1.57× |
-| Linux AArch64 | Neoverse-N2         | scalar | 1.90× (93%)  |         2.05× |   1.07× (102%) |         1.06× |
-| macOS AArch64 | Apple M4¹           | NEON   | 4.32× (98%)  |         4.41× |   1.59× (98%)  |         1.63× |
-| macOS AArch64 | Apple M4¹           | scalar | 2.52× (103%) |         2.45× |   1.07× (96%)  |         1.11× |
+| Platform       | CPU                      | SIMD   | Compress vio | libjpeg-turbo | Decompress vio | libjpeg-turbo |
+| -------------- | ------------------------ | ------ | -----------: | ------------: | -------------: | ------------: |
+| Linux x86-64   | AMD EPYC 7763            | AVX2   |  4.46× (94%) |         4.73× |    2.08× (97%) |         2.15× |
+| Linux x86-64   | AMD EPYC 7763            | SSE2   |  3.96× (90%) |         4.39× |    1.98× (99%) |         2.00× |
+| Linux x86-64   | AMD EPYC 7763            | scalar |  1.40× (99%) |         1.41× |    1.18× (98%) |         1.21× |
+| macOS x86-64   | Intel Core i7-8700B      | AVX2   |  4.31× (94%) |         4.59× |    1.92× (95%) |         2.02× |
+| macOS x86-64   | Intel Core i7-8700B      | SSE2   |  3.72× (88%) |         4.23× |    1.90× (97%) |         1.96× |
+| macOS x86-64   | Intel Core i7-8700B      | scalar | 1.83× (128%) |         1.43× |    1.18× (96%) |         1.22× |
+| Linux AArch64  | Neoverse-N2              | NEON   |  3.36× (99%) |         3.40× |   1.57× (100%) |         1.57× |
+| Linux AArch64  | Neoverse-N2              | scalar |  1.90× (93%) |         2.05× |   1.07× (102%) |         1.06× |
+| macOS AArch64  | Apple M4¹                | NEON   |  4.32× (98%) |         4.41× |    1.59× (98%) |         1.63× |
+| macOS AArch64  | Apple M4¹                | scalar | 2.52× (103%) |         2.45× |    1.07× (96%) |         1.11× |
+| Windows x86-64 | Intel Core Ultra 9 285K² | AVX2   |  4.60× (98%) |         4.70× |    1.59× (99%) |         1.61× |
+| Windows x86-64 | Intel Core Ultra 9 285K² | SSE2   |  4.16× (99%) |         4.22× |   1.48× (100%) |         1.48× |
+| Windows x86-64 | Intel Core Ultra 9 285K² | scalar | 2.18× (153%) |         1.43× |    1.02× (98%) |         1.04× |
 
 ¹ Measured on a local Mac (native, same build and benchmark script)
 instead of the GitHub-hosted runner, which is a virtualized Apple M1.
+² Measured on a local Windows 11 machine with MSVC 19.44 (Visual Studio
+2022), pinned to the performance cores, at commit `bdc104a`.  Built with
+clang-cl 19 instead (vio and libjpeg-turbo), vio is at 102% (AVX2), 99%
+(SSE2) and 164% (scalar) of libjpeg-turbo's compression speed and at 106%,
+109% and 103% of its decompression speed.
 
 Per configuration, Mpixels/s, vio / libjpeg-turbo / libjpeg:
 
@@ -137,9 +145,22 @@ Per configuration, Mpixels/s, vio / libjpeg-turbo / libjpeg:
 The x86-64 column is the EPYC runner, the AArch64 column the Neoverse-N2
 runner.  vio matches libjpeg-turbo on AArch64 and in decompression, and
 compresses lossless JPEG about 1.5× faster.  Baseline compression on x86 is
-still behind: 5–10% with AVX2, 10–20% with SSE2.  Shared CI runners are noisy
-(the macOS x86-64 runner most of all), so differences of a few percent are
-within run-to-run variation.
+still behind on these runners: 5–10% with AVX2, 10–20% with SSE2.  Shared CI
+runners are noisy (the macOS x86-64 runner most of all), so differences of a
+few percent are within run-to-run variation.
+
+On the Windows machine (MSVC, AVX2), same format:
+
+| Configuration     | Compress        | Decompress      |
+| ----------------- | --------------: | --------------: |
+| 4:4:4 q95         | 313 / 331 / 47  | 306 / 320 / 182 |
+| 4:2:2 q95         | 414 / 437 / 61  | 381 / 395 / 210 |
+| 4:2:0 q95         | 499 / 519 / 71  | 432 / 462 / 222 |
+| gray q95          | 610 / 630 / 106 | 517 / 540 / 371 |
+| 4:2:0 fast DCT    | 501 / 514 / 72  | 443 / 466 / 223 |
+| 4:2:0 progressive |   78 / 77 / 32  |  135 / 122 / 98 |
+| 4:2:0 arithmetic  |   41 / 40 / 30  |    42 / 39 / 37 |
+| lossless PSV1     |   55 / 33 / —   |   103 / 94 / —  |
 
 ## Building and testing
 
@@ -157,6 +178,16 @@ NEON code paths on an AArch64 host).  Every build tree lives under `build/`.
 Options: `VIO_BUILD_TESTS` (on when vio is the top-level project),
 `VIO_TEST_SCALAR` (also test every program with SIMD disabled, as the
 `-scalar` variant).
+
+On Windows, configure from a Visual Studio developer command prompt with
+Ninja (add `-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl` for
+clang-cl):
+
+```sh
+cmake -S . -B build/msvc -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build/msvc
+ctest --test-dir build/msvc -j 8
+```
 
 To benchmark against libjpeg-turbo, build it from the submodule into a tree
 of its own; to add IJG libjpeg, unpack its source (`jpegsrc.v10.tar.gz` from
