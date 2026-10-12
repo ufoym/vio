@@ -32,36 +32,43 @@ VIO_INLINE constexpr JLong lsh(JLong x, int n) {
 template <class T>
 void fdct_islow(DctElem<T>* data) {
   using E = DctElem<T>;
+  // Intermediates: 32 bits are enough for 8-bit samples (and much faster
+  // than 64-bit arithmetic on most targets).
+  using A = std::conditional_t<kBits<T> == 8, int, JLong>;
+  auto descale = [](A x, int n) VIO_LAMBDA_INLINE { return (x + (A(1) << (n - 1))) >> n; };
+  auto lsh = [](A x, int n) VIO_LAMBDA_INLINE {
+    return static_cast<A>(static_cast<std::make_unsigned_t<A>>(x) << n);
+  };
   constexpr int CONST_BITS = 13;
   constexpr int PASS1_BITS = kBits<T> == 8 ? 2 : 1;
   E* dataptr = data;
   for (int ctr = DCTSIZE - 1; ctr >= 0; ctr--) {
-    JLong tmp0 = dataptr[0] + dataptr[7];
-    JLong tmp7 = dataptr[0] - dataptr[7];
-    JLong tmp1 = dataptr[1] + dataptr[6];
-    JLong tmp6 = dataptr[1] - dataptr[6];
-    JLong tmp2 = dataptr[2] + dataptr[5];
-    JLong tmp5 = dataptr[2] - dataptr[5];
-    JLong tmp3 = dataptr[3] + dataptr[4];
-    JLong tmp4 = dataptr[3] - dataptr[4];
-    JLong tmp10 = tmp0 + tmp3, tmp13 = tmp0 - tmp3;
-    JLong tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
+    A tmp0 = dataptr[0] + dataptr[7];
+    A tmp7 = dataptr[0] - dataptr[7];
+    A tmp1 = dataptr[1] + dataptr[6];
+    A tmp6 = dataptr[1] - dataptr[6];
+    A tmp2 = dataptr[2] + dataptr[5];
+    A tmp5 = dataptr[2] - dataptr[5];
+    A tmp3 = dataptr[3] + dataptr[4];
+    A tmp4 = dataptr[3] - dataptr[4];
+    A tmp10 = tmp0 + tmp3, tmp13 = tmp0 - tmp3;
+    A tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
     dataptr[0] = static_cast<E>(lsh(tmp10 + tmp11, PASS1_BITS));
     dataptr[4] = static_cast<E>(lsh(tmp10 - tmp11, PASS1_BITS));
-    JLong z1 = (tmp12 + tmp13) * FIX_0_541196100;
-    dataptr[2] = static_cast<E>(descale(z1 + tmp13 * FIX_0_765366865, CONST_BITS - PASS1_BITS));
-    dataptr[6] = static_cast<E>(descale(z1 + tmp12 * -FIX_1_847759065, CONST_BITS - PASS1_BITS));
+    A z1 = (tmp12 + tmp13) * A(FIX_0_541196100);
+    dataptr[2] = static_cast<E>(descale(z1 + tmp13 * A(FIX_0_765366865), CONST_BITS - PASS1_BITS));
+    dataptr[6] = static_cast<E>(descale(z1 + tmp12 * -A(FIX_1_847759065), CONST_BITS - PASS1_BITS));
     z1 = tmp4 + tmp7;
-    JLong z2 = tmp5 + tmp6, z3 = tmp4 + tmp6, z4 = tmp5 + tmp7;
-    JLong z5 = (z3 + z4) * FIX_1_175875602;
-    tmp4 = tmp4 * FIX_0_298631336;
-    tmp5 = tmp5 * FIX_2_053119869;
-    tmp6 = tmp6 * FIX_3_072711026;
-    tmp7 = tmp7 * FIX_1_501321110;
-    z1 = z1 * -FIX_0_899976223;
-    z2 = z2 * -FIX_2_562915447;
-    z3 = z3 * -FIX_1_961570560;
-    z4 = z4 * -FIX_0_390180644;
+    A z2 = tmp5 + tmp6, z3 = tmp4 + tmp6, z4 = tmp5 + tmp7;
+    A z5 = (z3 + z4) * A(FIX_1_175875602);
+    tmp4 = tmp4 * A(FIX_0_298631336);
+    tmp5 = tmp5 * A(FIX_2_053119869);
+    tmp6 = tmp6 * A(FIX_3_072711026);
+    tmp7 = tmp7 * A(FIX_1_501321110);
+    z1 = z1 * -A(FIX_0_899976223);
+    z2 = z2 * -A(FIX_2_562915447);
+    z3 = z3 * -A(FIX_1_961570560);
+    z4 = z4 * -A(FIX_0_390180644);
     z3 += z5;
     z4 += z5;
     dataptr[7] = static_cast<E>(descale(tmp4 + z1 + z3, CONST_BITS - PASS1_BITS));
@@ -72,34 +79,34 @@ void fdct_islow(DctElem<T>* data) {
   }
   dataptr = data;
   for (int ctr = DCTSIZE - 1; ctr >= 0; ctr--) {
-    JLong tmp0 = dataptr[DCTSIZE * 0] + dataptr[DCTSIZE * 7];
-    JLong tmp7 = dataptr[DCTSIZE * 0] - dataptr[DCTSIZE * 7];
-    JLong tmp1 = dataptr[DCTSIZE * 1] + dataptr[DCTSIZE * 6];
-    JLong tmp6 = dataptr[DCTSIZE * 1] - dataptr[DCTSIZE * 6];
-    JLong tmp2 = dataptr[DCTSIZE * 2] + dataptr[DCTSIZE * 5];
-    JLong tmp5 = dataptr[DCTSIZE * 2] - dataptr[DCTSIZE * 5];
-    JLong tmp3 = dataptr[DCTSIZE * 3] + dataptr[DCTSIZE * 4];
-    JLong tmp4 = dataptr[DCTSIZE * 3] - dataptr[DCTSIZE * 4];
-    JLong tmp10 = tmp0 + tmp3, tmp13 = tmp0 - tmp3;
-    JLong tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
+    A tmp0 = dataptr[DCTSIZE * 0] + dataptr[DCTSIZE * 7];
+    A tmp7 = dataptr[DCTSIZE * 0] - dataptr[DCTSIZE * 7];
+    A tmp1 = dataptr[DCTSIZE * 1] + dataptr[DCTSIZE * 6];
+    A tmp6 = dataptr[DCTSIZE * 1] - dataptr[DCTSIZE * 6];
+    A tmp2 = dataptr[DCTSIZE * 2] + dataptr[DCTSIZE * 5];
+    A tmp5 = dataptr[DCTSIZE * 2] - dataptr[DCTSIZE * 5];
+    A tmp3 = dataptr[DCTSIZE * 3] + dataptr[DCTSIZE * 4];
+    A tmp4 = dataptr[DCTSIZE * 3] - dataptr[DCTSIZE * 4];
+    A tmp10 = tmp0 + tmp3, tmp13 = tmp0 - tmp3;
+    A tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
     dataptr[DCTSIZE * 0] = static_cast<E>(descale(tmp10 + tmp11, PASS1_BITS));
     dataptr[DCTSIZE * 4] = static_cast<E>(descale(tmp10 - tmp11, PASS1_BITS));
-    JLong z1 = (tmp12 + tmp13) * FIX_0_541196100;
+    A z1 = (tmp12 + tmp13) * A(FIX_0_541196100);
     dataptr[DCTSIZE * 2] =
-        static_cast<E>(descale(z1 + tmp13 * FIX_0_765366865, CONST_BITS + PASS1_BITS));
+        static_cast<E>(descale(z1 + tmp13 * A(FIX_0_765366865), CONST_BITS + PASS1_BITS));
     dataptr[DCTSIZE * 6] =
-        static_cast<E>(descale(z1 + tmp12 * -FIX_1_847759065, CONST_BITS + PASS1_BITS));
+        static_cast<E>(descale(z1 + tmp12 * -A(FIX_1_847759065), CONST_BITS + PASS1_BITS));
     z1 = tmp4 + tmp7;
-    JLong z2 = tmp5 + tmp6, z3 = tmp4 + tmp6, z4 = tmp5 + tmp7;
-    JLong z5 = (z3 + z4) * FIX_1_175875602;
-    tmp4 = tmp4 * FIX_0_298631336;
-    tmp5 = tmp5 * FIX_2_053119869;
-    tmp6 = tmp6 * FIX_3_072711026;
-    tmp7 = tmp7 * FIX_1_501321110;
-    z1 = z1 * -FIX_0_899976223;
-    z2 = z2 * -FIX_2_562915447;
-    z3 = z3 * -FIX_1_961570560;
-    z4 = z4 * -FIX_0_390180644;
+    A z2 = tmp5 + tmp6, z3 = tmp4 + tmp6, z4 = tmp5 + tmp7;
+    A z5 = (z3 + z4) * A(FIX_1_175875602);
+    tmp4 = tmp4 * A(FIX_0_298631336);
+    tmp5 = tmp5 * A(FIX_2_053119869);
+    tmp6 = tmp6 * A(FIX_3_072711026);
+    tmp7 = tmp7 * A(FIX_1_501321110);
+    z1 = z1 * -A(FIX_0_899976223);
+    z2 = z2 * -A(FIX_2_562915447);
+    z3 = z3 * -A(FIX_1_961570560);
+    z4 = z4 * -A(FIX_0_390180644);
     z3 += z5;
     z4 += z5;
     dataptr[DCTSIZE * 7] = static_cast<E>(descale(tmp4 + z1 + z3, CONST_BITS + PASS1_BITS));

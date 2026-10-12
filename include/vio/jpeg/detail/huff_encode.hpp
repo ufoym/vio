@@ -2,6 +2,7 @@
 #pragma once
 
 #include <climits>
+#include <utility>
 
 #include "compress_state.hpp"
 #include "../simd/dispatch.hpp"
@@ -260,11 +261,11 @@ class HuffEncoder final : public EntropyEncoder {
     put_code(temp, nb, dctbl.ehufco[nb], dctbl.ehufsi[nb]);
 
     int r = 0;
-    for (int k = 1; k < DCTSIZE2; k++) {
-      if ((temp = block[natural_order[k]]) == 0) {
+    auto ac = [&](int temp) VIO_LAMBDA_INLINE {
+      if (temp == 0) {
         r += 16;
       } else {
-        nb = temp >> (CHAR_BIT * sizeof(int) - 1);
+        int nb = temp >> (CHAR_BIT * sizeof(int) - 1);
         temp += nb;
         nb ^= temp;
         nb = nbits_nonzero(static_cast<unsigned>(nb));
@@ -278,7 +279,11 @@ class HuffEncoder final : public EntropyEncoder {
         put_code(temp, nb, actbl.ehufco[r], actbl.ehufsi[r]);
         r = 0;
       }
-    }
+    };
+    // Fully unrolled: every zigzag position becomes a constant offset.
+    [&]<std::size_t... K>(std::index_sequence<K...>) VIO_LAMBDA_INLINE {
+      (ac(block[natural_order[K + 1]]), ...);
+    }(std::make_index_sequence<DCTSIZE2 - 1>{});
     if (r > 0) put_bits(actbl.ehufco[0], actbl.ehufsi[0]);
 
     put_buffer_ = w.put_buffer;
