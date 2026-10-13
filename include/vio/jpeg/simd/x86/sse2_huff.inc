@@ -205,10 +205,10 @@ VIO_INLINE void load_zigzag(const std::int16_t* block, T z[8]) {
 
 }  // namespace detail_huff
 
+// Encodes one block with the bit writer w.
 template <class Table>
-inline VIO_NO_STACK_CHECK std::uint8_t* encode_one_block(HuffBitState& st, std::uint8_t* buffer,
-                                      const std::int16_t* block, int last_dc_val,
-                                      const Table& dctbl, const Table& actbl) {
+VIO_INLINE void encode_block(detail_huff::BitWriter& w, const std::int16_t* block, int last_dc_val,
+                             const Table& dctbl, const Table& actbl) {
   using namespace detail_huff;
   // t[i]: zig-zag coefficient i+1, negative values minus one (the bits to
   // emit); `index` bit i is set when it is non-zero.
@@ -224,7 +224,6 @@ inline VIO_NO_STACK_CHECK std::uint8_t* encode_one_block(HuffBitState& st, std::
   }
   std::uint64_t index = ~movemask64(eq);
 
-  BitWriter w{st.bits, static_cast<unsigned>(st.count), buffer};
   // DC difference (32-bit, as in the scalar encoder).
   int temp = block[0] - last_dc_val;
   int sign = temp >> 31;
@@ -263,6 +262,17 @@ inline VIO_NO_STACK_CHECK std::uint8_t* encode_one_block(HuffBitState& st, std::
   }
   if (k != 63) w.append(actbl.ehufco[0], actbl.ehufsi[0]);
   w.flush();
+}
+
+// HuffEncodeFn: encodes the blocks of an MCU.
+template <class Table>
+inline VIO_NO_STACK_CHECK std::uint8_t* encode_blocks(HuffBitState& st, std::uint8_t* buffer,
+                                                      const std::int16_t* const* blocks,
+                                                      const int* last_dc,
+                                                      const Table* const* dctbl,
+                                                      const Table* const* actbl, int n) {
+  detail_huff::BitWriter w{st.bits, static_cast<unsigned>(st.count), buffer};
+  for (int i = 0; i < n; i++) encode_block(w, blocks[i], last_dc[i], *dctbl[i], *actbl[i]);
   // Member-wise: a 16-byte copy would read back two narrower stores.
   st.bits = w.bits;
   st.count = static_cast<int>(w.count);

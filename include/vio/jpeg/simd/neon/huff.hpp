@@ -237,14 +237,16 @@ VIO_INLINE void huff_encode_one_block(const std::int16_t* block, int last_dc_val
 
 #endif
 
-// Common SIMD Huffman kernel signature: encodes one block into `buffer` and
-// returns the advanced output pointer.
+// Common SIMD Huffman kernel signature (HuffEncodeFn): encodes the blocks of
+// an MCU into `buffer` and returns the advanced output pointer.
 template <class Table>
-inline VIO_NO_STACK_CHECK std::uint8_t* encode_one_block(HuffBitState& st, std::uint8_t* buffer,
-                                      const std::int16_t* block, int last_dc_val,
-                                      const Table& dctbl, const Table& actbl) {
+inline VIO_NO_STACK_CHECK std::uint8_t* encode_blocks(HuffBitState& st, std::uint8_t* buffer,
+                                                      const std::int16_t* const* blocks,
+                                                      const int* last_dc,
+                                                      const Table* const* dctbl,
+                                                      const Table* const* actbl, int n) {
   HuffBitWriter w(st, buffer);
-  huff_encode_one_block(block, last_dc_val, dctbl, actbl, w);
+  for (int i = 0; i < n; i++) huff_encode_one_block(blocks[i], last_dc[i], *dctbl[i], *actbl[i], w);
   st = w.state();
   return w.buffer;
 }

@@ -224,7 +224,7 @@ inline HuffEncodeFn<Table> huff_encode_kernel([[maybe_unused]] const Support& s)
   if (s.has(isa::kSSE2)) return isa::x86::huff_encode_kernel<Table>(s);
 #endif
 #if VIO_SIMD_NEON
-  if (s.has(isa::kNEON)) return vio::jpeg::simd::neon::encode_one_block<Table>;
+  if (s.has(isa::kNEON)) return vio::jpeg::simd::neon::encode_blocks<Table>;
 #endif
   return nullptr;
 }

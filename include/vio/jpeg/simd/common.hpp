@@ -97,11 +97,14 @@ struct PhuffKernels {
                            std::uint64_t* signbits) = nullptr;
 };
 
-// Sequential Huffman encoding of one block; returns the advanced pointer.
+// Sequential Huffman encoding of the n blocks of an MCU: block i with the
+// DC prediction last_dc[i] and the tables dctbl[i], actbl[i].  Returns the
+// advanced output pointer.
 template <class Table>
 using HuffEncodeFn = std::uint8_t* (*)(HuffBitState& st, std::uint8_t* buffer,
-                                       const std::int16_t* block, int last_dc_val,
-                                       const Table& dctbl, const Table& actbl);
+                                       const std::int16_t* const* blocks, const int* last_dc,
+                                       const Table* const* dctbl, const Table* const* actbl,
+                                       int n);
 
 // Inverse DCT with the decoder's IdctFn<uint8_t> signature.  dct_table points
 // at ComponentInfo::dct_table; the 16-bit multipliers used by the integer

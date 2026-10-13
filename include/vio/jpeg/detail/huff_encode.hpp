@@ -203,6 +203,11 @@ class HuffEncoder final : public EntropyEncoder {
       }
       last_dc_val_[ci] = 0;
     }
+    for (int blkn = 0; blkn < cs_.blocks_in_MCU; blkn++) {
+      ComponentInfo* c = cs_.cur_comp_info[cs_.MCU_membership[blkn]];
+      dc_cur_[blkn] = &dc_derived_[c->dc_tbl_no];
+      ac_cur_[blkn] = &ac_derived_[c->ac_tbl_no];
+    }
     bits_ = {};
     raw_next_ = raw_.get();
     restarts_to_go_ = cs_.restart_interval;
@@ -218,12 +223,26 @@ class HuffEncoder final : public EntropyEncoder {
     if (raw_.get() + RAW_SIZE - raw_next_ <
         static_cast<std::ptrdiff_t>(cs_.blocks_in_MCU) * (BUFSIZE + 16))
       flush_raw();
-    for (int blkn = 0; blkn < cs_.blocks_in_MCU; blkn++) {
-      int ci = cs_.MCU_membership[blkn];
-      ComponentInfo* c = cs_.cur_comp_info[ci];
-      encode_one_block(MCU_data[blkn]->data(), last_dc_val_[ci], dc_derived_[c->dc_tbl_no],
-                       ac_derived_[c->ac_tbl_no]);
-      last_dc_val_[ci] = (*MCU_data[blkn])[0];
+    if (simd_huff_) {
+      // The SIMD path is used for any data precision (coefficients are
+      // 16-bit).
+      const std::int16_t* blocks[C_MAX_BLOCKS_IN_MCU];
+      int last_dc[C_MAX_BLOCKS_IN_MCU];
+      for (int blkn = 0; blkn < cs_.blocks_in_MCU; blkn++) {
+        int ci = cs_.MCU_membership[blkn];
+        blocks[blkn] = MCU_data[blkn]->data();
+        last_dc[blkn] = last_dc_val_[ci];
+        last_dc_val_[ci] = blocks[blkn][0];
+      }
+      raw_next_ = simd_huff_(bits_, raw_next_, blocks, last_dc, dc_cur_, ac_cur_,
+                             cs_.blocks_in_MCU);
+    } else {
+      for (int blkn = 0; blkn < cs_.blocks_in_MCU; blkn++) {
+        int ci = cs_.MCU_membership[blkn];
+        encode_one_block(MCU_data[blkn]->data(), last_dc_val_[ci], *dc_cur_[blkn],
+                         *ac_cur_[blkn]);
+        last_dc_val_[ci] = (*MCU_data[blkn])[0];
+      }
     }
     if (cs_.restart_interval) {
       if (restarts_to_go_ == 0) {
@@ -279,12 +298,6 @@ class HuffEncoder final : public EntropyEncoder {
 
   void encode_one_block(const Coef* block, int last_dc_val, const CDerivedTable& dctbl,
                         const CDerivedTable& actbl) {
-    if (simd_huff_) {
-      // The SIMD path is used for any data precision (coefficients are
-      // 16-bit).
-      raw_next_ = simd_huff_(bits_, raw_next_, block, last_dc_val, dctbl, actbl);
-      return;
-    }
     vio::jpeg::simd::HuffBitWriter w(bits_, raw_next_);
     const int max_coef_bits = cs_.data_precision + 2;
     auto put_bits = [&](std::uint64_t code, int size) VIO_LAMBDA_INLINE { w.put_bits(code, size); };
@@ -410,6 +423,8 @@ class HuffEncoder final : public EntropyEncoder {
 
   CState& cs_;
   bool gather_ = false;
+  const CDerivedTable* dc_cur_[C_MAX_BLOCKS_IN_MCU]{};  // tables of each block of the MCU
+  const CDerivedTable* ac_cur_[C_MAX_BLOCKS_IN_MCU]{};
   simd::HuffBitState bits_;
   std::unique_ptr<std::uint8_t[]> raw_{new std::uint8_t[RAW_SIZE]};
   std::uint8_t* raw_next_ = raw_.get();
