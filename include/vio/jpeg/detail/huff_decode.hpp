@@ -248,6 +248,8 @@ class HuffDecoder final : public EntropyDecoder {
       ComponentInfo* c = st_.cur_comp_info[ci];
       make_d_derived_tbl(st_, true, c->dc_tbl_no, dc_derived_[c->dc_tbl_no]);
       make_d_derived_tbl(st_, false, c->ac_tbl_no, ac_derived_[c->ac_tbl_no]);
+      make_fast_table<DC_BITS>(dc_derived_[c->dc_tbl_no], true, dc_fast_[c->dc_tbl_no]);
+      make_fast_table<AC_BITS>(ac_derived_[c->ac_tbl_no], false, ac_fast_[c->ac_tbl_no]);
       last_dc_val_[ci] = 0;
     }
     for (int blkn = 0; blkn < st_.blocks_in_MCU; blkn++) {
@@ -255,6 +257,8 @@ class HuffDecoder final : public EntropyDecoder {
       ComponentInfo* c = st_.cur_comp_info[ci];
       dc_cur_[blkn] = &dc_derived_[c->dc_tbl_no];
       ac_cur_[blkn] = &ac_derived_[c->ac_tbl_no];
+      dc_fast_cur_[blkn] = &dc_fast_[c->dc_tbl_no];
+      ac_fast_cur_[blkn] = &ac_fast_[c->ac_tbl_no];
       if (c->component_needed) {
         dc_needed_[blkn] = true;
         ac_needed_[blkn] = c->DCT_scaled_size > 1;
@@ -263,6 +267,7 @@ class HuffDecoder final : public EntropyDecoder {
       }
     }
     br_.reset();
+    ff_end_ = nullptr;
     insufficient_data = false;
     restarts_to_go_ = st_.restart_interval;
   }
@@ -353,69 +358,172 @@ class HuffDecoder final : public EntropyDecoder {
     br_ = br;
   }
 
+  // Combined lookup over the next B bits of the stream.  An entry whose code
+  // and magnitude bits both fit in the window holds the decoded value: bits
+  // 16-31 the value, bits 0-7 the total length, and bits 8-15 the zig-zag
+  // increment run + 1 (AC) or bit 15 set (DC).  Other entries hold the
+  // symbol in bits 8-15 and the code length in bits 0-7, or 0 for codes
+  // longer than the window.
+  static constexpr int DC_BITS = 9;
+  static constexpr int AC_BITS = 11;
+  template <int B>
+  using FastTable = std::array<std::int32_t, 1 << B>;
+
+  template <int B>
+  static void make_fast_table(const DerivedTable& d, bool isDC, FastTable<B>& t) {
+    t.fill(0);
+    const HuffTable& h = *d.pub;
+    int p = 0;
+    unsigned code = 0;
+    for (int l = 1; l <= B; l++, code <<= 1) {
+      for (int i = 0; i < static_cast<int>(h.bits[l]); i++, p++, code++) {
+        const int sym = h.huffval[p];
+        const int s = isDC ? sym : sym & 15;
+        const int base = static_cast<int>(code) << (B - l);
+        for (int j = 0; j < 1 << (B - l); j++) {
+          std::int32_t e;
+          if (l + s <= B && (isDC || s)) {
+            int v = s ? huff_extend((j >> (B - l - s)) & ((1 << s) - 1), s) : 0;
+            e = static_cast<std::int32_t>(static_cast<unsigned>(v) << 16) |
+                (isDC ? 0x8000 : (((sym >> 4) + 1) << 8)) | (l + s);
+          } else {
+            e = (sym << 8) | l;
+          }
+          t[static_cast<std::size_t>(base + j)] = e;
+        }
+      }
+    }
+  }
+
   // Fast path: operates directly on the input buffer; bails out (returning
-  // false, with all state untouched) if a marker is encountered.
-  bool decode_mcu_fast(Block** MCU_data) {
-    using buf_t = BitReader::buf_t;
-    buf_t get_buffer = br_.get_buffer;
-    int bits_left = br_.bits_left;
-    const std::uint8_t* buffer = st_.next_input_byte;
+  // false, with all state untouched) if a marker is encountered.  The bit
+  // buffer is kept left-aligned and refilled 8 bytes at a time until a 0xFF
+  // byte is reached; ff_ caches the position of the next 0xFF byte.
+  VIO_NO_STACK_CHECK bool decode_mcu_fast(Block** MCU_data) {
+    if (br_.bits_left > 63) return false;
+    std::uint64_t buf = br_.bits_left ? br_.get_buffer << (64 - br_.bits_left) : 0;
+    int cnt = br_.bits_left;
+    const std::uint8_t* p = st_.next_input_byte;
+    const std::uint8_t* const end = p + st_.bytes_in_buffer;
+    if (end != ff_end_ || ff_ < p) {
+      ff_end_ = end;
+      ff_ = find_ff(p, end);
+    }
+    const std::uint8_t* ff = ff_;
     int last_dc[MAX_COMPS_IN_SCAN];
     for (int i = 0; i < st_.comps_in_scan; i++) last_dc[i] = last_dc_val_[i];
     int marker = 0;
 
-    auto get_byte = [&]() VIO_LAMBDA_INLINE {
-      int c0 = *buffer++;
-      get_buffer = (get_buffer << 8) | static_cast<unsigned>(c0);
-      bits_left += 8;
-      if (VIO_UNLIKELY(c0 == 0xFF)) [[unlikely]] {
-        branch_barrier();  // keep this rare path out of line (no if-conversion)
-        int c1 = *buffer++;
-        if (c1 != 0) {
-          marker = c1;
-          buffer -= 2;
-          get_buffer ^= 0xFF;  // the low byte is c0 == 0xFF: clear it
+    // Bits below the cnt valid ones are kept zero.
+    auto refill = [&]() VIO_LAMBDA_INLINE {
+      const int n = (63 - cnt) >> 3;  // whole bytes that fit
+      if (VIO_LIKELY(p + n <= ff)) {
+        std::uint64_t w;
+        std::memcpy(&w, p, 8);
+        const int c = cnt | 56;  // cnt + 8 * n
+        buf = (buf | ::vio::jpeg::simd::HuffBitWriter::to_big_endian(w) >> cnt) &
+              ~(~std::uint64_t(0) >> c);
+        p += n;
+        cnt = c;
+        return;
+      }
+      branch_barrier();  // rare: a 0xFF byte (stuffed 0xFF00 or a marker)
+      while (cnt < 56) {  // at most 63 bits
+        if (marker) {
+          cnt = 63;  // zero bits from here on
+          break;
         }
-      }
-    };
-    auto fill_fast = [&]() VIO_LAMBDA_INLINE {
-      if (bits_left <= 16) {
-        get_byte(); get_byte(); get_byte(); get_byte(); get_byte(); get_byte();
-      }
-    };
-    auto get_bits = [&](int nbits) VIO_LAMBDA_INLINE {
-      return static_cast<int>(get_buffer >> (bits_left -= nbits)) & ((1 << nbits) - 1);
-    };
-    auto huff_decode_fast = [&](const DerivedTable& htbl) VIO_LAMBDA_INLINE {
-      fill_fast();
-      int s = static_cast<int>(get_buffer >> (bits_left - HUFF_LOOKAHEAD)) &
-              ((1 << HUFF_LOOKAHEAD) - 1);
-      s = htbl.lookup[s];
-      int nb = s >> HUFF_LOOKAHEAD;
-      bits_left -= nb;
-      s = s & ((1 << HUFF_LOOKAHEAD) - 1);
-      if (nb > HUFF_LOOKAHEAD) {
-        s = static_cast<int>(get_buffer >> bits_left) & ((1 << nb) - 1);
-        while (s > htbl.maxcode[nb]) {
-          s <<= 1;
-          s |= get_bits(1);
-          nb++;
+        unsigned c = *p;
+        if (c == 0xFF) {
+          if (p[1] != 0) {
+            marker = p[1];
+            continue;
+          }
+          p += 2;
+        } else {
+          p++;
         }
-        if (nb > 16) s = 0;
-        else s = htbl.huffval[static_cast<int>(s + htbl.valoffset[nb]) & 0xFF];
+        buf |= static_cast<std::uint64_t>(c) << (56 - cnt);
+        cnt += 8;
       }
-      return s;
+      if (p > ff) ff = find_ff(p, end);
+    };
+    // Table index.  The barrier stops the compiler from merging the shift
+    // with the index scaling into two dependent instructions.
+    auto peek = [&](int bits) VIO_LAMBDA_INLINE {
+      std::size_t i = static_cast<std::size_t>(buf >> (64 - bits));
+#if defined(__GNUC__) || defined(__clang__)
+      __asm__("" : "+r"(i));
+#endif
+      return i;
+    };
+    auto consume = [&](int n) VIO_LAMBDA_INLINE {
+      buf <<= n;
+      cnt -= n;
+    };
+    auto get_value = [&](int s) VIO_LAMBDA_INLINE {  // s >= 1
+      int v = huff_extend(static_cast<int>(buf >> (64 - s)), s);
+      consume(s);
+      return v;
+    };
+    // Symbol of an entry without a decoded value.
+    auto symbol = [&](std::int32_t e, const DerivedTable& d, int bits) VIO_LAMBDA_INLINE {
+      if (VIO_LIKELY(e & 0xFF)) {
+        consume(e & 0xFF);
+        return (e >> 8) & 0xFF;
+      }
+      branch_barrier();
+      int l = bits + 1;
+      JLong code = static_cast<JLong>(buf >> (64 - l));
+      while (code > d.maxcode[l]) {
+        l++;
+        code = static_cast<JLong>(buf >> (64 - l));
+      }
+      consume(l);
+      return l > 16 ? 0 : static_cast<int>(d.huffval[static_cast<int>(code + d.valoffset[l]) & 0xFF]);
+    };
+    // Decodes the AC coefficients of one block; Store = false only skips them.
+    auto decode_ac = [&]<bool Store>(Coef* block, const DerivedTable& d,
+                                     const FastTable<AC_BITS>& t) VIO_LAMBDA_INLINE {
+      int k = 0;
+      do {
+        std::int32_t e = t[peek(AC_BITS)];
+        refill();
+        if (VIO_LIKELY(static_cast<std::uint32_t>(e) >= 0x10000)) {
+          consume(e & 0xFF);
+          k += (e >> 8) & 0xFF;
+          if constexpr (Store) block[natural_order[k]] = static_cast<Coef>(e >> 16);
+        } else {
+          int sym = symbol(e, d, AC_BITS);
+          int r = sym >> 4, s = sym & 15;
+          if (s) {
+            k += r + 1;
+            int v = get_value(s);
+            if constexpr (Store) block[natural_order[k]] = static_cast<Coef>(v);
+          } else if (r == 15) {
+            k += 16;
+          } else {
+            break;
+          }
+        }
+      } while (k < DCTSIZE2 - 1);
     };
 
+    // Each symbol takes at most 32 bits and each refill leaves at least 56,
+    // so the window bits are always available: the table is looked up before
+    // the refill, which keeps the refill off the critical path.
+    refill();
     for (int blkn = 0; blkn < st_.blocks_in_MCU; blkn++) {
       Coef* block = MCU_data ? MCU_data[blkn]->data() : nullptr;
-      const DerivedTable& dctbl = *dc_cur_[blkn];
-      const DerivedTable& actbl = *ac_cur_[blkn];
-      int s = huff_decode_fast(dctbl);
-      if (s) {
-        fill_fast();
-        int r = get_bits(s);
-        s = huff_extend(r, s);
+      std::int32_t e = (*dc_fast_cur_[blkn])[peek(DC_BITS)];
+      refill();
+      int s;
+      if (VIO_LIKELY(e & 0x8000)) {
+        consume(e & 0xFF);
+        s = e >> 16;
+      } else {
+        s = symbol(e, *dc_cur_[blkn], DC_BITS);
+        if (s) s = get_value(s);
       }
       if (dc_needed_[blkn]) {
         int ci = st_.MCU_membership[blkn];
@@ -423,49 +531,29 @@ class HuffDecoder final : public EntropyDecoder {
         last_dc[ci] = s;
         if (block) block[0] = static_cast<Coef>(s);
       }
-      if (ac_needed_[blkn] && block) {
-        for (int k = 1; k < DCTSIZE2; k++) {
-          s = huff_decode_fast(actbl);
-          int r = s >> 4;
-          s &= 15;
-          if (s) {
-            k += r;
-            fill_fast();
-            r = get_bits(s);
-            s = huff_extend(r, s);
-            block[natural_order[k]] = static_cast<Coef>(s);
-          } else {
-            if (r != 15) break;
-            k += 15;
-          }
-        }
-      } else {
-        for (int k = 1; k < DCTSIZE2; k++) {
-          s = huff_decode_fast(actbl);
-          int r = s >> 4;
-          s &= 15;
-          if (s) {
-            k += r;
-            fill_fast();
-            bits_left -= s;
-          } else {
-            if (r != 15) break;
-            k += 15;
-          }
-        }
-      }
+      if (ac_needed_[blkn] && block)
+        decode_ac.template operator()<true>(block, *ac_cur_[blkn], *ac_fast_cur_[blkn]);
+      else
+        decode_ac.template operator()<false>(block, *ac_cur_[blkn], *ac_fast_cur_[blkn]);
     }
     if (marker != 0) {
       // Discard partial results; the caller re-decodes via the slow path.
       // (Coefficients already written are overwritten identically.)
+      ff_end_ = nullptr;
       return false;
     }
-    st_.bytes_in_buffer -= static_cast<std::size_t>(buffer - st_.next_input_byte);
-    st_.next_input_byte = buffer;
-    br_.get_buffer = get_buffer;
-    br_.bits_left = bits_left;
+    ff_ = ff;
+    st_.bytes_in_buffer -= static_cast<std::size_t>(p - st_.next_input_byte);
+    st_.next_input_byte = p;
+    br_.get_buffer = cnt ? buf >> (64 - cnt) : 0;
+    br_.bits_left = cnt;
     for (int i = 0; i < st_.comps_in_scan; i++) last_dc_val_[i] = last_dc[i];
     return true;
+  }
+
+  static const std::uint8_t* find_ff(const std::uint8_t* p, const std::uint8_t* end) {
+    const void* q = std::memchr(p, 0xFF, static_cast<std::size_t>(end - p));
+    return q ? static_cast<const std::uint8_t*>(q) : end;
   }
 
   DState& st_;
@@ -478,6 +566,12 @@ class HuffDecoder final : public EntropyDecoder {
   const DerivedTable* ac_cur_[D_MAX_BLOCKS_IN_MCU]{};
   bool dc_needed_[D_MAX_BLOCKS_IN_MCU]{};
   bool ac_needed_[D_MAX_BLOCKS_IN_MCU]{};
+  FastTable<DC_BITS> dc_fast_[NUM_HUFF_TBLS];
+  FastTable<AC_BITS> ac_fast_[NUM_HUFF_TBLS];
+  const FastTable<DC_BITS>* dc_fast_cur_[D_MAX_BLOCKS_IN_MCU]{};
+  const FastTable<AC_BITS>* ac_fast_cur_[D_MAX_BLOCKS_IN_MCU]{};
+  const std::uint8_t* ff_ = nullptr;      // next 0xFF byte at or after the input position
+  const std::uint8_t* ff_end_ = nullptr;  // end of the buffer ff_ was found in
 };
 
 // Progression status table setup shared by progressive decoders.
