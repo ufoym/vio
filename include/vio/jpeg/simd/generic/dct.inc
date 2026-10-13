@@ -233,6 +233,41 @@ inline void fdct_ifast(std::int16_t* data) {
   for (int i = 0; i < 8; i++) store(data + i * 8, d[i]);
 }
 
+// convsamp(), the forward DCT and quantize() in one: the block stays in
+// registers.
+template <bool kIslow>
+VIO_INLINE void forward_dct_quantize(std::uint8_t** sample_data, unsigned start_col,
+                                     const std::uint16_t* divisors, std::int16_t* coef_block) {
+  using namespace detail_dct;
+  const T center = V::set1_16(128);
+  T d[8];
+  for (int r = 0; r < 8; r++)
+    d[r] = V::sub_16(V::widenlo_u8(V::loadl_64(sample_data[r] + start_col)), center);
+  transpose8(d);
+  if constexpr (kIslow) fdct_islow_pass<true>(d);
+  else fdct_ifast_pass(d);
+  transpose8(d);
+  if constexpr (kIslow) fdct_islow_pass<false>(d);
+  else fdct_ifast_pass(d);
+  for (int i = 0; i < 8; i++) {
+    T x = d[i];
+    T sign = V::srai_16<15>(x);
+    T a = V::sub_16(V::xor_(x, sign), sign);
+    a = V::add_16(a, load(divisors + 64 + 8 * i));
+    a = V::mulhi_u16(a, load(divisors + 8 * i));
+    a = V::mulhi_u16(a, load(divisors + 128 + 8 * i));
+    store(coef_block + 8 * i, V::sub_16(V::xor_(a, sign), sign));
+  }
+}
+inline void forward_islow(std::uint8_t** sample_data, unsigned start_col,
+                          const std::uint16_t* divisors, std::int16_t* coef_block) {
+  forward_dct_quantize<true>(sample_data, start_col, divisors, coef_block);
+}
+inline void forward_ifast(std::uint8_t** sample_data, unsigned start_col,
+                          const std::uint16_t* divisors, std::int16_t* coef_block) {
+  forward_dct_quantize<false>(sample_data, start_col, divisors, coef_block);
+}
+
 // 16-bit reciprocal quantization:
 // |x| -> ((|x| + corr) * recip >> 16) * scale >> 16, sign restored.
 inline void quantize(std::int16_t* coef_block, const std::uint16_t* divisors,

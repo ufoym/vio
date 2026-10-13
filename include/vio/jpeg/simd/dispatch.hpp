@@ -207,6 +207,8 @@ inline FdctKernels fdct_kernels([[maybe_unused]] const Support& s) {
     k.fdct_islow = n::fdct_islow;
     k.fdct_ifast = n::fdct_ifast;
     k.quantize = n::quantize;
+    k.forward_islow = n::forward_islow;
+    k.forward_ifast = n::forward_ifast;
   }
 #endif
 #ifdef VIO_GENERIC_ISA

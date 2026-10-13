@@ -12,6 +12,8 @@ inline void fdct_kernels(const Support& s, FdctKernels& k) {
   k.fdct_islow = fdct_islow;
   k.fdct_ifast = fdct_ifast;
   k.quantize = quantize;
+  k.forward_islow = forward_islow;
+  k.forward_ifast = forward_ifast;
 }
 
 inline void idct_kernels(const Support& s, IdctKernels& k) {

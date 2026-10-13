@@ -95,6 +95,8 @@ inline void fdct_kernels(const Support& s, FdctKernels& k) {
     k.fdct_islow = n::fdct_islow;
     k.fdct_ifast = n::fdct_ifast;
     k.quantize = n::quantize;
+    k.forward_islow = n::forward_islow;
+    k.forward_ifast = n::forward_ifast;
     k.convsamp_float = n::convsamp_float;
     k.fdct_float = n::fdct_float;
     k.quantize_float = n::quantize_float;

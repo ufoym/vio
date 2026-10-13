@@ -187,27 +187,53 @@ inline void fdct_ifast(std::int16_t* data) {
   store(data, ifast_pass(transpose(p1), k));
 }
 
-// divisors: 16-bit reciprocal [0..63], correction [64..127], scale
-// [128..191], shift [192..255].
+namespace detail_fdct {
+// Quantizes the 8 coefficients at offset i (divisors: 16-bit reciprocal
+// [0..63], correction [64..127], scale [128..191], shift [192..255]).
+VIO_INLINE void quantize8(std::int16_t* coef_block, const std::uint16_t* divisors, int i,
+                          int16x8_t row) {
+  uint16x8_t recip = vld1q_u16(divisors + i);
+  uint16x8_t corr = vld1q_u16(divisors + 64 + i);
+  int16x8_t shift = vld1q_s16(reinterpret_cast<const std::int16_t*>(divisors + 3 * 64) + i);
+  int16x8_t sign = vshrq_n_s16(row, 15);
+  uint16x8_t abs_row = vaddq_u16(vreinterpretq_u16_s16(vabsq_s16(row)), corr);
+  int32x4_t lo = vreinterpretq_s32_u32(vmull_u16(vget_low_u16(abs_row), vget_low_u16(recip)));
+  int32x4_t hi = vreinterpretq_s32_u32(vmull_u16(vget_high_u16(abs_row), vget_high_u16(recip)));
+  row = vcombine_s16(vshrn_n_s32(lo, 16), vshrn_n_s32(hi, 16));
+  row = vreinterpretq_s16_u16(vshlq_u16(vreinterpretq_u16_s16(row), vnegq_s16(shift)));
+  vst1q_s16(coef_block + i, vsubq_s16(veorq_s16(row, sign), sign));
+}
+
+// Centered samples of a block, transposed (v[i] = column i).
+VIO_INLINE Block8 load_samples(std::uint8_t** sample_data, unsigned start_col) {
+  Block8 rows;
+  for (int r = 0; r < 8; r++)
+    rows.v[r] = vreinterpretq_s16_u16(vsubl_u8(vld1_u8(sample_data[r] + start_col), vdup_n_u8(128)));
+  return transpose(rows);
+}
+}  // namespace detail_fdct
+
 inline void quantize(std::int16_t* coef_block, const std::uint16_t* divisors,
                      const std::int16_t* workspace) {
-  const std::uint16_t* recip_ptr = divisors;
-  const std::uint16_t* corr_ptr = divisors + 64;
-  const std::int16_t* shift_ptr = reinterpret_cast<const std::int16_t*>(divisors + 3 * 64);
-  for (int i = 0; i < 64; i += 8) {
-    int16x8_t row = vld1q_s16(workspace + i);
-    uint16x8_t recip = vld1q_u16(recip_ptr + i);
-    uint16x8_t corr = vld1q_u16(corr_ptr + i);
-    int16x8_t shift = vld1q_s16(shift_ptr + i);
-    int16x8_t sign = vshrq_n_s16(row, 15);
-    uint16x8_t abs_row = vaddq_u16(vreinterpretq_u16_s16(vabsq_s16(row)), corr);
-    int32x4_t lo = vreinterpretq_s32_u32(vmull_u16(vget_low_u16(abs_row), vget_low_u16(recip)));
-    int32x4_t hi = vreinterpretq_s32_u32(vmull_u16(vget_high_u16(abs_row), vget_high_u16(recip)));
-    row = vcombine_s16(vshrn_n_s32(lo, 16), vshrn_n_s32(hi, 16));
-    row = vreinterpretq_s16_u16(vshlq_u16(vreinterpretq_u16_s16(row), vnegq_s16(shift)));
-    row = vsubq_s16(veorq_s16(row, sign), sign);
-    vst1q_s16(coef_block + i, row);
-  }
+  for (int i = 0; i < 64; i += 8) detail_fdct::quantize8(coef_block, divisors, i, vld1q_s16(workspace + i));
+}
+
+// convsamp(), the forward DCT and quantize() in one: the block stays in
+// registers.
+inline void forward_islow(std::uint8_t** sample_data, unsigned start_col,
+                          const std::uint16_t* divisors, std::int16_t* coef_block) {
+  using namespace detail_fdct;
+  const int16x4x3_t k = {{vld1_s16(opaque(islow_consts)), vld1_s16(opaque(islow_consts) + 4),
+                          vld1_s16(opaque(islow_consts) + 8)}};
+  Block8 out = islow_pass<2>(transpose(islow_pass<1>(load_samples(sample_data, start_col), k)), k);
+  for (int i = 0; i < 8; i++) quantize8(coef_block, divisors, 8 * i, out.v[i]);
+}
+inline void forward_ifast(std::uint8_t** sample_data, unsigned start_col,
+                          const std::uint16_t* divisors, std::int16_t* coef_block) {
+  using namespace detail_fdct;
+  const int16x4_t k = vld1_s16(opaque(ifast_consts));
+  Block8 out = ifast_pass(transpose(ifast_pass(load_samples(sample_data, start_col), k)), k);
+  for (int i = 0; i < 8; i++) quantize8(coef_block, divisors, 8 * i, out.v[i]);
 }
 
 }  // namespace vio::jpeg::simd::neon
