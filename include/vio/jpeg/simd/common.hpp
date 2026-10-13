@@ -73,6 +73,9 @@ struct FdctKernels {
   // divisors: 16-bit reciprocal/correction/scale/shift table
   void (*quantize)(std::int16_t* coef, const std::uint16_t* divisors,
                    const std::int16_t* ws) = nullptr;
+  // convsamp + fdct_islow + quantize in one
+  void (*forward_islow)(std::uint8_t** sample_data, unsigned start_col,
+                        const std::uint16_t* divisors, std::int16_t* coef) = nullptr;
   void (*convsamp_float)(std::uint8_t** sample_data, unsigned start_col, float* ws) = nullptr;
   void (*fdct_float)(float* data) = nullptr;
   void (*quantize_float)(std::int16_t* coef, const float* divisors, const float* ws) = nullptr;

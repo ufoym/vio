@@ -105,6 +105,7 @@ inline void fdct_kernels(const Support& s, FdctKernels& k) {
     k.convsamp = a::convsamp;
     k.fdct_islow = a::fdct_islow;
     k.quantize = a::quantize;
+    k.forward_islow = a::forward_islow;
   }
 #endif
 }

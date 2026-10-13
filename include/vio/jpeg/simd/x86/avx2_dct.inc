@@ -165,6 +165,35 @@ inline void quantize(std::int16_t* coef_block, const std::uint16_t* divisors,
   }
 }
 
+// convsamp(), fdct_islow() and quantize() in one: the block stays in
+// registers.  The samples load straight into the row pairs the transform
+// takes, and its output row pairs are the quantizer's 16-coefficient units.
+inline void forward_islow(std::uint8_t** sample_data, unsigned start_col,
+                          const std::uint16_t* divisors, std::int16_t* coef_block) {
+  using namespace detail_dct;
+  const Y center = _mm256_set1_epi16(128);
+  auto rows = [&](int a, int b) {
+    X lo = _mm_loadl_epi64(reinterpret_cast<const X*>(sample_data[a] + start_col));
+    X hi = _mm_loadl_epi64(reinterpret_cast<const X*>(sample_data[b] + start_col));
+    return _mm256_sub_epi16(_mm256_cvtepu8_epi16(_mm_unpacklo_epi64(lo, hi)), center);
+  };
+  Y A = rows(0, 4), B = rows(1, 5), C = rows(2, 6), D = rows(3, 7);
+  Y p, q, r, s;
+  transpose_pairs(A, B, C, D, p, q, r, s);
+  fdct_islow_pass<true>(p, q, r, s, A, B, C, D);
+  transpose_pairs(A, B, C, D, p, q, r, s);
+  fdct_islow_pass<false>(p, q, r, s, A, B, C, D);
+  auto quant = [&](int i, Y x) {
+    auto ld = [&](int o) { return _mm256_loadu_si256(reinterpret_cast<const Y*>(divisors + o + i)); };
+    Y a = _mm256_add_epi16(_mm256_abs_epi16(x), ld(64));
+    a = _mm256_mulhi_epu16(_mm256_mulhi_epu16(a, ld(0)), ld(128));
+    _mm256_storeu_si256(reinterpret_cast<Y*>(coef_block + i), _mm256_sign_epi16(a, x));
+  };
+  quant(0, _mm256_permute2x128_si256(A, B, 0x20));   // [o0|o1]
+  quant(16, _mm256_permute2x128_si256(C, D, 0x20));  // [o2|o3]
+  quant(32, _mm256_permute2x128_si256(A, B, 0x31));  // [o4|o5]
+  quant(48, _mm256_permute2x128_si256(C, D, 0x31));  // [o6|o7]
+}
 inline void fdct_islow(std::int16_t* data) {
   using namespace detail_dct;
   auto row = [&](int i) { return _mm_loadu_si128(reinterpret_cast<const X*>(data + i * 8)); };
