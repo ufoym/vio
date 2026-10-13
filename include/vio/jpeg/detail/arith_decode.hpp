@@ -109,10 +109,50 @@ class ArithDecoder final : public EntropyDecoder {
     int ct;
   };
   Coder load() const { return {a_, c_, ct_}; }
-  void save(const Coder& q) {
+  // Member-wise, so that q is not where an out-of-line call returns its
+  // result (MSVC would then keep q in memory throughout).
+  static VIO_INLINE void set(Coder& q, const Coder& r) {
+    q.a = r.a;
+    q.c = r.c;
+    q.ct = r.ct;
+  }
+  void save(Coder q) {
+    unread(q);
     a_ = q.a;
     c_ = q.c;
     ct_ = q.ct;
+  }
+
+  // Bytes are read ahead while none of them is 0xFF: c takes 8 more low
+  // bits per byte and ct grows by 8, which leaves every comparison of c
+  // with a << ct unchanged.  Between MCUs the bytes read ahead are given
+  // back, so that the input position (and what follows at a restart
+  // marker or at the end of the scan) is that of byte-at-a-time reading.
+  VIO_INLINE void read_ahead(Coder& q) {
+    if (st_.bytes_in_buffer < 8 || st_.unread_marker || q.ct < 0) return;
+    std::uint64_t w;
+    std::memcpy(&w, st_.next_input_byte, 8);
+    w = ::vio::jpeg::simd::HuffBitWriter::to_big_endian(w);
+    // 0x80 in each 0xFF byte (exact: no borrow between bytes)
+    const std::uint64_t lo = 0x7F7F7F7F7F7F7F7FULL;
+    const std::uint64_t ff = ((w & lo) + 0x0101010101010101ULL) & w & ~lo;
+    int k = (40 - q.ct) >> 3;  // c stays below 2^56
+    const int clean = ff ? std::countl_zero(ff) >> 3 : 8;
+    if (clean < k) k = clean;
+    if (k <= 0) return;
+    q.c = (q.c << (8 * k)) | static_cast<JLong>(w >> (64 - 8 * k));
+    q.ct += 8 * k;
+    st_.next_input_byte += k;
+    st_.bytes_in_buffer -= static_cast<std::size_t>(k);
+  }
+  VIO_INLINE void unread(Coder& q) {
+    if (q.ct >= 8) {
+      const int j = q.ct >> 3;
+      q.c >>= 8 * j;
+      q.ct -= 8 * j;
+      st_.next_input_byte -= j;
+      st_.bytes_in_buffer += static_cast<std::size_t>(j);
+    }
   }
 
   // Renormalization one bit at a time, reading bytes as needed.
@@ -148,11 +188,12 @@ class ArithDecoder final : public EntropyDecoder {
     if (q.a < 0x8000L) {
       // All the shifts at once when no byte has to be read.
       int n = q.a ? std::countl_zero(static_cast<std::uint32_t>(q.a)) - 16 : 64;
+      if (VIO_UNLIKELY(q.ct < n)) read_ahead(q);
       if (VIO_LIKELY(q.ct >= n)) {
         q.a <<= n;
         q.ct -= n;
       } else {
-        q = renorm(q);
+        set(q, renorm(q));
       }
     }
     int sv = *st;
@@ -168,16 +209,26 @@ class ArithDecoder final : public EntropyDecoder {
     const bool lps = q.c >= t;
     const bool exchange = a1 < qe;
     const bool flip = lps != exchange;  // the less probable symbol
-    q.c -= lps ? t : 0;
-    q.a = lps ? qe : a1;
+    const JLong m = -static_cast<JLong>(lps);  // masks: compilers may branch on selects
+    q.c -= t & m;
+    q.a = a1 ^ ((a1 ^ qe) & m);
     const int next = (sv & 0x80) ^ (flip ? nl : nm);
+#if defined(_MSC_VER) && !defined(__clang__)
+    // (MSVC branches on the select below; GCC and Clang do best with it.)
+    const int update = -static_cast<int>(lps | (a1 < 0x8000L));
+    *st = static_cast<std::uint8_t>(sv ^ ((next ^ sv) & update));
+#else
     *st = static_cast<std::uint8_t>(lps || a1 < 0x8000L ? next : sv);
+#endif
     return (sv >> 7) ^ static_cast<int>(flip);
   }
 
-  void bad_code(Coder& q) {
+  // (By value: the decoding loops' Coder stays out of memory.)
+  VIO_NOINLINE Coder bad_code(Coder q) {
     st_.warn("Corrupt JPEG data: bad arithmetic code");
+    unread(q);
     q.ct = -1;
+    return q;
   }
 
   // Decode a DC difference for component ci; returns false on error.
@@ -194,7 +245,7 @@ class ArithDecoder final : public EntropyDecoder {
         st = dc_stats_[tbl] + 20;
         while (decode(q, st)) {
           if ((m <<= 1) == 0x8000) {
-            bad_code(q);
+            set(q, bad_code(q));
             return false;
           }
           st += 1;
@@ -226,7 +277,7 @@ class ArithDecoder final : public EntropyDecoder {
         st += 3;
         k++;
         if (k > kend) {
-          bad_code(q);
+          set(q, bad_code(q));
           return false;
         }
       }
@@ -239,7 +290,7 @@ class ArithDecoder final : public EntropyDecoder {
           st = ac_stats_[tbl] + (k <= st_.arith_ac_K[tbl] ? 189 : 217);
           while (decode(q, st)) {
             if ((m <<= 1) == 0x8000) {
-              bad_code(q);
+              set(q, bad_code(q));
               return false;
             }
             st += 1;
@@ -328,7 +379,7 @@ class ArithDecoder final : public EntropyDecoder {
         st += 3;
         k++;
         if (k > st_.Se) {
-          bad_code(q);
+          set(q, bad_code(q));
           return save(q);
         }
       }

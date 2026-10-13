@@ -30,6 +30,9 @@ class EntropyDecoder {
                                unsigned /*MCU_col_num*/, unsigned nMCU) {
     return nMCU;
   }
+  // Lossy, single-component scans: decode n MCUs (one block each) into
+  // consecutive blocks; returns false if the decoder has no such path.
+  virtual bool decode_blocks(Block* /*blocks*/, unsigned /*n*/) { return false; }
   virtual bool process_restart() { return true; }
   bool insufficient_data = false;
 };

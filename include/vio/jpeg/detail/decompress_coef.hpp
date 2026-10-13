@@ -188,6 +188,16 @@ class CoefController final : public DCoefController<T> {
     for (int ci = 0; ci < st_.comps_in_scan; ci++)
       buffer[ci] = &whole_image_[st_.cur_comp_info[ci]->component_index];
     for (int yoffset = MCU_vert_offset_; yoffset < this->MCU_rows_per_iMCU_row; yoffset++) {
+      if (st_.comps_in_scan == 1 && !st_.entropy->insufficient_data) {
+        // One block per MCU, consecutive in the row.
+        ComponentInfo* c = st_.cur_comp_info[0];
+        st_.last_good_iMCU_row = st_.input_iMCU_row;
+        Block* row = buffer[0]->row(st_.input_iMCU_row * c->v_samp_factor + yoffset);
+        if (st_.entropy->decode_blocks(row + MCU_ctr_, st_.MCUs_per_row - MCU_ctr_)) {
+          MCU_ctr_ = 0;
+          continue;
+        }
+      }
       for (unsigned MCU_col_num = MCU_ctr_; MCU_col_num < st_.MCUs_per_row; MCU_col_num++) {
         int blkn = 0;
         for (int ci = 0; ci < st_.comps_in_scan; ci++) {
