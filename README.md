@@ -83,7 +83,8 @@ Throughput measured by `tjbench` on GitHub-hosted runners: vio, libjpeg-turbo
 TurboJPEG layer, `tests/libjpeg/`), all built on the same machine with the
 same compiler (GCC on Linux, Apple Clang on macOS, MSVC on Windows; NASM for
 libjpeg-turbo's x86 SIMD).  The image is a 3632×2384 RGB tiling of `testorig.ppm`; each number
-is the best of 5 runs.  Results from commit `648a2e1`.  Hosted Linux x86-64
+is the best of 5 runs (of 10 or 15 for the machines measured two or three
+times).  Results from commit `76856a6`, built as C++17.  Hosted Linux x86-64
 runners come with different processors; the on-demand workflow
 `bench-x64.yml` runs the benchmark on several at once, which measured the
 three AMD EPYC generations below.
@@ -96,57 +97,56 @@ JPEG compression:
 
 | Platform       | CPU                      | SIMD   | vs libjpeg-turbo | vs libjpeg |
 | -------------- | ------------------------ | ------ | ---------------: | ---------: |
-| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | AVX2   |             +21% |      +472% |
-| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | SSE2   |             +19% |      +420% |
+| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | AVX2   |             +22% |      +476% |
+| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | SSE2   |             +19% |      +422% |
 | Linux x86-64   | AMD EPYC 7763 (Zen 3)    | scalar |             +40% |       +98% |
-| Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | AVX2   |             +24% |      +510% |
+| Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | AVX2   |             +25% |      +519% |
 | Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | SSE2   |             +23% |      +436% |
-| Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | scalar |             +51% |      +122% |
+| Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | scalar |             +50% |      +121% |
 | Linux x86-64   | AMD EPYC 9V45 (Zen 5)    | AVX2   |             +22% |      +548% |
-| Linux x86-64   | AMD EPYC 9V45 (Zen 5)    | SSE2   |             +25% |      +482% |
-| Linux x86-64   | AMD EPYC 9V45 (Zen 5)    | scalar |             +63% |      +145% |
-| macOS x86-64   | Intel Core i7-8700B      | AVX2   |             +19% |      +453% |
-| macOS x86-64   | Intel Core i7-8700B      | SSE2   |             +10% |      +370% |
-| macOS x86-64   | Intel Core i7-8700B      | scalar |             +56% |      +135% |
-| Linux AArch64  | Neoverse-N2              | NEON   |             +19% |      +306% |
-| Linux AArch64  | Neoverse-N2              | scalar |             +10% |      +126% |
-| macOS AArch64  | Apple M4¹                | NEON   |             +24% |      +445% |
-| macOS AArch64  | Apple M4¹                | scalar |             +23% |      +203% |
-| Windows x86-64 | Intel Core Ultra 9 285K² | AVX2   |              +9% |      +418% |
-| Windows x86-64 | Intel Core Ultra 9 285K² | SSE2   |             +11% |      +369% |
-| Windows x86-64 | Intel Core Ultra 9 285K² | scalar |             +59% |      +126% |
+| Linux x86-64   | AMD EPYC 9V45 (Zen 5)    | SSE2   |             +24% |      +478% |
+| Linux x86-64   | AMD EPYC 9V45 (Zen 5)    | scalar |             +64% |      +139% |
+| macOS x86-64   | Intel Core i7-8700B      | AVX2   |             +18% |      +437% |
+| macOS x86-64   | Intel Core i7-8700B      | SSE2   |             +10% |      +334% |
+| macOS x86-64   | Intel Core i7-8700B      | scalar |             +55% |      +127% |
+| Linux AArch64  | Neoverse-N2              | NEON   |             +19% |      +303% |
+| Linux AArch64  | Neoverse-N2              | scalar |             +10% |      +124% |
+| macOS AArch64  | Apple M4¹                | NEON   |             +23% |      +443% |
+| macOS AArch64  | Apple M4¹                | scalar |             +23% |      +200% |
+| Windows x86-64 | Intel Core Ultra 9 285K² | AVX2   |             +19% |      +464% |
+| Windows x86-64 | Intel Core Ultra 9 285K² | SSE2   |             +19% |      +401% |
+| Windows x86-64 | Intel Core Ultra 9 285K² | scalar |             +70% |      +142% |
 
 JPEG decompression:
 
 | Platform       | CPU                      | SIMD   | vs libjpeg-turbo | vs libjpeg |
 | -------------- | ------------------------ | ------ | ---------------: | ---------: |
 | Linux x86-64   | AMD EPYC 7763 (Zen 3)    | AVX2   |             +15% |      +147% |
-| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | SSE2   |             +17% |      +134% |
+| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | SSE2   |             +17% |      +136% |
 | Linux x86-64   | AMD EPYC 7763 (Zen 3)    | scalar |              +6% |       +28% |
-| Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | AVX2   |             +22% |      +158% |
-| Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | SSE2   |             +22% |      +139% |
-| Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | scalar |              +8% |       +30% |
-| Linux x86-64   | AMD EPYC 9V45 (Zen 5)    | AVX2   |             +24% |      +153% |
-| Linux x86-64   | AMD EPYC 9V45 (Zen 5)    | SSE2   |             +25% |      +134% |
-| Linux x86-64   | AMD EPYC 9V45 (Zen 5)    | scalar |             +12% |       +41% |
-| macOS x86-64   | Intel Core i7-8700B      | AVX2   |             +15% |      +131% |
-| macOS x86-64   | Intel Core i7-8700B      | SSE2   |             +12% |      +116% |
-| macOS x86-64   | Intel Core i7-8700B      | scalar |              +7% |       +36% |
-| Linux AArch64  | Neoverse-N2              | NEON   |             +23% |       +93% |
-| Linux AArch64  | Neoverse-N2              | scalar |             +16% |       +22% |
-| macOS AArch64  | Apple M4¹                | NEON   |             +25% |      +101% |
-| macOS AArch64  | Apple M4¹                | scalar |             +12% |       +24% |
-| Windows x86-64 | Intel Core Ultra 9 285K² | AVX2   |             +13% |       +82% |
-| Windows x86-64 | Intel Core Ultra 9 285K² | SSE2   |             +13% |       +68% |
+| Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | AVX2   |             +20% |      +155% |
+| Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | SSE2   |             +21% |      +136% |
+| Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | scalar |              +7% |       +29% |
+| Linux x86-64   | AMD EPYC 9V45 (Zen 5)    | AVX2   |             +23% |      +151% |
+| Linux x86-64   | AMD EPYC 9V45 (Zen 5)    | SSE2   |             +26% |      +136% |
+| Linux x86-64   | AMD EPYC 9V45 (Zen 5)    | scalar |             +13% |       +37% |
+| macOS x86-64   | Intel Core i7-8700B      | AVX2   |              +7% |      +114% |
+| macOS x86-64   | Intel Core i7-8700B      | SSE2   |              +5% |       +90% |
+| macOS x86-64   | Intel Core i7-8700B      | scalar |              +1% |       +27% |
+| Linux AArch64  | Neoverse-N2              | NEON   |             +22% |       +92% |
+| Linux AArch64  | Neoverse-N2              | scalar |             +15% |       +22% |
+| macOS AArch64  | Apple M4¹                | NEON   |             +24% |      +103% |
+| macOS AArch64  | Apple M4¹                | scalar |             +11% |       +24% |
+| Windows x86-64 | Intel Core Ultra 9 285K² | AVX2   |             +12% |       +81% |
+| Windows x86-64 | Intel Core Ultra 9 285K² | SSE2   |             +12% |       +67% |
 | Windows x86-64 | Intel Core Ultra 9 285K² | scalar |              +5% |        +9% |
 
 ¹ Measured on a local Mac (native, same build and benchmark script)
 instead of the GitHub-hosted runner, which is a virtualized Apple M1.
 ² Measured on a local Windows 11 machine with MSVC 19.44 (Visual Studio
-2022), pinned to the performance cores, at commit `0e6f24d` (before the
-latest compression work).  Built with clang-cl 19 instead (vio and
-libjpeg-turbo), vio compresses 16% (AVX2), 11% (SSE2) and 81% (scalar)
-faster than libjpeg-turbo and decompresses 22%, 23% and 13% faster.
+2022), pinned to the performance cores.  Built with clang-cl 19 instead
+(vio and libjpeg-turbo), vio compresses 25% (AVX2), 18% (SSE2) and 81%
+(scalar) faster than libjpeg-turbo and decompresses 21%, 22% and 12% faster.
 
 Per configuration, on the same machines (by CPU; the summary gives their
 platforms), each summary figure above being the geometric mean of the first
@@ -158,57 +158,58 @@ JPEG compression, vio vs libjpeg-turbo:
 
 | CPU, SIMD            | 4:4:4 | 4:2:2 | 4:2:0 |  gray | fastDCT | prog. | arith. | lossless |
 | -------------------- | ----: | ----: | ----: | ----: | ------: | ----: | -----: | -------: |
-| EPYC 7763 AVX2       |  +27% |  +24% |  +22% |  +17% |    +27% |  +13% |   +16% |     +51% |
-| EPYC 7763 SSE2       |  +20% |  +20% |  +20% |  +17% |    +23% |  +14% |   +16% |     +51% |
-| EPYC 7763 scalar     |  +59% |  +49% |  +44% |  +52% |    +41% |  +18% |   +24% |     +51% |
-| EPYC 9V74 AVX2       |  +27% |  +23% |  +23% |  +23% |    +29% |  +17% |   +25% |     +60% |
-| EPYC 9V74 SSE2       |  +29% |  +24% |  +23% |  +21% |    +25% |  +18% |   +25% |     +59% |
-| EPYC 9V74 scalar     |  +74% |  +62% |  +58% |  +64% |    +55% |  +16% |   +33% |     +60% |
-| EPYC 9V45 AVX2       |  +24% |  +20% |  +20% |  +19% |    +18% |  +28% |   +28% |     +55% |
-| EPYC 9V45 SSE2       |  +28% |  +24% |  +22% |  +22% |    +23% |  +29% |   +28% |     +55% |
-| EPYC 9V45 scalar     |  +97% |  +77% |  +71% |  +85% |    +67% |  +21% |   +38% |     +55% |
-| i7-8700B AVX2        |  +28% |  +15% |  +20% |  +17% |    +12% |  +18% |   +27% |     +31% |
-| i7-8700B SSE2        |   +6% |   +1% |   +7% |   +2% |     +8% |  +14% |   +35% |     +28% |
-| i7-8700B scalar      |  +79% |  +69% |  +59% |  +70% |    +48% |  +21% |   +50% |     +31% |
-| Neoverse-N2 NEON     |  +14% |  +18% |  +18% |  +18% |    +20% |  +17% |   +27% |     +69% |
-| Neoverse-N2 scalar   |   +7% |   +6% |   +6% |   +9% |     +5% |  +14% |   +24% |     +69% |
-| M4¹ NEON             |  +24% |  +22% |  +20% |  +24% |    +21% |  +13% |   +43% |     +18% |
-| M4¹ scalar           |  +31% |  +17% |  +16% |  +36% |    +13% |   +9% |   +40% |     +17% |
-| Ultra 9 285K² AVX2   |   +5% |   +6% |   +7% |   +4% |    +10% |   +6% |   +30% |     +69% |
-| Ultra 9 285K² SSE2   |   +8% |   +7% |   +9% |   +8% |    +10% |   +6% |   +30% |     +68% |
-| Ultra 9 285K² scalar |  +90% |  +75% |  +67% |  +71% |    +62% |  +17% |   +42% |     +69% |
+| EPYC 7763 AVX2       |  +27% |  +24% |  +23% |  +18% |    +28% |  +19% |   +15% |     +56% |
+| EPYC 7763 SSE2       |  +20% |  +20% |  +20% |  +15% |    +22% |  +20% |   +15% |     +56% |
+| EPYC 7763 scalar     |  +58% |  +48% |  +44% |  +51% |    +41% |  +19% |   +24% |     +56% |
+| EPYC 9V74 AVX2       |  +28% |  +24% |  +24% |  +24% |    +31% |  +23% |   +23% |     +67% |
+| EPYC 9V74 SSE2       |  +29% |  +23% |  +22% |  +19% |    +24% |  +24% |   +23% |     +67% |
+| EPYC 9V74 scalar     |  +72% |  +61% |  +58% |  +62% |    +55% |  +17% |   +31% |     +67% |
+| EPYC 9V45 AVX2       |  +23% |  +21% |  +19% |  +16% |    +18% |  +30% |   +27% |     +56% |
+| EPYC 9V45 SSE2       |  +27% |  +21% |  +21% |  +19% |    +20% |  +28% |   +29% |     +55% |
+| EPYC 9V45 scalar     |  +95% |  +77% |  +75% |  +81% |    +72% |  +20% |   +38% |     +55% |
+| i7-8700B AVX2        |  +16% |  +17% |  +19% |  +15% |    +14% |  +17% |   +33% |     +22% |
+| i7-8700B SSE2        |   +7% |   +4% |   +7% |   +5% |     +3% |  +13% |   +30% |     +21% |
+| i7-8700B scalar      |  +88% |  +69% |  +65% |  +67% |    +46% |  +18% |   +44% |     +21% |
+| Neoverse-N2 NEON     |  +14% |  +17% |  +16% |  +19% |    +18% |  +20% |   +27% |     +68% |
+| Neoverse-N2 scalar   |   +7% |   +6% |   +6% |   +8% |     +5% |  +12% |   +24% |     +68% |
+| M4¹ NEON             |  +18% |  +23% |  +21% |  +24% |    +22% |  +12% |   +45% |     +14% |
+| M4¹ scalar           |  +31% |  +17% |  +16% |  +36% |    +12% |   +8% |   +42% |     +14% |
+| Ultra 9 285K² AVX2   |  +18% |  +19% |  +20% |  +19% |    +18% |   +9% |   +30% |     +70% |
+| Ultra 9 285K² SSE2   |  +19% |  +17% |  +18% |  +18% |    +20% |   +9% |   +30% |     +69% |
+| Ultra 9 285K² scalar | +105% |  +91% |  +84% |  +92% |    +80% |  +19% |   +42% |     +70% |
 
 JPEG decompression, vio vs libjpeg-turbo:
 
 | CPU, SIMD            | 4:4:4 | 4:2:2 | 4:2:0 |  gray | fastDCT | prog. | arith. | lossless |
 | -------------------- | ----: | ----: | ----: | ----: | ------: | ----: | -----: | -------: |
-| EPYC 7763 AVX2       |  +20% |  +21% |  +21% |  +21% |    +27% |   +6% |    −7% |      +5% |
-| EPYC 7763 SSE2       |  +25% |  +25% |  +23% |  +23% |    +24% |   +7% |    −7% |      +5% |
-| EPYC 7763 scalar     |   +7% |   +7% |   +7% |  +11% |    +14% |   +3% |    −7% |      +5% |
-| EPYC 9V74 AVX2       |  +32% |  +29% |  +29% |  +35% |    +32% |   +5% |    −2% |      +9% |
-| EPYC 9V74 SSE2       |  +34% |  +31% |  +29% |  +36% |    +28% |   +6% |    −2% |      +9% |
-| EPYC 9V74 scalar     |  +10% |   +8% |   +8% |  +16% |    +16% |   +2% |    −2% |      +9% |
-| EPYC 9V45 AVX2       |  +33% |  +30% |  +29% |  +31% |    +32% |  +13% |    +3% |     +10% |
-| EPYC 9V45 SSE2       |  +38% |  +34% |  +31% |  +35% |    +28% |  +12% |    +0% |      +9% |
-| EPYC 9V45 scalar     |  +16% |  +12% |  +12% |  +21% |    +17% |   +8% |    +0% |     +10% |
-| i7-8700B AVX2        |  +22% |  +10% |  +18% |  +15% |    +18% |   −0% |   +20% |     +30% |
-| i7-8700B SSE2        |  +15% |  +13% |  +14% |  +13% |     +8% |   +3% |   +18% |     +22% |
-| i7-8700B scalar      |   +5% |   +6% |   +5% |  +11% |     +7% |   −1% |   +15% |     +22% |
-| Neoverse-N2 NEON     |  +27% |  +28% |  +29% |  +35% |    +32% |   +8% |    +4% |      +9% |
-| Neoverse-N2 scalar   |  +16% |  +16% |  +16% |  +27% |    +26% |   +6% |    +4% |      +9% |
-| M4¹ NEON             |  +41% |  +24% |  +25% |  +33% |    +28% |  +11% |   +18% |     +10% |
-| M4¹ scalar           |  +14% |  +12% |   +5% |  +22% |     +9% |   +5% |   +17% |     +12% |
-| Ultra 9 285K² AVX2   |  +16% |  +15% |  +14% |  +14% |    +17% |  +11% |    +4% |      +9% |
-| Ultra 9 285K² SSE2   |  +15% |  +15% |  +14% |  +14% |    +16% |  +12% |    +5% |      +9% |
-| Ultra 9 285K² scalar |   +0% |   +1% |   +3% |   +9% |    +11% |   +8% |    +3% |      +9% |
+| EPYC 7763 AVX2       |  +21% |  +22% |  +22% |  +21% |    +28% |   +4% |    −8% |      +5% |
+| EPYC 7763 SSE2       |  +28% |  +26% |  +24% |  +27% |    +25% |   +5% |    −8% |      +5% |
+| EPYC 7763 scalar     |   +7% |   +7% |   +7% |  +12% |    +14% |   +2% |    −8% |      +5% |
+| EPYC 9V74 AVX2       |  +32% |  +29% |  +30% |  +28% |    +32% |   +5% |    −6% |      +9% |
+| EPYC 9V74 SSE2       |  +35% |  +31% |  +29% |  +29% |    +28% |   +6% |    −6% |      +9% |
+| EPYC 9V74 scalar     |  +10% |   +9% |   +8% |  +12% |    +16% |   +3% |    −6% |      +8% |
+| EPYC 9V45 AVX2       |  +32% |  +31% |  +26% |  +31% |    +32% |  +10% |    +2% |     +11% |
+| EPYC 9V45 SSE2       |  +41% |  +33% |  +30% |  +35% |    +29% |  +12% |    +3% |     +10% |
+| EPYC 9V45 scalar     |  +17% |  +13% |  +12% |  +20% |    +19% |   +7% |    +1% |     +12% |
+| i7-8700B AVX2        |   +5% |   +7% |   +8% |   +5% |     +7% |   +2% |   +17% |     +22% |
+| i7-8700B SSE2        |   +6% |   +5% |   +4% |   +4% |     +0% |   −2% |   +18% |     +21% |
+| i7-8700B scalar      |   −1% |   −4% |   −2% |   +1% |     −2% |   +0% |   +14% |     +20% |
+| Neoverse-N2 NEON     |  +27% |  +27% |  +29% |  +35% |    +32% |   +8% |    +3% |      +7% |
+| Neoverse-N2 scalar   |  +16% |  +16% |  +16% |  +26% |    +26% |   +6% |    +3% |      +7% |
+| M4¹ NEON             |  +30% |  +24% |  +25% |  +31% |    +28% |  +13% |   +17% |     +10% |
+| M4¹ scalar           |  +14% |  +10% |   +5% |  +22% |     +9% |   +5% |   +15% |     +11% |
+| Ultra 9 285K² AVX2   |  +14% |  +13% |  +13% |  +12% |    +15% |  +12% |    +5% |      +8% |
+| Ultra 9 285K² SSE2   |  +15% |  +14% |  +14% |  +12% |    +15% |  +12% |    +6% |      +8% |
+| Ultra 9 285K² scalar |   +0% |   +1% |   +2% |   +8% |    +11% |   +9% |    +5% |      +9% |
 
-With SIMD, baseline compression is 4–30% faster than libjpeg-turbo (1–8% on
-the macOS x86-64 runner with SSE2) and sequential decompression 10–41%;
-without SIMD, compression is 41–97% faster on x86 and 5–36% on AArch64.
-Progressive compression is 6–29% faster, arithmetic-coded 16–50% and
-lossless 17–69%.  Progressive decompression ranges from 1% slower to 13%
-faster, lossless decompression is 5–30% faster, and arithmetic-coded
-decompression ranges from 7% slower (Zen 3) to 20% faster.  Shared CI
+With SIMD, baseline compression is 14–31% faster than libjpeg-turbo (3–7% on
+the macOS x86-64 runner with SSE2) and sequential decompression 12–41% (0–8%
+on the macOS x86-64 runner); without SIMD, compression is 41–105% faster on
+x86 and 5–36% on AArch64.  Progressive compression is 8–30% faster,
+arithmetic-coded 15–45% and lossless 14–70%.  Progressive decompression
+ranges from 2% slower to 13% faster, lossless decompression is 5–22% faster,
+and arithmetic-coded decompression ranges from 8% slower (Zen 3) to 18%
+faster.  Shared CI
 runners are noisy (the macOS x86-64 runner most of all), so differences of a
 few percent are within run-to-run variation.
 
