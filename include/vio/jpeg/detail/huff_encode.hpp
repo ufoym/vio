@@ -661,8 +661,9 @@ class PhuffEncoder final : public EntropyEncoder {
             size + nb);
   }
 
-  // The correction bits (one per char), up to 16 per write.
-  void emit_buffered_bits(const char* bufstart, unsigned nb) {
+  // The correction bits (one per char), up to 16 per write.  Out of line:
+  // inlined into encode_mcu(), its loop slows down the coding loops there.
+  VIO_NOINLINE void emit_buffered_bits(const char* bufstart, unsigned nb) {
     if (gather_) return;
     while (nb > 0) {
       int n = nb < 16 ? static_cast<int>(nb) : 16;
