@@ -29,9 +29,9 @@ VIO_INLINE constexpr JLong lsh(JLong x, int n) {
   return static_cast<JLong>(static_cast<unsigned long long>(x) << n);
 }
 
-template <class T>
-void fdct_islow(DctElem<T>* data) {
-  using E = DctElem<T>;
+// E: DCT element type (DctElem<T>, or int16_t for 8-bit samples).
+template <class T, class E = DctElem<T>>
+void fdct_islow(E* data) {
   // Intermediates: 32 bits are enough for 8-bit samples (and much faster
   // than 64-bit arithmetic on most targets).
   using A = std::conditional_t<kBits<T> == 8, int, JLong>;
@@ -117,32 +117,32 @@ void fdct_islow(DctElem<T>* data) {
   }
 }
 
-template <class T>
-void fdct_ifast(DctElem<T>* data) {
-  using E = DctElem<T>;
-  constexpr JLong FIX_0_382683433 = 98, FIX_0_541196100 = 139, FIX_0_707106781 = 181,
-                  FIX_1_306562965 = 334;
-  auto mul = [](JLong var, JLong c) { return static_cast<E>((var * c) >> 8); };
-  for (int pass = 0; pass < 2; pass++) {
+template <class T, class E = DctElem<T>>
+void fdct_ifast(E* data) {
+  // 32-bit products are exact for 8-bit samples (|var * c| < 2^23).
+  using A = std::conditional_t<kBits<T> == 8, int, JLong>;
+  constexpr A FIX_0_382683433 = 98, FIX_0_541196100 = 139, FIX_0_707106781 = 181,
+              FIX_1_306562965 = 334;
+  auto mul = [](E var, A c) VIO_LAMBDA_INLINE { return static_cast<E>((A(var) * c) >> 8); };
+  // One pass over the 8 vectors with element stride S, vectors D apart.
+  auto pass = [&]<int S, int D>() VIO_LAMBDA_INLINE {
     E* dataptr = data;
-    const int s = pass == 0 ? 1 : DCTSIZE;   // element stride
-    const int adv = pass == 0 ? DCTSIZE : 1;  // vector advance
     for (int ctr = DCTSIZE - 1; ctr >= 0; ctr--) {
-      E tmp0 = dataptr[0 * s] + dataptr[7 * s];
-      E tmp7 = dataptr[0 * s] - dataptr[7 * s];
-      E tmp1 = dataptr[1 * s] + dataptr[6 * s];
-      E tmp6 = dataptr[1 * s] - dataptr[6 * s];
-      E tmp2 = dataptr[2 * s] + dataptr[5 * s];
-      E tmp5 = dataptr[2 * s] - dataptr[5 * s];
-      E tmp3 = dataptr[3 * s] + dataptr[4 * s];
-      E tmp4 = dataptr[3 * s] - dataptr[4 * s];
+      E tmp0 = dataptr[0 * S] + dataptr[7 * S];
+      E tmp7 = dataptr[0 * S] - dataptr[7 * S];
+      E tmp1 = dataptr[1 * S] + dataptr[6 * S];
+      E tmp6 = dataptr[1 * S] - dataptr[6 * S];
+      E tmp2 = dataptr[2 * S] + dataptr[5 * S];
+      E tmp5 = dataptr[2 * S] - dataptr[5 * S];
+      E tmp3 = dataptr[3 * S] + dataptr[4 * S];
+      E tmp4 = dataptr[3 * S] - dataptr[4 * S];
       E tmp10 = tmp0 + tmp3, tmp13 = tmp0 - tmp3;
       E tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
-      dataptr[0 * s] = tmp10 + tmp11;
-      dataptr[4 * s] = tmp10 - tmp11;
+      dataptr[0 * S] = tmp10 + tmp11;
+      dataptr[4 * S] = tmp10 - tmp11;
       E z1 = mul(tmp12 + tmp13, FIX_0_707106781);
-      dataptr[2 * s] = tmp13 + z1;
-      dataptr[6 * s] = tmp13 - z1;
+      dataptr[2 * S] = tmp13 + z1;
+      dataptr[6 * S] = tmp13 - z1;
       tmp10 = tmp4 + tmp5;
       tmp11 = tmp5 + tmp6;
       tmp12 = tmp6 + tmp7;
@@ -151,13 +151,15 @@ void fdct_ifast(DctElem<T>* data) {
       E z4 = mul(tmp12, FIX_1_306562965) + z5;
       E z3 = mul(tmp11, FIX_0_707106781);
       E z11 = tmp7 + z3, z13 = tmp7 - z3;
-      dataptr[5 * s] = z13 + z2;
-      dataptr[3 * s] = z13 - z2;
-      dataptr[1 * s] = z11 + z4;
-      dataptr[7 * s] = z11 - z4;
-      dataptr += adv;
+      dataptr[5 * S] = z13 + z2;
+      dataptr[3 * S] = z13 - z2;
+      dataptr[1 * S] = z11 + z4;
+      dataptr[7 * S] = z11 - z4;
+      dataptr += D;
     }
-  }
+  };
+  pass.template operator()<1, DCTSIZE>();
+  pass.template operator()<DCTSIZE, 1>();
 }
 
 VIO_NO_FP_CONTRACT inline void fdct_float(float* data) {
@@ -217,9 +219,18 @@ class ForwardDct {
     if constexpr (kBits<T> == 8) {
       simd_ = simd::fdct_kernels(support);
       dct16_ = method == DctMethod::IntSlow ? simd_.fdct_islow : simd_.fdct_ifast;
-      // Any SIMD kernel switches the integer path to 16-bit DCT elements;
-      // missing kernels fall back to scalar code.
-      use16_ = method != DctMethod::Float && (simd_.convsamp || dct16_ || simd_.quantize);
+      if (!dct16_)
+        dct16_ = method == DctMethod::IntSlow ? fdct::fdct_islow<T, std::int16_t>
+                                              : fdct::fdct_ifast<T, std::int16_t>;
+      // 16-bit DCT elements, with scalar code for missing SIMD kernels.
+      // Without SIMD kernels, x86 keeps 32-bit elements: compilers vectorize
+      // the 16-bit scalar code poorly with SSE2's widening multiplies.
+#if defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_X64)
+      use16_ = method != DctMethod::Float &&
+               (simd_.convsamp || simd_.fdct_islow || simd_.fdct_ifast || simd_.quantize);
+#else
+      use16_ = method != DctMethod::Float;
+#endif
     }
   }
 
@@ -239,7 +250,7 @@ class ForwardDct {
           12873, 10114, 6967,  3552,  8867,  12299, 11585, 10426, 8867,  6967,  4799,
           2446,  4520,  6270,  5906,  5315,  4520,  3552,  2446,  1247};
       if constexpr (kBits<T> == 8) {
-        if (use16_ && simd_.quantize) {
+        if (use16_) {
           bool ok = true;
           for (int i = 0; i < DCTSIZE2; i++) {
             std::uint16_t d = method_ == DctMethod::IntSlow
@@ -325,18 +336,9 @@ class ForwardDct {
               for (int c = 0; c < DCTSIZE; c++)
                 *ws++ = static_cast<std::int16_t>(sample_data[r][start_col + c] - kCenterSample<T>);
           }
-          if (dct16_) {
-            dct16_(workspace16_);
-          } else {
-            for (int i = 0; i < DCTSIZE2; i++) workspace_[i] = workspace16_[i];
-            dct_(workspace_);
-            for (int i = 0; i < DCTSIZE2; i++) workspace16_[i] = static_cast<std::int16_t>(workspace_[i]);
-          }
-          if (simd_quantize) {
-            simd_.quantize(coef_blocks[bi].data(), divisors16_[qtblno], workspace16_);
-          } else {
-            quantize(coef_blocks[bi].data(), divisors, workspace16_);
-          }
+          dct16_(workspace16_);
+          if (simd_quantize) simd_.quantize(coef_blocks[bi].data(), divisors16_[qtblno], workspace16_);
+          else quantize16(coef_blocks[bi].data(), divisors16_[qtblno], workspace16_);
         }
         return;
       }
@@ -424,6 +426,23 @@ class ForwardDct {
     dtbl[DCTSIZE2 * 2] = static_cast<std::uint16_t>(1u << (32 - r));
     dtbl[DCTSIZE2 * 3] = static_cast<std::uint16_t>(r - 16);
     return r > 16;
+  }
+
+  // Quantization with the 16-bit reciprocal table (recip, correction,
+  // scale, shift) and 32-bit products.
+  static void quantize16(Coef* output_ptr, const std::uint16_t* divisors,
+                         const std::int16_t* workspace) {
+    for (int i = 0; i < DCTSIZE2; i++) {
+      int temp = workspace[i];
+      unsigned recip = divisors[i + DCTSIZE2 * 0];
+      unsigned corr = divisors[i + DCTSIZE2 * 1];
+      int shift = static_cast<std::int16_t>(divisors[i + DCTSIZE2 * 3]);
+      int sign = temp >> 31;  // without a branch: the sign is unpredictable
+      std::uint32_t product =
+          (static_cast<std::uint32_t>((temp ^ sign) - sign) + corr) * recip;
+      temp = static_cast<std::int16_t>(product >> (shift + 16));
+      output_ptr[i] = static_cast<Coef>((temp ^ sign) - sign);
+    }
   }
 
   // W: DCT element type of the workspace (E, or int16_t on the SIMD path; the
