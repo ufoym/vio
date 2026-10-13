@@ -1,6 +1,8 @@
 // vio::jpeg - arithmetic entropy encoding.
 #pragma once
 
+#include <bit>
+
 #include "arith_table.hpp"
 #include "huff_encode.hpp"
 
@@ -116,66 +118,93 @@ class ArithEncoder final : public EntropyEncoder {
     buffer_ = -1;
   }
 
-  void encode(std::uint8_t* st, int val) {
+  // Coder registers.  The encoding routines work on a local copy, which the
+  // compiler can keep in registers (the statistics bins and the output are
+  // bytes, which could alias the members).
+  struct Coder {
+    JLong a, c;
+    int ct;
+  };
+  Coder load() const { return {a_, c_, ct_}; }
+  void save(const Coder& k) {
+    a_ = k.a;
+    c_ = k.c;
+    ct_ = k.ct;
+  }
+
+  // Outputs the byte completed in c (ct has reached 0); returns c without it.
+  VIO_NOINLINE JLong byte_out(JLong c) {
+    JLong temp = c >> 19;
+    if (temp > 0xFF) {
+      if (buffer_ >= 0) {
+        flush_zeros();
+        emit_byte(buffer_ + 1);
+        if (buffer_ + 1 == 0xFF) emit_byte(0x00);
+      }
+      zc_ += sc_;
+      sc_ = 0;
+      buffer_ = static_cast<int>(temp & 0xFF);
+    } else if (temp == 0xFF) {
+      ++sc_;
+    } else {
+      if (buffer_ == 0) {
+        ++zc_;
+      } else if (buffer_ >= 0) {
+        flush_zeros();
+        emit_byte(buffer_);
+      }
+      if (sc_) {
+        flush_zeros();
+        do {
+          emit_byte(0xFF);
+          emit_byte(0x00);
+        } while (--sc_);
+      }
+      buffer_ = static_cast<int>(temp & 0xFF);
+    }
+    return c & 0x7FFFFL;
+  }
+
+  VIO_INLINE void encode(Coder& k, std::uint8_t* st, int val) {
     int sv = *st;
     JLong qe = aritab[sv & 0x7F];
     std::uint8_t nl = static_cast<std::uint8_t>(qe & 0xFF);
     qe >>= 8;
     std::uint8_t nm = static_cast<std::uint8_t>(qe & 0xFF);
     qe >>= 8;
-    a_ -= qe;
+    k.a -= qe;
     if (val != (sv >> 7)) {
-      if (a_ >= qe) {
-        c_ += a_;
-        a_ = qe;
+      if (k.a >= qe) {
+        k.c += k.a;
+        k.a = qe;
       }
       *st = static_cast<std::uint8_t>((sv & 0x80) ^ nl);
     } else {
-      if (a_ >= 0x8000L) return;
-      if (a_ < qe) {
-        c_ += a_;
-        a_ = qe;
+      if (k.a >= 0x8000L) return;
+      if (k.a < qe) {
+        k.c += k.a;
+        k.a = qe;
       }
       *st = static_cast<std::uint8_t>((sv & 0x80) ^ nm);
     }
-    do {
-      a_ <<= 1;
-      c_ <<= 1;
-      if (--ct_ == 0) {
-        JLong temp = c_ >> 19;
-        if (temp > 0xFF) {
-          if (buffer_ >= 0) {
-            flush_zeros();
-            emit_byte(buffer_ + 1);
-            if (buffer_ + 1 == 0xFF) emit_byte(0x00);
-          }
-          zc_ += sc_;
-          sc_ = 0;
-          buffer_ = static_cast<int>(temp & 0xFF);
-        } else if (temp == 0xFF) {
-          ++sc_;
-        } else {
-          if (buffer_ == 0) {
-            ++zc_;
-          } else if (buffer_ >= 0) {
-            flush_zeros();
-            emit_byte(buffer_);
-          }
-          if (sc_) {
-            flush_zeros();
-            do {
-              emit_byte(0xFF);
-              emit_byte(0x00);
-            } while (--sc_);
-          }
-          buffer_ = static_cast<int>(temp & 0xFF);
-        }
-        c_ &= 0x7FFFFL;
-        ct_ += 8;
-      }
-    } while (a_ < 0x8000L);
+    // Renormalize: shift a (0 < a < 0x8000) and c left until a >= 0x8000,
+    // outputting a byte each time ct counts down to 0.
+    int n = std::countl_zero(static_cast<std::uint32_t>(k.a)) - 16;
+    k.a <<= n;
+    if (VIO_LIKELY(n < k.ct)) {
+      k.c <<= n;
+      k.ct -= n;
+      return;
+    }
+    n -= k.ct;
+    k.c = byte_out(k.c << k.ct);
+    if (n >= 8) {
+      n -= 8;
+      k.c = byte_out(k.c << 8);
+    }
+    k.c <<= n;
+    k.ct = 8 - n;
   }
-
   void emit_restart(int restart_num) {
     finish_pass();
     emit_byte(0xFF);
@@ -193,75 +222,76 @@ class ArithEncoder final : public EntropyEncoder {
   }
 
   // Encodes DC difference v for component ci (shared by sequential/DC first).
-  void encode_dc(int ci, int tbl, int v) {
+  VIO_INLINE void encode_dc(Coder& q, int ci, int tbl, int v) {
     std::uint8_t* st = dc_stats_[tbl] + dc_context_[ci];
     if (v == 0) {
-      encode(st, 0);
+      encode(q, st, 0);
       dc_context_[ci] = 0;
       return;
     }
-    encode(st, 1);
+    encode(q, st, 1);
     if (v > 0) {
-      encode(st + 1, 0);
+      encode(q, st + 1, 0);
       st += 2;
       dc_context_[ci] = 4;
     } else {
       v = -v;
-      encode(st + 1, 1);
+      encode(q, st + 1, 1);
       st += 3;
       dc_context_[ci] = 8;
     }
     int m = 0;
     if (v -= 1) {
-      encode(st, 1);
+      encode(q, st, 1);
       m = 1;
       int v2 = v;
       st = dc_stats_[tbl] + 20;
       while (v2 >>= 1) {
-        encode(st, 1);
+        encode(q, st, 1);
         m <<= 1;
         st += 1;
       }
     }
-    encode(st, 0);
+    encode(q, st, 0);
     if (m < static_cast<int>((1L << cs_.arith_dc_L[tbl]) >> 1)) dc_context_[ci] = 0;
     else if (m > static_cast<int>((1L << cs_.arith_dc_U[tbl]) >> 1)) dc_context_[ci] += 8;
     st += 14;
-    while (m >>= 1) encode(st, (m & v) ? 1 : 0);
+    while (m >>= 1) encode(q, st, (m & v) ? 1 : 0);
   }
 
   // Encodes the magnitude (v >= 1) of an AC coefficient at index k.
-  void encode_ac_magnitude(std::uint8_t* st, int tbl, int k, int v) {
+  VIO_INLINE void encode_ac_magnitude(Coder& q, std::uint8_t* st, int tbl, int k, int v) {
     st += 2;
     int m = 0;
     if (v -= 1) {
-      encode(st, 1);
+      encode(q, st, 1);
       m = 1;
       int v2 = v;
       if (v2 >>= 1) {
-        encode(st, 1);
+        encode(q, st, 1);
         m <<= 1;
         st = ac_stats_[tbl] + (k <= cs_.arith_ac_K[tbl] ? 189 : 217);
         while (v2 >>= 1) {
-          encode(st, 1);
+          encode(q, st, 1);
           m <<= 1;
           st += 1;
         }
       }
     }
-    encode(st, 0);
+    encode(q, st, 0);
     st += 14;
-    while (m >>= 1) encode(st, (m & v) ? 1 : 0);
+    while (m >>= 1) encode(q, st, (m & v) ? 1 : 0);
   }
 
   void sequential(Block** MCU_data) {
+    Coder q = load();
     for (int blkn = 0; blkn < cs_.blocks_in_MCU; blkn++) {
       const Coef* block = MCU_data[blkn]->data();
       int ci = cs_.MCU_membership[blkn];
       ComponentInfo* c = cs_.cur_comp_info[ci];
       int v = block[0] - last_dc_val_[ci];
       if (v != 0) last_dc_val_[ci] = block[0];
-      encode_dc(ci, c->dc_tbl_no, v);
+      encode_dc(q, ci, c->dc_tbl_no, v);
       int tbl = c->ac_tbl_no;
       int ke;
       for (ke = DCTSIZE2 - 1; ke > 0; ke--)
@@ -269,26 +299,28 @@ class ArithEncoder final : public EntropyEncoder {
       int k;
       for (k = 1; k <= ke; k++) {
         std::uint8_t* st = ac_stats_[tbl] + 3 * (k - 1);
-        encode(st, 0);
+        encode(q, st, 0);
         while ((v = block[natural_order[k]]) == 0) {
-          encode(st + 1, 0);
+          encode(q, st + 1, 0);
           st += 3;
           k++;
         }
-        encode(st + 1, 1);
+        encode(q, st + 1, 1);
         if (v > 0) {
-          encode(fixed_bin_, 0);
+          encode(q, fixed_bin_, 0);
         } else {
           v = -v;
-          encode(fixed_bin_, 1);
+          encode(q, fixed_bin_, 1);
         }
-        encode_ac_magnitude(st, tbl, k, v);
+        encode_ac_magnitude(q, st, tbl, k, v);
       }
-      if (k <= DCTSIZE2 - 1) encode(ac_stats_[tbl] + 3 * (k - 1), 1);
+      if (k <= DCTSIZE2 - 1) encode(q, ac_stats_[tbl] + 3 * (k - 1), 1);
     }
+    save(q);
   }
 
   void dc_first(Block** MCU_data) {
+    Coder q = load();
     for (int blkn = 0; blkn < cs_.blocks_in_MCU; blkn++) {
       const Coef* block = MCU_data[blkn]->data();
       int ci = cs_.MCU_membership[blkn];
@@ -296,11 +328,13 @@ class ArithEncoder final : public EntropyEncoder {
       int m = static_cast<int>(block[0]) >> cs_.Al;
       int v = m - last_dc_val_[ci];
       if (v != 0) last_dc_val_[ci] = m;
-      encode_dc(ci, tbl, v);
+      encode_dc(q, ci, tbl, v);
     }
+    save(q);
   }
 
   void ac_first(Block** MCU_data) {
+    Coder q = load();
     const Coef* block = MCU_data[0]->data();
     int tbl = cs_.cur_comp_info[0]->ac_tbl_no;
     int Al = cs_.Al;
@@ -316,38 +350,42 @@ class ArithEncoder final : public EntropyEncoder {
     int k;
     for (k = cs_.Ss; k <= ke; k++) {
       std::uint8_t* st = ac_stats_[tbl] + 3 * (k - 1);
-      encode(st, 0);
+      encode(q, st, 0);
       for (;;) {
         if ((v = block[natural_order[k]]) >= 0) {
           if (v >>= Al) {
-            encode(st + 1, 1);
-            encode(fixed_bin_, 0);
+            encode(q, st + 1, 1);
+            encode(q, fixed_bin_, 0);
             break;
           }
         } else {
           v = -v;
           if (v >>= Al) {
-            encode(st + 1, 1);
-            encode(fixed_bin_, 1);
+            encode(q, st + 1, 1);
+            encode(q, fixed_bin_, 1);
             break;
           }
         }
-        encode(st + 1, 0);
+        encode(q, st + 1, 0);
         st += 3;
         k++;
       }
-      encode_ac_magnitude(st, tbl, k, v);
+      encode_ac_magnitude(q, st, tbl, k, v);
     }
-    if (k <= cs_.Se) encode(ac_stats_[tbl] + 3 * (k - 1), 1);
+    if (k <= cs_.Se) encode(q, ac_stats_[tbl] + 3 * (k - 1), 1);
+    save(q);
   }
 
   void dc_refine(Block** MCU_data) {
+    Coder q = load();
     int Al = cs_.Al;
     for (int blkn = 0; blkn < cs_.blocks_in_MCU; blkn++)
-      encode(fixed_bin_, ((*MCU_data[blkn])[0] >> Al) & 1);
+      encode(q, fixed_bin_, ((*MCU_data[blkn])[0] >> Al) & 1);
+    save(q);
   }
 
   void ac_refine(Block** MCU_data) {
+    Coder q = load();
     const Coef* block = MCU_data[0]->data();
     int tbl = cs_.cur_comp_info[0]->ac_tbl_no;
     int Al = cs_.Al, Ah = cs_.Ah;
@@ -371,15 +409,15 @@ class ArithEncoder final : public EntropyEncoder {
     int k;
     for (k = cs_.Ss; k <= ke; k++) {
       std::uint8_t* st = ac_stats_[tbl] + 3 * (k - 1);
-      if (k > kex) encode(st, 0);
+      if (k > kex) encode(q, st, 0);
       for (;;) {
         if ((v = block[natural_order[k]]) >= 0) {
           if (v >>= Al) {
             if (v >> 1) {
-              encode(st + 2, v & 1);
+              encode(q, st + 2, v & 1);
             } else {
-              encode(st + 1, 1);
-              encode(fixed_bin_, 0);
+              encode(q, st + 1, 1);
+              encode(q, fixed_bin_, 0);
             }
             break;
           }
@@ -387,20 +425,21 @@ class ArithEncoder final : public EntropyEncoder {
           v = -v;
           if (v >>= Al) {
             if (v >> 1) {
-              encode(st + 2, v & 1);
+              encode(q, st + 2, v & 1);
             } else {
-              encode(st + 1, 1);
-              encode(fixed_bin_, 1);
+              encode(q, st + 1, 1);
+              encode(q, fixed_bin_, 1);
             }
             break;
           }
         }
-        encode(st + 1, 0);
+        encode(q, st + 1, 0);
         st += 3;
         k++;
       }
     }
-    if (k <= cs_.Se) encode(ac_stats_[tbl] + 3 * (k - 1), 1);
+    if (k <= cs_.Se) encode(q, ac_stats_[tbl] + 3 * (k - 1), 1);
+    save(q);
   }
 
   CState& cs_;

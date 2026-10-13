@@ -1,6 +1,8 @@
 // vio::jpeg - arithmetic entropy decoding.
 #pragma once
 
+#include <bit>
+
 #include "arith_table.hpp"
 #include "huff_decode.hpp"  // init_coef_bits / update_progression
 
@@ -99,9 +101,24 @@ class ArithDecoder final : public EntropyDecoder {
   static constexpr int DC_STAT_BINS = 64;
   static constexpr int AC_STAT_BINS = 256;
 
-  int decode(std::uint8_t* st) {
-    while (a_ < 0x8000L) {
-      if (--ct_ < 0) {
+  // Coder registers.  The decoding routines work on a local copy, which the
+  // compiler can keep in registers (the statistics bins are bytes, which
+  // could alias the members).
+  struct Coder {
+    JLong a, c;
+    int ct;
+  };
+  Coder load() const { return {a_, c_, ct_}; }
+  void save(const Coder& q) {
+    a_ = q.a;
+    c_ = q.c;
+    ct_ = q.ct;
+  }
+
+  // Renormalization one bit at a time, reading bytes as needed.
+  VIO_NOINLINE Coder renorm(Coder q) {
+    while (q.a < 0x8000L) {
+      if (--q.ct < 0) {
         int data;
         if (st_.unread_marker) {
           data = 0;
@@ -118,11 +135,25 @@ class ArithDecoder final : public EntropyDecoder {
             }
           }
         }
-        c_ = (c_ << 8) | data;
-        if ((ct_ += 8) < 0)
-          if (++ct_ == 0) a_ = 0x8000L;
+        q.c = (q.c << 8) | data;
+        if ((q.ct += 8) < 0)
+          if (++q.ct == 0) q.a = 0x8000L;
       }
-      a_ <<= 1;
+      q.a <<= 1;
+    }
+    return q;
+  }
+
+  VIO_INLINE int decode(Coder& q, std::uint8_t* st) {
+    if (q.a < 0x8000L) {
+      // All the shifts at once when no byte has to be read.
+      int n = q.a ? std::countl_zero(static_cast<std::uint32_t>(q.a)) - 16 : 64;
+      if (VIO_LIKELY(q.ct >= n)) {
+        q.a <<= n;
+        q.ct -= n;
+      } else {
+        q = renorm(q);
+      }
     }
     int sv = *st;
     JLong qe = aritab[sv & 0x7F];
@@ -130,50 +161,40 @@ class ArithDecoder final : public EntropyDecoder {
     qe >>= 8;
     std::uint8_t nm = static_cast<std::uint8_t>(qe & 0xFF);
     qe >>= 8;
-    JLong temp = a_ - qe;
-    a_ = temp;
-    temp <<= ct_;
-    if (c_ >= temp) {
-      c_ -= temp;
-      if (a_ < qe) {
-        a_ = qe;
-        *st = static_cast<std::uint8_t>((sv & 0x80) ^ nm);
-      } else {
-        a_ = qe;
-        *st = static_cast<std::uint8_t>((sv & 0x80) ^ nl);
-        sv ^= 0x80;
-      }
-    } else if (a_ < 0x8000L) {
-      if (a_ < qe) {
-        *st = static_cast<std::uint8_t>((sv & 0x80) ^ nl);
-        sv ^= 0x80;
-      } else {
-        *st = static_cast<std::uint8_t>((sv & 0x80) ^ nm);
-      }
-    }
-    return sv >> 7;
+    // Without branches: the sub-interval c falls in (lps) and the
+    // conditional exchange (a < qe) select the new state and the bit.
+    const JLong a1 = q.a - qe;
+    const JLong t = a1 << q.ct;
+    const bool lps = q.c >= t;
+    const bool exchange = a1 < qe;
+    const bool flip = lps != exchange;  // the less probable symbol
+    q.c -= lps ? t : 0;
+    q.a = lps ? qe : a1;
+    const int next = (sv & 0x80) ^ (flip ? nl : nm);
+    *st = static_cast<std::uint8_t>(lps || a1 < 0x8000L ? next : sv);
+    return (sv >> 7) ^ static_cast<int>(flip);
   }
 
-  void bad_code() {
+  void bad_code(Coder& q) {
     st_.warn("Corrupt JPEG data: bad arithmetic code");
-    ct_ = -1;
+    q.ct = -1;
   }
 
   // Decode a DC difference for component ci; returns false on error.
-  bool decode_dc(int ci, int tbl) {
+  VIO_INLINE bool decode_dc(Coder& q, int ci, int tbl) {
     std::uint8_t* st = dc_stats_[tbl] + dc_context_[ci];
-    if (decode(st) == 0) {
+    if (decode(q, st) == 0) {
       dc_context_[ci] = 0;
     } else {
-      int sign = decode(st + 1);
+      int sign = decode(q, st + 1);
       st += 2;
       st += sign;
       int m;
-      if ((m = decode(st)) != 0) {
+      if ((m = decode(q, st)) != 0) {
         st = dc_stats_[tbl] + 20;
-        while (decode(st)) {
+        while (decode(q, st)) {
           if ((m <<= 1) == 0x8000) {
-            bad_code();
+            bad_code(q);
             return false;
           }
           st += 1;
@@ -188,7 +209,7 @@ class ArithDecoder final : public EntropyDecoder {
       int v = m;
       st += 14;
       while (m >>= 1)
-        if (decode(st)) v |= m;
+        if (decode(q, st)) v |= m;
       v += 1;
       if (sign) v = -v;
       last_dc_val_[ci] = (last_dc_val_[ci] + v) & 0xffff;
@@ -197,28 +218,28 @@ class ArithDecoder final : public EntropyDecoder {
   }
 
   // Decode AC coefficients k in [kstart, kend]; returns false on error.
-  bool decode_ac(Coef* block, int tbl, int kstart, int kend, int Al) {
+  VIO_INLINE bool decode_ac(Coder& q, Coef* block, int tbl, int kstart, int kend, int Al) {
     for (int k = kstart; k <= kend; k++) {
       std::uint8_t* st = ac_stats_[tbl] + 3 * (k - 1);
-      if (decode(st)) break;
-      while (decode(st + 1) == 0) {
+      if (decode(q, st)) break;
+      while (decode(q, st + 1) == 0) {
         st += 3;
         k++;
         if (k > kend) {
-          bad_code();
+          bad_code(q);
           return false;
         }
       }
-      int sign = decode(fixed_bin_);
+      int sign = decode(q, fixed_bin_);
       st += 2;
       int m;
-      if ((m = decode(st)) != 0) {
-        if (decode(st)) {
+      if ((m = decode(q, st)) != 0) {
+        if (decode(q, st)) {
           m <<= 1;
           st = ac_stats_[tbl] + (k <= st_.arith_ac_K[tbl] ? 189 : 217);
-          while (decode(st)) {
+          while (decode(q, st)) {
             if ((m <<= 1) == 0x8000) {
-              bad_code();
+              bad_code(q);
               return false;
             }
             st += 1;
@@ -228,7 +249,7 @@ class ArithDecoder final : public EntropyDecoder {
       int v = m;
       st += 14;
       while (m >>= 1)
-        if (decode(st)) v |= m;
+        if (decode(q, st)) v |= m;
       v += 1;
       if (sign) v = -v;
       if (block) block[natural_order[k]] = static_cast<Coef>(static_cast<unsigned>(v) << Al);
@@ -237,40 +258,49 @@ class ArithDecoder final : public EntropyDecoder {
   }
 
   void sequential(Block** MCU_data) {
-    if (ct_ == -1) return;
+    Coder q = load();
+    if (q.ct == -1) return save(q);
     for (int blkn = 0; blkn < st_.blocks_in_MCU; blkn++) {
       Coef* block = MCU_data ? MCU_data[blkn]->data() : nullptr;
       int ci = st_.MCU_membership[blkn];
       ComponentInfo* c = st_.cur_comp_info[ci];
-      if (!decode_dc(ci, c->dc_tbl_no)) return;
+      if (!decode_dc(q, ci, c->dc_tbl_no)) return save(q);
       if (block) block[0] = static_cast<Coef>(last_dc_val_[ci]);
-      if (!decode_ac(block, c->ac_tbl_no, 1, DCTSIZE2 - 1, 0)) return;
+      if (!decode_ac(q, block, c->ac_tbl_no, 1, DCTSIZE2 - 1, 0)) return save(q);
     }
+    save(q);
   }
 
   void dc_first(Block** MCU_data) {
-    if (ct_ == -1) return;
+    Coder q = load();
+    if (q.ct == -1) return save(q);
     for (int blkn = 0; blkn < st_.blocks_in_MCU; blkn++) {
       Coef* block = MCU_data[blkn]->data();
       int ci = st_.MCU_membership[blkn];
-      if (!decode_dc(ci, st_.cur_comp_info[ci]->dc_tbl_no)) return;
+      if (!decode_dc(q, ci, st_.cur_comp_info[ci]->dc_tbl_no)) return save(q);
       block[0] = static_cast<Coef>(lshift(last_dc_val_[ci], st_.Al));
     }
+    save(q);
   }
 
   void ac_first(Block** MCU_data) {
-    if (ct_ == -1) return;
-    decode_ac(MCU_data[0]->data(), st_.cur_comp_info[0]->ac_tbl_no, st_.Ss, st_.Se, st_.Al);
+    Coder q = load();
+    if (q.ct == -1) return save(q);
+    decode_ac(q, MCU_data[0]->data(), st_.cur_comp_info[0]->ac_tbl_no, st_.Ss, st_.Se, st_.Al);
+    save(q);
   }
 
   void dc_refine(Block** MCU_data) {
+    Coder q = load();
     int p1 = 1 << st_.Al;
     for (int blkn = 0; blkn < st_.blocks_in_MCU; blkn++)
-      if (decode(fixed_bin_)) (*MCU_data[blkn])[0] = static_cast<Coef>((*MCU_data[blkn])[0] | p1);
+      if (decode(q, fixed_bin_)) (*MCU_data[blkn])[0] = static_cast<Coef>((*MCU_data[blkn])[0] | p1);
+    save(q);
   }
 
   void ac_refine(Block** MCU_data) {
-    if (ct_ == -1) return;
+    Coder q = load();
+    if (q.ct == -1) return save(q);
     Coef* block = MCU_data[0]->data();
     int tbl = st_.cur_comp_info[0]->ac_tbl_no;
     int p1 = 1 << st_.Al;
@@ -281,28 +311,29 @@ class ArithDecoder final : public EntropyDecoder {
     for (int k = st_.Ss; k <= st_.Se; k++) {
       std::uint8_t* st = ac_stats_[tbl] + 3 * (k - 1);
       if (k > kex)
-        if (decode(st)) break;
+        if (decode(q, st)) break;
       for (;;) {
         Coef* thiscoef = block + natural_order[k];
         if (*thiscoef) {
-          if (decode(st + 2)) {
+          if (decode(q, st + 2)) {
             if (*thiscoef < 0) *thiscoef = static_cast<Coef>(*thiscoef + m1);
             else *thiscoef = static_cast<Coef>(*thiscoef + p1);
           }
           break;
         }
-        if (decode(st + 1)) {
-          *thiscoef = static_cast<Coef>(decode(fixed_bin_) ? m1 : p1);
+        if (decode(q, st + 1)) {
+          *thiscoef = static_cast<Coef>(decode(q, fixed_bin_) ? m1 : p1);
           break;
         }
         st += 3;
         k++;
         if (k > st_.Se) {
-          bad_code();
-          return;
+          bad_code(q);
+          return save(q);
         }
       }
     }
+    save(q);
   }
 
   DState& st_;
