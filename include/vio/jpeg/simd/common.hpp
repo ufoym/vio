@@ -10,17 +10,17 @@
 
 namespace vio::jpeg::simd {
 
-// Sequential Huffman encoder bit buffer: `count` (0-7) pending bits,
-// left-aligned in `bits` (the bits below them are zero).
+// Sequential Huffman encoder bit buffer: `count` (0-7) pending bits in the
+// low bits of `bits` (the higher bits are undefined).
 struct HuffBitState {
   std::uint64_t bits = 0;
   int count = 0;
 };
 
 // Appends codes to a raw output buffer: no byte stuffing (the caller inserts
-// a zero byte after each 0xFF as it copies the data out), and no branches:
-// every append stores 8 bytes and advances past the completed ones, so the
-// buffer needs 8 bytes of room beyond the output.
+// a zero byte after each 0xFF as it copies the data out), and no branches.
+// append() collects up to 63 bits; flush() stores 8 bytes and advances past
+// the completed ones, so the buffer needs 8 bytes of room beyond the output.
 struct HuffBitWriter {
   std::uint64_t bits;
   int count;
@@ -30,15 +30,22 @@ struct HuffBitWriter {
       : bits(st.bits), count(st.count), buffer(out) {}
   VIO_INLINE HuffBitState state() const { return {bits, count}; }
 
-  // Appends the low `size` (at most 56) bits of `code` (no higher bits set).
-  VIO_INLINE void put_bits(std::uint64_t code, int size) {
+  // Appends the low `size` bits of `code` (no higher bits set); at most 63
+  // bits may be pending.
+  VIO_INLINE void append(std::uint64_t code, int size) {
+    bits = (bits << size) | code;
     count += size;
-    bits |= code << ((64 - count) & 63);
-    std::uint64_t be = to_big_endian(bits);
+  }
+  // Writes the completed bytes, leaving count < 8.
+  VIO_INLINE void flush() {
+    std::uint64_t be = to_big_endian(bits << ((64 - count) & 63));
     std::memcpy(buffer, &be, 8);
     buffer += count >> 3;
-    bits <<= count & ~7;
     count &= 7;
+  }
+  VIO_INLINE void put_bits(std::uint64_t code, int size) {
+    append(code, size);
+    flush();
   }
 
   // Appends a Huffman code followed by `nbits` value bits (already masked).

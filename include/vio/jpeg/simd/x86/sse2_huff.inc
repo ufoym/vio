@@ -102,7 +102,11 @@ VIO_INLINE std::uint64_t clear_lowest(std::uint64_t v) { return _blsr_u64(v); }
 #else
 VIO_INLINE std::uint64_t shl64(std::uint64_t v, unsigned n) { return v << n; }
 VIO_INLINE std::uint64_t shr64(std::uint64_t v, unsigned n) { return v >> n; }
+#if VIO_HUFF_BMI2  // compilers do not turn the table mask into bzhi
+VIO_INLINE unsigned low_bits(unsigned v, int n) { return _bzhi_u32(v, static_cast<unsigned>(n)); }
+#else
 VIO_INLINE unsigned low_bits(unsigned v, int n) { return v & kMaskBits[n]; }  // n <= 16
+#endif
 VIO_INLINE std::uint64_t clear_lowest(std::uint64_t v) { return v & (v - 1); }
 #endif
 
@@ -110,18 +114,22 @@ VIO_INLINE std::uint64_t clear_lowest(std::uint64_t v) { return v & (v - 1); }
 // spelled out for the BMI2 build.
 struct BitWriter {
   std::uint64_t bits;
-  int count;
+  unsigned count;  // unsigned: count >> 3 needs no sign extension
   std::uint8_t* buffer;
 
-  // Appends the low `size` (at most 56) bits of `code` (no higher bits set).
-  VIO_INLINE void put_bits(std::uint64_t code, int size) {
-    count += size;
-    bits |= shl64(code, static_cast<unsigned>(-count) & 63);
-    std::uint64_t be = HuffBitWriter::to_big_endian(bits);
+  VIO_INLINE void append(std::uint64_t code, int size) {
+    bits = shl64(bits, static_cast<unsigned>(size)) | code;
+    count += static_cast<unsigned>(size);
+  }
+  VIO_INLINE void flush() {
+    std::uint64_t be = HuffBitWriter::to_big_endian(shl64(bits, (0u - count) & 63));
     std::memcpy(buffer, &be, 8);
     buffer += count >> 3;
-    bits = shl64(bits, static_cast<unsigned>(count & ~7));
     count &= 7;
+  }
+  VIO_INLINE void put_bits(std::uint64_t code, int size) {
+    append(code, size);
+    flush();
   }
 };
 
@@ -216,7 +224,7 @@ inline VIO_NO_STACK_CHECK std::uint8_t* encode_one_block(HuffBitState& st, std::
   }
   std::uint64_t index = ~movemask64(eq);
 
-  BitWriter w{st.bits, st.count, buffer};
+  BitWriter w{st.bits, static_cast<unsigned>(st.count), buffer};
   // DC difference (32-bit, as in the scalar encoder).
   int temp = block[0] - last_dc_val;
   int sign = temp >> 31;
@@ -229,7 +237,7 @@ inline VIO_NO_STACK_CHECK std::uint8_t* encode_one_block(HuffBitState& st, std::
   // cleared, so the only dependency between iterations is that one
   // operation (shifting the bitmap by the run would chain tzcnt and shifts).
   unsigned k = 0;  // zig-zag position of the last coefficient coded
-  while (index) {
+  auto next = [&]() VIO_LAMBDA_INLINE {  // appends the next coefficient (at most 31 bits)
     const unsigned pos = ctz64(index);  // coefficient pos + 1
     index = clear_lowest(index);
     unsigned run = pos - k;
@@ -241,13 +249,23 @@ inline VIO_NO_STACK_CHECK std::uint8_t* encode_one_block(HuffBitState& st, std::
     const int code = t[pos];
     nbits = ac_bit_length(static_cast<unsigned>(code ^ (code >> 31)));
     const std::uint64_t e = actbl.emit[(run << 4) + static_cast<unsigned>(nbits)];
-    w.put_bits(static_cast<std::uint32_t>(e) | low_bits(static_cast<unsigned>(code), nbits),
-               static_cast<int>(e >> 32));
+    w.append(static_cast<std::uint32_t>(e) | low_bits(static_cast<unsigned>(code), nbits),
+             static_cast<int>(e >> 32));
+  };
+  // The output is written after every second coefficient, or after one
+  // when (rarely) another one might not fit.
+  while (index) {
+    next();
+    if (VIO_UNLIKELY(w.count > 32)) w.flush();
+    if (!index) break;
+    next();
+    w.flush();
   }
-  if (k != 63) w.put_bits(actbl.ehufco[0], actbl.ehufsi[0]);
+  if (k != 63) w.append(actbl.ehufco[0], actbl.ehufsi[0]);
+  w.flush();
   // Member-wise: a 16-byte copy would read back two narrower stores.
   st.bits = w.bits;
-  st.count = w.count;
+  st.count = static_cast<int>(w.count);
   return w.buffer;
 }
 

@@ -26,13 +26,10 @@ alignas(16) inline constexpr std::uint8_t zigzag_idx[128] = {
     26,  27,  40,  41,  42,  43,  28,  29,  14,  15,  30,  31,  44,  45,  46,  47};
 }  // namespace detail_huff
 
-// Encodes one block.  put_bits(code, size) appends `size` bits; put_code(code,
-// size, diff, nbits) appends a Huffman code followed by `nbits` diff bits
-// (diff already masked to nbits).
-template <class Table, class PutBits, class PutCode>
+// Encodes one block with the bit writer w (HuffBitWriter).
+template <class Table, class W>
 VIO_INLINE void huff_encode_one_block(const std::int16_t* block, int last_dc_val,
-                                      const Table& dctbl, const Table& actbl,
-                                      PutBits&& put_bits, PutCode&& put_code) {
+                                      const Table& dctbl, const Table& actbl, W& w) {
   using namespace detail_huff;
   alignas(16) std::uint16_t block_diff[64];
   const uint8x16x4_t idx_0123 = {{vld1q_u8(zigzag_idx + 0), vld1q_u8(zigzag_idx + 16),
@@ -91,11 +88,23 @@ VIO_INLINE void huff_encode_one_block(const std::int16_t* block, int last_dc_val
   unsigned lz = vgetq_lane_u16(vreinterpretq_u16_s16(row0_lz), 0);
   unsigned nbits = 16 - lz;
   unsigned diff = vgetq_lane_u16(row0_diff, 0);
-  put_bits(static_cast<std::uint32_t>(dctbl.emit[nbits]) | diff, static_cast<int>(dctbl.emit[nbits] >> 32));
+  w.put_bits(static_cast<std::uint32_t>(dctbl.emit[nbits]) | diff,
+             static_cast<int>(dctbl.emit[nbits] >> 32));
 
   unsigned r = 0, i = 1;
   const unsigned code_0xf0 = actbl.ehufco[0xf0];
   const int size_0xf0 = actbl.ehufsi[0xf0];
+  // next() appends a coefficient (at most 31 bits); the output is written
+  // after every second one, or after one when another might not fit.
+  auto pairs = [&](auto&& next) VIO_LAMBDA_INLINE {
+    while (bitmap != 0) {
+      next();
+      if (VIO_UNLIKELY(w.count > 32)) w.flush();
+      if (bitmap == 0) break;
+      next();
+      w.flush();
+    }
+  };
   if (non_zero > 8) {
     alignas(16) std::uint8_t block_nbits[64];
     int16x8_t lz_rows[8], abs_rows[8];
@@ -114,7 +123,7 @@ VIO_INLINE void huff_encode_one_block(const std::int16_t* block, int last_dc_val
       uint16x8_t m = vshlq_u16(vcltzq_s16(rows[k]), vnegq_s16(lz_rows[k]));
       vst1q_u16(block_diff + k * 8, veorq_u16(vreinterpretq_u16_s16(abs_rows[k]), m));
     }
-    while (bitmap != 0) {
+    auto next = [&]() VIO_LAMBDA_INLINE {
       const unsigned k = static_cast<unsigned>(__builtin_ctzll(bitmap));
       bitmap &= bitmap - 1;
       r = k - i;
@@ -122,12 +131,13 @@ VIO_INLINE void huff_encode_one_block(const std::int16_t* block, int last_dc_val
       nbits = block_nbits[k];
       diff = block_diff[k];
       while (r > 15) {
-        put_bits(code_0xf0, size_0xf0);
+        w.put_bits(code_0xf0, size_0xf0);
         r -= 16;
       }
       const std::uint64_t e = actbl.emit[(r << 4) + nbits];
-      put_bits(static_cast<std::uint32_t>(e) | diff, static_cast<int>(e >> 32));
-    }
+      w.append(static_cast<std::uint32_t>(e) | diff, static_cast<int>(e >> 32));
+    };
+    pairs(next);
   } else if (bitmap != 0) {
     alignas(16) std::uint16_t block_abs[64];
     vst1q_u16(block_abs, vreinterpretq_u16_s16(abs_row0));
@@ -137,7 +147,7 @@ VIO_INLINE void huff_encode_one_block(const std::int16_t* block, int last_dc_val
       vst1q_u16(block_abs + k * 8, vreinterpretq_u16_s16(a));
       vst1q_u16(block_diff + k * 8, veorq_u16(vreinterpretq_u16_s16(a), vcltzq_s16(rows[k])));
     }
-    while (bitmap != 0) {
+    auto next = [&]() VIO_LAMBDA_INLINE {
       const unsigned k = static_cast<unsigned>(__builtin_ctzll(bitmap));
       bitmap &= bitmap - 1;
       r = k - i;
@@ -146,14 +156,16 @@ VIO_INLINE void huff_encode_one_block(const std::int16_t* block, int last_dc_val
       nbits = 32 - lz;
       diff = (static_cast<unsigned>(block_diff[k]) << lz) >> lz;
       while (r > 15) {
-        put_bits(code_0xf0, size_0xf0);
+        w.put_bits(code_0xf0, size_0xf0);
         r -= 16;
       }
       const std::uint64_t e = actbl.emit[(r << 4) + nbits];
-      put_bits(static_cast<std::uint32_t>(e) | diff, static_cast<int>(e >> 32));
-    }
+      w.append(static_cast<std::uint32_t>(e) | diff, static_cast<int>(e >> 32));
+    };
+    pairs(next);
   }
-  if (i != 64) put_bits(actbl.ehufco[0], actbl.ehufsi[0]);
+  if (i != 64) w.append(actbl.ehufco[0], actbl.ehufsi[0]);
+  w.flush();
 }
 
 #else
@@ -169,10 +181,13 @@ inline constexpr std::uint8_t zigzag_natural[64] = {
 // (32-bit NEON lacks the 4-register table lookups used on AArch64), NEON
 // builds the non-zero bitmap, and the non-zero coefficients are visited with
 // count-trailing-zeros.  Same contract as the AArch64 version.
-template <class Table, class PutBits, class PutCode>
+template <class Table, class W>
 VIO_INLINE void huff_encode_one_block(const std::int16_t* block, int last_dc_val,
-                                      const Table& dctbl, const Table& actbl,
-                                      PutBits&& put_bits, PutCode&& put_code) {
+                                      const Table& dctbl, const Table& actbl, W& w) {
+  auto put_bits = [&](std::uint64_t code, int size) VIO_LAMBDA_INLINE { w.put_bits(code, size); };
+  auto put_code = [&](unsigned code, int size, unsigned diff, unsigned nb) VIO_LAMBDA_INLINE {
+    w.put_code(code, size, diff, static_cast<int>(nb));
+  };
   using namespace detail_huff;
   alignas(16) std::int16_t zz[64];
   zz[0] = 0;
@@ -229,12 +244,7 @@ inline VIO_NO_STACK_CHECK std::uint8_t* encode_one_block(HuffBitState& st, std::
                                       const std::int16_t* block, int last_dc_val,
                                       const Table& dctbl, const Table& actbl) {
   HuffBitWriter w(st, buffer);
-  huff_encode_one_block(
-      block, last_dc_val, dctbl, actbl,
-      [&](std::uint64_t code, int size) VIO_LAMBDA_INLINE { w.put_bits(code, size); },
-      [&](unsigned code, int size, unsigned diff, unsigned nb) VIO_LAMBDA_INLINE {
-        w.put_code(code, size, diff, static_cast<int>(nb));
-      });
+  huff_encode_one_block(block, last_dc_val, dctbl, actbl, w);
   st = w.state();
   return w.buffer;
 }

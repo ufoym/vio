@@ -248,7 +248,8 @@ class HuffEncoder final : public EntropyEncoder {
   // the data.
   void flush_bits() {
     if (bits_.count)
-      *raw_next_++ = static_cast<std::uint8_t>((bits_.bits >> 56) | (0xFFu >> bits_.count));
+      *raw_next_++ = static_cast<std::uint8_t>((bits_.bits << (8 - bits_.count)) |
+                                               (0xFFu >> bits_.count));
     bits_ = {};
     flush_raw();
   }

@@ -4,7 +4,7 @@
 // to lzcnt/tzcnt and the flag-free shlx/shrx.
 #pragma once
 
-#include <emmintrin.h>
+#include <immintrin.h>
 
 #include <cstddef>
 #include <cstdint>
