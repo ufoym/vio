@@ -99,7 +99,7 @@ Throughput measured by `tjbench` on GitHub-hosted runners: vio, libjpeg-turbo
 TurboJPEG layer, `tests/libjpeg/`), all built on the same machine with the
 same compiler (GCC on Linux, Apple Clang on macOS, MSVC on Windows; NASM for
 libjpeg-turbo's x86 SIMD).  The image is a 3632×2384 RGB tiling of `testorig.ppm`; each number
-is the best of 5 runs.  Results from commit `bb9833a`.
+is the best of 5 runs.  Results from commit `0e6f24d`.
 
 Speed relative to libjpeg (1.00× = libjpeg; libjpeg has no SIMD code),
 geometric mean over the configurations below except lossless, which libjpeg
