@@ -187,14 +187,26 @@ class ColorConverter {
           outptr1[col] = inptr[G];
           outptr2[col] = inptr[B];
         } else {
+          // The sums of the table entries (see build_table()), computed
+          // directly where the loop vectorizes (32 bits hold them for up to
+          // 12-bit samples).
           int r = range_limit(inptr[R]), g = range_limit(inptr[G]), b = range_limit(inptr[B]);
-          outptr0[col] =
-              static_cast<T>((ctab[r + R_Y_OFF] + ctab[g + G_Y_OFF] + ctab[b + B_Y_OFF]) >> 16);
-          if constexpr (K == RgbYcc) {
-            outptr1[col] = static_cast<T>(
-                (ctab[r + R_CB_OFF] + ctab[g + G_CB_OFF] + ctab[b + B_CB_OFF]) >> 16);
-            outptr2[col] = static_cast<T>(
-                (ctab[r + R_CR_OFF] + ctab[g + G_CR_OFF] + ctab[b + B_CR_OFF]) >> 16);
+          if constexpr (kBits<T> <= 12 && kVectorizes) {
+            constexpr int half = 1 << 15, cbcr = (kCenterSample<T> << 16) + half - 1;
+            outptr0[col] = static_cast<T>((19595 * r + 38470 * g + 7471 * b + half) >> 16);
+            if constexpr (K == RgbYcc) {
+              outptr1[col] = static_cast<T>((-11059 * r - 21709 * g + 32768 * b + cbcr) >> 16);
+              outptr2[col] = static_cast<T>((32768 * r - 27439 * g - 5329 * b + cbcr) >> 16);
+            }
+          } else {
+            outptr0[col] =
+                static_cast<T>((ctab[r + R_Y_OFF] + ctab[g + G_Y_OFF] + ctab[b + B_Y_OFF]) >> 16);
+            if constexpr (K == RgbYcc) {
+              outptr1[col] = static_cast<T>(
+                  (ctab[r + R_CB_OFF] + ctab[g + G_CB_OFF] + ctab[b + B_CB_OFF]) >> 16);
+              outptr2[col] = static_cast<T>(
+                  (ctab[r + R_CR_OFF] + ctab[g + G_CR_OFF] + ctab[b + B_CR_OFF]) >> 16);
+            }
           }
         }
         inptr += PS;
@@ -362,12 +374,16 @@ class Downsampler {
     for (int outrow = 0; outrow < c.v_samp_factor; outrow++) {
       T* outptr = output_data[outrow];
       const T* inptr = input_data[outrow];
-      int bias = 0;
-      for (unsigned outcol = 0; outcol < output_cols; outcol++) {
-        *outptr++ = static_cast<T>((inptr[0] + inptr[1] + bias) >> 1);
-        bias ^= 1;
-        inptr += 2;
+      // Rounding bias 0, 1, 0, 1, ... (pairs of columns, so that the loop
+      // vectorizes).
+      unsigned outcol = 0;
+      for (; outcol + 1 < output_cols; outcol += 2) {
+        outptr[outcol] = static_cast<T>((inptr[2 * outcol] + inptr[2 * outcol + 1]) >> 1);
+        outptr[outcol + 1] =
+            static_cast<T>((inptr[2 * outcol + 2] + inptr[2 * outcol + 3] + 1) >> 1);
       }
+      if (outcol < output_cols)
+        outptr[outcol] = static_cast<T>((inptr[2 * outcol] + inptr[2 * outcol + 1]) >> 1);
     }
   }
 
@@ -379,13 +395,16 @@ class Downsampler {
       T* outptr = output_data[outrow];
       const T* inptr0 = input_data[inrow];
       const T* inptr1 = input_data[inrow + 1];
-      int bias = 1;
-      for (unsigned outcol = 0; outcol < output_cols; outcol++) {
-        *outptr++ = static_cast<T>((inptr0[0] + inptr0[1] + inptr1[0] + inptr1[1] + bias) >> 2);
-        bias ^= 3;
-        inptr0 += 2;
-        inptr1 += 2;
+      // Rounding bias 1, 2, 1, 2, ...
+      auto sum = [&](unsigned i) VIO_LAMBDA_INLINE {
+        return inptr0[2 * i] + inptr0[2 * i + 1] + inptr1[2 * i] + inptr1[2 * i + 1];
+      };
+      unsigned outcol = 0;
+      for (; outcol + 1 < output_cols; outcol += 2) {
+        outptr[outcol] = static_cast<T>((sum(outcol) + 1) >> 2);
+        outptr[outcol + 1] = static_cast<T>((sum(outcol + 1) + 2) >> 2);
       }
+      if (outcol < output_cols) outptr[outcol] = static_cast<T>((sum(outcol) + 1) >> 2);
       inrow += 2;
     }
   }
@@ -822,6 +841,16 @@ class CoefControllerC final : public CCoefController<T> {
 
   bool compress_output() {
     for (int yoffset = MCU_vert_offset_; yoffset < MCU_rows_per_iMCU_row_; yoffset++) {
+      if (cs_.comps_in_scan == 1) {
+        // One block per MCU, consecutive in the row.
+        ComponentInfo* c = cs_.cur_comp_info[0];
+        const Block* row = whole_image_[c->component_index].row(
+            static_cast<std::size_t>(iMCU_row_num_) * c->v_samp_factor + yoffset);
+        if ((*entropy_)->encode_blocks(row + mcu_ctr_, cs_.MCUs_per_row - mcu_ctr_)) {
+          mcu_ctr_ = 0;
+          continue;
+        }
+      }
       for (unsigned MCU_col_num = mcu_ctr_; MCU_col_num < cs_.MCUs_per_row; MCU_col_num++) {
         int blkn = 0;
         for (int ci = 0; ci < cs_.comps_in_scan; ci++) {
@@ -876,6 +905,16 @@ class TranscodeCoefController {
     unsigned last_iMCU_row = cs_.total_iMCU_rows - 1;
     Block* MCU_buffer[C_MAX_BLOCKS_IN_MCU];
     for (int yoffset = MCU_vert_offset_; yoffset < MCU_rows_per_iMCU_row_; yoffset++) {
+      if (cs_.comps_in_scan == 1) {
+        // One block per MCU, consecutive in the row.
+        ComponentInfo* c = cs_.cur_comp_info[0];
+        const Block* row = whole_image_[c->component_index].row(
+            static_cast<std::size_t>(iMCU_row_num_) * c->v_samp_factor + yoffset);
+        if ((*entropy_)->encode_blocks(row + mcu_ctr_, cs_.MCUs_per_row - mcu_ctr_)) {
+          mcu_ctr_ = 0;
+          continue;
+        }
+      }
       for (unsigned MCU_col_num = mcu_ctr_; MCU_col_num < cs_.MCUs_per_row; MCU_col_num++) {
         int blkn = 0;
         for (int ci = 0; ci < cs_.comps_in_scan; ci++) {

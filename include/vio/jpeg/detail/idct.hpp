@@ -49,7 +49,8 @@ void idct_islow(const void *dct_table_, const Coef *coef_block, T **output_buf,
   const T *range_limit = (sample_range_limit + kCenterSample<T>);
   int ctr;
   int workspace[DCTSIZE2];
-  [[maybe_unused]] const JLong scaling_factor = static_cast<JLong>(scaling_factor_);
+  [[maybe_unused]] const JLong scaling_factor =
+      kBits<T> == 8 ? 1 : static_cast<JLong>(scaling_factor_);  // 16 only for 12-bit output
   inptr = coef_block;
   quantptr = static_cast<const std::int32_t *>(dct_table_);
   wsptr = workspace;
@@ -215,7 +216,8 @@ void idct_7x7(const void *dct_table_, const Coef *coef_block, T **output_buf,
   const T *range_limit = (sample_range_limit + kCenterSample<T>);
   int ctr;
   int workspace[7 * 7];
-  [[maybe_unused]] const JLong scaling_factor = static_cast<JLong>(scaling_factor_);
+  [[maybe_unused]] const JLong scaling_factor =
+      kBits<T> == 8 ? 1 : static_cast<JLong>(scaling_factor_);  // 16 only for 12-bit output
   inptr = coef_block;
   quantptr = static_cast<const std::int32_t *>(dct_table_);
   wsptr = workspace;
@@ -321,7 +323,8 @@ void idct_6x6(const void *dct_table_, const Coef *coef_block, T **output_buf,
   const T *range_limit = (sample_range_limit + kCenterSample<T>);
   int ctr;
   int workspace[6 * 6];
-  [[maybe_unused]] const JLong scaling_factor = static_cast<JLong>(scaling_factor_);
+  [[maybe_unused]] const JLong scaling_factor =
+      kBits<T> == 8 ? 1 : static_cast<JLong>(scaling_factor_);  // 16 only for 12-bit output
   inptr = coef_block;
   quantptr = static_cast<const std::int32_t *>(dct_table_);
   wsptr = workspace;
@@ -405,7 +408,8 @@ void idct_5x5(const void *dct_table_, const Coef *coef_block, T **output_buf,
   const T *range_limit = (sample_range_limit + kCenterSample<T>);
   int ctr;
   int workspace[5 * 5];
-  [[maybe_unused]] const JLong scaling_factor = static_cast<JLong>(scaling_factor_);
+  [[maybe_unused]] const JLong scaling_factor =
+      kBits<T> == 8 ? 1 : static_cast<JLong>(scaling_factor_);  // 16 only for 12-bit output
   inptr = coef_block;
   quantptr = static_cast<const std::int32_t *>(dct_table_);
   wsptr = workspace;
@@ -480,7 +484,8 @@ void idct_3x3(const void *dct_table_, const Coef *coef_block, T **output_buf,
   const T *range_limit = (sample_range_limit + kCenterSample<T>);
   int ctr;
   int workspace[3 * 3];
-  [[maybe_unused]] const JLong scaling_factor = static_cast<JLong>(scaling_factor_);
+  [[maybe_unused]] const JLong scaling_factor =
+      kBits<T> == 8 ? 1 : static_cast<JLong>(scaling_factor_);  // 16 only for 12-bit output
   inptr = coef_block;
   quantptr = static_cast<const std::int32_t *>(dct_table_);
   wsptr = workspace;
@@ -534,7 +539,8 @@ void idct_9x9(const void *dct_table_, const Coef *coef_block, T **output_buf,
   const T *range_limit = (sample_range_limit + kCenterSample<T>);
   int ctr;
   int workspace[8 * 9];
-  [[maybe_unused]] const JLong scaling_factor = static_cast<JLong>(scaling_factor_);
+  [[maybe_unused]] const JLong scaling_factor =
+      kBits<T> == 8 ? 1 : static_cast<JLong>(scaling_factor_);  // 16 only for 12-bit output
   inptr = coef_block;
   quantptr = static_cast<const std::int32_t *>(dct_table_);
   wsptr = workspace;
@@ -655,7 +661,8 @@ void idct_10x10(const void *dct_table_, const Coef *coef_block, T **output_buf,
   const T *range_limit = (sample_range_limit + kCenterSample<T>);
   int ctr;
   int workspace[8 * 10];
-  [[maybe_unused]] const JLong scaling_factor = static_cast<JLong>(scaling_factor_);
+  [[maybe_unused]] const JLong scaling_factor =
+      kBits<T> == 8 ? 1 : static_cast<JLong>(scaling_factor_);  // 16 only for 12-bit output
   inptr = coef_block;
   quantptr = static_cast<const std::int32_t *>(dct_table_);
   wsptr = workspace;
@@ -791,7 +798,8 @@ void idct_11x11(const void *dct_table_, const Coef *coef_block, T **output_buf,
   const T *range_limit = (sample_range_limit + kCenterSample<T>);
   int ctr;
   int workspace[8 * 11];
-  [[maybe_unused]] const JLong scaling_factor = static_cast<JLong>(scaling_factor_);
+  [[maybe_unused]] const JLong scaling_factor =
+      kBits<T> == 8 ? 1 : static_cast<JLong>(scaling_factor_);  // 16 only for 12-bit output
   inptr = coef_block;
   quantptr = static_cast<const std::int32_t *>(dct_table_);
   wsptr = workspace;
@@ -942,7 +950,8 @@ void idct_12x12(const void *dct_table_, const Coef *coef_block, T **output_buf,
   const T *range_limit = (sample_range_limit + kCenterSample<T>);
   int ctr;
   int workspace[8 * 12];
-  [[maybe_unused]] const JLong scaling_factor = static_cast<JLong>(scaling_factor_);
+  [[maybe_unused]] const JLong scaling_factor =
+      kBits<T> == 8 ? 1 : static_cast<JLong>(scaling_factor_);  // 16 only for 12-bit output
   inptr = coef_block;
   quantptr = static_cast<const std::int32_t *>(dct_table_);
   wsptr = workspace;
@@ -1097,7 +1106,8 @@ void idct_13x13(const void *dct_table_, const Coef *coef_block, T **output_buf,
   const T *range_limit = (sample_range_limit + kCenterSample<T>);
   int ctr;
   int workspace[8 * 13];
-  [[maybe_unused]] const JLong scaling_factor = static_cast<JLong>(scaling_factor_);
+  [[maybe_unused]] const JLong scaling_factor =
+      kBits<T> == 8 ? 1 : static_cast<JLong>(scaling_factor_);  // 16 only for 12-bit output
   inptr = coef_block;
   quantptr = static_cast<const std::int32_t *>(dct_table_);
   wsptr = workspace;
@@ -1268,7 +1278,8 @@ void idct_14x14(const void *dct_table_, const Coef *coef_block, T **output_buf,
   const T *range_limit = (sample_range_limit + kCenterSample<T>);
   int ctr;
   int workspace[8 * 14];
-  [[maybe_unused]] const JLong scaling_factor = static_cast<JLong>(scaling_factor_);
+  [[maybe_unused]] const JLong scaling_factor =
+      kBits<T> == 8 ? 1 : static_cast<JLong>(scaling_factor_);  // 16 only for 12-bit output
   inptr = coef_block;
   quantptr = static_cast<const std::int32_t *>(dct_table_);
   wsptr = workspace;
@@ -1441,7 +1452,8 @@ void idct_15x15(const void *dct_table_, const Coef *coef_block, T **output_buf,
   const T *range_limit = (sample_range_limit + kCenterSample<T>);
   int ctr;
   int workspace[8 * 15];
-  [[maybe_unused]] const JLong scaling_factor = static_cast<JLong>(scaling_factor_);
+  [[maybe_unused]] const JLong scaling_factor =
+      kBits<T> == 8 ? 1 : static_cast<JLong>(scaling_factor_);  // 16 only for 12-bit output
   inptr = coef_block;
   quantptr = static_cast<const std::int32_t *>(dct_table_);
   wsptr = workspace;
@@ -1622,7 +1634,8 @@ void idct_16x16(const void *dct_table_, const Coef *coef_block, T **output_buf,
   const T *range_limit = (sample_range_limit + kCenterSample<T>);
   int ctr;
   int workspace[8 * 16];
-  [[maybe_unused]] const JLong scaling_factor = static_cast<JLong>(scaling_factor_);
+  [[maybe_unused]] const JLong scaling_factor =
+      kBits<T> == 8 ? 1 : static_cast<JLong>(scaling_factor_);  // 16 only for 12-bit output
   inptr = coef_block;
   quantptr = static_cast<const std::int32_t *>(dct_table_);
   wsptr = workspace;
@@ -1841,7 +1854,8 @@ void idct_4x4(const void *dct_table_, const Coef *coef_block, T **output_buf,
   const T *range_limit = (sample_range_limit + kCenterSample<T>);
   int ctr;
   int workspace[DCTSIZE * 4];
-  [[maybe_unused]] const JLong scaling_factor = static_cast<JLong>(scaling_factor_);
+  [[maybe_unused]] const JLong scaling_factor =
+      kBits<T> == 8 ? 1 : static_cast<JLong>(scaling_factor_);  // 16 only for 12-bit output
   inptr = coef_block;
   quantptr = static_cast<const std::int32_t *>(dct_table_);
   wsptr = workspace;
@@ -1947,7 +1961,8 @@ void idct_2x2(const void *dct_table_, const Coef *coef_block, T **output_buf,
   const T *range_limit = (sample_range_limit + kCenterSample<T>);
   int ctr;
   int workspace[DCTSIZE * 2];
-  [[maybe_unused]] const JLong scaling_factor = static_cast<JLong>(scaling_factor_);
+  [[maybe_unused]] const JLong scaling_factor =
+      kBits<T> == 8 ? 1 : static_cast<JLong>(scaling_factor_);  // 16 only for 12-bit output
   inptr = coef_block;
   quantptr = static_cast<const std::int32_t *>(dct_table_);
   wsptr = workspace;
@@ -2011,7 +2026,8 @@ void idct_1x1(const void *dct_table_, const Coef *coef_block, T **output_buf,
   int dcval;
   const std::int32_t *quantptr;
   const T *range_limit = (sample_range_limit + kCenterSample<T>);
-  [[maybe_unused]] const JLong scaling_factor = static_cast<JLong>(scaling_factor_);
+  [[maybe_unused]] const JLong scaling_factor =
+      kBits<T> == 8 ? 1 : static_cast<JLong>(scaling_factor_);  // 16 only for 12-bit output
   quantptr = static_cast<const std::int32_t *>(dct_table_);
   dcval = DEQUANTIZE(coef_block[0], quantptr[0]);
   dcval = (int)DESCALE((JLong)dcval, 3);
@@ -2052,7 +2068,8 @@ void idct_ifast(const void *dct_table_, const Coef *coef_block, T **output_buf,
   const T *range_limit = (sample_range_limit + kCenterSample<T>);
   int ctr;
   int workspace[DCTSIZE2];
-  [[maybe_unused]] const IdctElem<T> scaling_factor = static_cast<IdctElem<T>>(scaling_factor_);
+  [[maybe_unused]] const IdctElem<T> scaling_factor =
+      kBits<T> == 8 ? 1 : static_cast<IdctElem<T>>(scaling_factor_);
   inptr = coef_block;
   quantptr = static_cast<const IfastMult<T> *>(dct_table_);
   wsptr = workspace;
@@ -2201,7 +2218,8 @@ VIO_NO_FP_CONTRACT void idct_float(const void *dct_table_, const Coef *coef_bloc
   const T *range_limit = sample_range_limit;
   int ctr;
   float workspace[DCTSIZE2];
-  [[maybe_unused]] const float scaling_factor = static_cast<float>(scaling_factor_);
+  [[maybe_unused]] const float scaling_factor =
+      kBits<T> == 8 ? 1.0f : static_cast<float>(scaling_factor_);
   inptr = coef_block;
   quantptr = static_cast<const float *>(dct_table_);
   wsptr = workspace;

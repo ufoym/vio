@@ -216,22 +216,42 @@ class SepUpsampler final : public Upsampler<T> {
     }
   }
 
+  // Fancy upsampling.  Each output sample is computed on its own where the
+  // compiler vectorizes the loops; running sums do less work otherwise.
   void h2v1_fancy_upsample(const ComponentInfo& c, T** input_data, T**& output_data_ptr) {
-    T** output_data = output_data_ptr;
-    for (int inrow = 0; inrow < st_.max_v_samp_factor; inrow++) {
-      const T* inptr = input_data[inrow];
-      T* outptr = output_data[inrow];
-      int invalue = *inptr++;
-      *outptr++ = static_cast<T>(invalue);
-      *outptr++ = static_cast<T>((invalue * 3 + inptr[0] + 2) >> 2);
-      for (unsigned colctr = c.downsampled_width - 2; colctr > 0; colctr--) {
-        invalue = (*inptr++) * 3;
-        *outptr++ = static_cast<T>((invalue + inptr[-2] + 1) >> 2);
-        *outptr++ = static_cast<T>((invalue + inptr[0] + 2) >> 2);
+    if constexpr (kVectorizes) {
+      T** output_data = output_data_ptr;
+      const unsigned w = c.downsampled_width;
+      for (int inrow = 0; inrow < st_.max_v_samp_factor; inrow++) {
+        const T* in = input_data[inrow];
+        T* out = output_data[inrow];
+        out[0] = in[0];
+        out[1] = static_cast<T>((in[0] * 3 + in[1] + 2) >> 2);
+        for (unsigned i = 1; i < w - 1; i++) {
+          const int v = in[i] * 3;
+          out[2 * i] = static_cast<T>((v + in[i - 1] + 1) >> 2);
+          out[2 * i + 1] = static_cast<T>((v + in[i + 1] + 2) >> 2);
+        }
+        out[2 * w - 2] = static_cast<T>((in[w - 1] * 3 + in[w - 2] + 1) >> 2);
+        out[2 * w - 1] = in[w - 1];
       }
-      invalue = *inptr;
-      *outptr++ = static_cast<T>((invalue * 3 + inptr[-1] + 1) >> 2);
-      *outptr++ = static_cast<T>(invalue);
+    } else {  // running sums
+      T** output_data = output_data_ptr;
+      for (int inrow = 0; inrow < st_.max_v_samp_factor; inrow++) {
+        const T* inptr = input_data[inrow];
+        T* outptr = output_data[inrow];
+        int invalue = *inptr++;
+        *outptr++ = static_cast<T>(invalue);
+        *outptr++ = static_cast<T>((invalue * 3 + inptr[0] + 2) >> 2);
+        for (unsigned colctr = c.downsampled_width - 2; colctr > 0; colctr--) {
+          invalue = (*inptr++) * 3;
+          *outptr++ = static_cast<T>((invalue + inptr[-2] + 1) >> 2);
+          *outptr++ = static_cast<T>((invalue + inptr[0] + 2) >> 2);
+        }
+        invalue = *inptr;
+        *outptr++ = static_cast<T>((invalue * 3 + inptr[-1] + 1) >> 2);
+        *outptr++ = static_cast<T>(invalue);
+      }
     }
   }
 
@@ -261,30 +281,55 @@ class SepUpsampler final : public Upsampler<T> {
   }
 
   void h2v2_fancy_upsample(const ComponentInfo& c, T** input_data, T**& output_data_ptr) {
-    T** output_data = output_data_ptr;
-    int inrow = 0, outrow = 0;
-    while (outrow < st_.max_v_samp_factor) {
-      for (int v = 0; v < 2; v++) {
-        const T* inptr0 = input_data[inrow];
-        const T* inptr1 = v == 0 ? input_data[inrow - 1] : input_data[inrow + 1];
-        T* outptr = output_data[outrow++];
-        JLong thiscolsum = JLong(*inptr0++) * 3 + *inptr1++;
-        JLong nextcolsum = JLong(*inptr0++) * 3 + *inptr1++;
-        *outptr++ = static_cast<T>((thiscolsum * 4 + 8) >> 4);
-        *outptr++ = static_cast<T>((thiscolsum * 3 + nextcolsum + 7) >> 4);
-        JLong lastcolsum = thiscolsum;
-        thiscolsum = nextcolsum;
-        for (unsigned colctr = c.downsampled_width - 2; colctr > 0; colctr--) {
-          nextcolsum = JLong(*inptr0++) * 3 + *inptr1++;
-          *outptr++ = static_cast<T>((thiscolsum * 3 + lastcolsum + 8) >> 4);
-          *outptr++ = static_cast<T>((thiscolsum * 3 + nextcolsum + 7) >> 4);
-          lastcolsum = thiscolsum;
-          thiscolsum = nextcolsum;
+    if constexpr (kVectorizes) {
+      T** output_data = output_data_ptr;
+      const unsigned w = c.downsampled_width;
+      int inrow = 0, outrow = 0;
+      while (outrow < st_.max_v_samp_factor) {
+        for (int v = 0; v < 2; v++) {
+          const T* in0 = input_data[inrow];
+          const T* in1 = v == 0 ? input_data[inrow - 1] : input_data[inrow + 1];
+          T* out = output_data[outrow++];
+          // Column sums of the vertical pass.
+          auto col = [&](unsigned i) VIO_LAMBDA_INLINE { return in0[i] * 3 + in1[i]; };
+          out[0] = static_cast<T>((col(0) * 4 + 8) >> 4);
+          out[1] = static_cast<T>((col(0) * 3 + col(1) + 7) >> 4);
+          for (unsigned i = 1; i < w - 1; i++) {
+            const int t = col(i) * 3;
+            out[2 * i] = static_cast<T>((t + col(i - 1) + 8) >> 4);
+            out[2 * i + 1] = static_cast<T>((t + col(i + 1) + 7) >> 4);
+          }
+          out[2 * w - 2] = static_cast<T>((col(w - 1) * 3 + col(w - 2) + 8) >> 4);
+          out[2 * w - 1] = static_cast<T>((col(w - 1) * 4 + 7) >> 4);
         }
-        *outptr++ = static_cast<T>((thiscolsum * 3 + lastcolsum + 8) >> 4);
-        *outptr++ = static_cast<T>((thiscolsum * 4 + 7) >> 4);
+        inrow++;
       }
-      inrow++;
+    } else {  // running sums
+      T** output_data = output_data_ptr;
+      int inrow = 0, outrow = 0;
+      while (outrow < st_.max_v_samp_factor) {
+        for (int v = 0; v < 2; v++) {
+          const T* inptr0 = input_data[inrow];
+          const T* inptr1 = v == 0 ? input_data[inrow - 1] : input_data[inrow + 1];
+          T* outptr = output_data[outrow++];
+          JLong thiscolsum = JLong(*inptr0++) * 3 + *inptr1++;
+          JLong nextcolsum = JLong(*inptr0++) * 3 + *inptr1++;
+          *outptr++ = static_cast<T>((thiscolsum * 4 + 8) >> 4);
+          *outptr++ = static_cast<T>((thiscolsum * 3 + nextcolsum + 7) >> 4);
+          JLong lastcolsum = thiscolsum;
+          thiscolsum = nextcolsum;
+          for (unsigned colctr = c.downsampled_width - 2; colctr > 0; colctr--) {
+            nextcolsum = JLong(*inptr0++) * 3 + *inptr1++;
+            *outptr++ = static_cast<T>((thiscolsum * 3 + lastcolsum + 8) >> 4);
+            *outptr++ = static_cast<T>((thiscolsum * 3 + nextcolsum + 7) >> 4);
+            lastcolsum = thiscolsum;
+            thiscolsum = nextcolsum;
+          }
+          *outptr++ = static_cast<T>((thiscolsum * 3 + lastcolsum + 8) >> 4);
+          *outptr++ = static_cast<T>((thiscolsum * 4 + 7) >> 4);
+        }
+        inrow++;
+      }
     }
   }
 
@@ -419,8 +464,8 @@ class MergedUpsampler final : public Upsampler<T> {
     const T* range_limit = range_limit_;
     const int* Crrtab = tables_.Cr_r.data();
     const int* Cbbtab = tables_.Cb_b.data();
-    const JLong* Crgtab = tables_.Cr_g.data();
-    const JLong* Cbgtab = tables_.Cb_g.data();
+    const auto* Crgtab = tables_.Cr_g.data();
+    const auto* Cbgtab = tables_.Cb_g.data();
     const T* inptr00 = input_buf[0][V2 ? in_row_group_ctr * 2 : in_row_group_ctr];
     const T* inptr01 = V2 ? input_buf[0][in_row_group_ctr * 2 + 1] : nullptr;
     const T* inptr1 = input_buf[1][in_row_group_ctr];
@@ -462,8 +507,8 @@ class MergedUpsampler final : public Upsampler<T> {
     const T* range_limit = range_limit_;
     const int* Crrtab = tables_.Cr_r.data();
     const int* Cbbtab = tables_.Cb_b.data();
-    const JLong* Crgtab = tables_.Cr_g.data();
-    const JLong* Cbgtab = tables_.Cb_g.data();
+    const auto* Crgtab = tables_.Cr_g.data();
+    const auto* Cbgtab = tables_.Cb_g.data();
     auto pix = [&](int y, int cred, int cgreen, int cblue) {
       if constexpr (D) {
         unsigned r = range_limit[y + cred + (d & 0xFF)];

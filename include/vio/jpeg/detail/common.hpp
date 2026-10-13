@@ -39,6 +39,15 @@ inline constexpr int kCenterSample = 1 << (kBits<T> - 1);
 
 using JLong = long long;  // 64-bit intermediate arithmetic
 
+// Whether the compiler vectorizes per-sample loops written as independent
+// arithmetic (MSVC does not: table lookups and running sums are faster
+// there).
+#if defined(_MSC_VER) && !defined(__clang__)
+inline constexpr bool kVectorizes = false;
+#else
+inline constexpr bool kVectorizes = true;
+#endif
+
 inline constexpr long div_round_up(long a, long b) { return (a + b - 1) / b; }
 inline constexpr long round_up(long a, long b) { return div_round_up(a, b) * b; }
 

@@ -14,7 +14,9 @@ constexpr JLong fix16(double x) { return static_cast<JLong>(x * (1L << SCALEBITS
 template <class T>
 struct YccRgbTables {
   std::vector<int> Cr_r, Cb_b;
-  std::vector<JLong> Cr_g, Cb_g;
+  // Green terms: 32 bits hold them (and their sum) up to 12-bit samples.
+  using G = std::conditional_t<kBits<T> <= 12, int, JLong>;
+  std::vector<G> Cr_g, Cb_g;
   void build() {
     constexpr int N = kMaxSample<T> + 1;
     Cr_r.resize(N);
@@ -25,8 +27,8 @@ struct YccRgbTables {
     for (int i = 0; i < N; i++, x++) {
       Cr_r[i] = static_cast<int>((fix16(1.40200) * x + ONE_HALF) >> SCALEBITS);
       Cb_b[i] = static_cast<int>((fix16(1.77200) * x + ONE_HALF) >> SCALEBITS);
-      Cr_g[i] = (-fix16(0.71414)) * x;
-      Cb_g[i] = (-fix16(0.34414)) * x + ONE_HALF;
+      Cr_g[i] = static_cast<G>((-fix16(0.71414)) * x);
+      Cb_g[i] = static_cast<G>((-fix16(0.34414)) * x + ONE_HALF);
     }
   }
 };
@@ -181,8 +183,8 @@ class ColorDeconverter {
     const T* range_limit = range_limit_;
     [[maybe_unused]] const int* Crrtab = tables_.Cr_r.data();
     [[maybe_unused]] const int* Cbbtab = tables_.Cb_b.data();
-    [[maybe_unused]] const JLong* Crgtab = tables_.Cr_g.data();
-    [[maybe_unused]] const JLong* Cbgtab = tables_.Cb_g.data();
+    [[maybe_unused]] const auto* Crgtab = tables_.Cr_g.data();
+    [[maybe_unused]] const auto* Cbgtab = tables_.Cb_g.data();
     while (--num_rows >= 0) {
       const T* inptr0 = input_buf[0][input_row];
       const T* inptr1 = K == GrayRgb ? inptr0 : input_buf[1][input_row];
@@ -190,7 +192,19 @@ class ColorDeconverter {
       input_row++;
       T* outptr = *output_buf++;
       for (unsigned col = 0; col < num_cols; col++) {
-        if constexpr (K == YccRgb) {
+        if constexpr (K == YccRgb && kBits<T> <= 12 && kVectorizes) {
+          // The table entries (YccRgbTables), computed directly in 32 bits
+          // and clamped, so that the loop vectorizes.
+          const int y = inptr0[col], cb = inptr1[col] - kCenterSample<T>,
+                    cr = inptr2[col] - kCenterSample<T>;
+          auto clamp = [](int v) VIO_LAMBDA_INLINE {
+            return static_cast<T>(v < 0 ? 0 : v > kMaxSample<T> ? kMaxSample<T> : v);
+          };
+          constexpr int half = 1 << (SCALEBITS - 1);
+          outptr[R] = clamp(y + ((91881 * cr + half) >> SCALEBITS));
+          outptr[G] = clamp(y + ((-22554 * cb - 46802 * cr + half) >> SCALEBITS));
+          outptr[B] = clamp(y + ((116130 * cb + half) >> SCALEBITS));
+        } else if constexpr (K == YccRgb) {
           int y = inptr0[col], cb = inptr1[col], cr = inptr2[col];
           outptr[R] = range_limit[y + Crrtab[cr]];
           outptr[G] = range_limit[y + static_cast<int>((Cbgtab[cb] + Crgtab[cr]) >> SCALEBITS)];
@@ -291,8 +305,8 @@ class ColorDeconverter {
     const T* range_limit = range_limit_;
     const int* Crrtab = tables_.Cr_r.data();
     const int* Cbbtab = tables_.Cb_b.data();
-    const JLong* Crgtab = tables_.Cr_g.data();
-    const JLong* Cbgtab = tables_.Cb_g.data();
+    const auto* Crgtab = tables_.Cr_g.data();
+    const auto* Cbgtab = tables_.Cb_g.data();
     unsigned num_cols = st_.output_width;
     while (--num_rows >= 0) {
       const T* inptr0 = input_buf[0][input_row];
@@ -343,8 +357,8 @@ class ColorDeconverter {
     const T* range_limit = range_limit_;
     const int* Crrtab = tables_.Cr_r.data();
     const int* Cbbtab = tables_.Cb_b.data();
-    const JLong* Crgtab = tables_.Cr_g.data();
-    const JLong* Cbgtab = tables_.Cb_g.data();
+    const auto* Crgtab = tables_.Cr_g.data();
+    const auto* Cbgtab = tables_.Cb_g.data();
     JLong d0 = dither_matrix_565[st_.output_scanline & 3];
     while (--num_rows >= 0) {
       const T* in0 = input_buf[0][input_row];
