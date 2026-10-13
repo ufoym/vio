@@ -26,71 +26,53 @@ The packed-pixel readers and writers implement `vio::ImageReader<T>` /
 samples; `T` is `uint8_t`, `int16_t` or `uint16_t` for 8-, 12- and 16-bit
 data.
 
-## Platform support
+## Features
 
 Compared with libjpeg-turbo 3.2 and IJG libjpeg 10.  All three run on any
 architecture through portable code; libjpeg, written in plain ANSI C, builds
 with the widest range of compilers and systems, while vio needs a C++20
 compiler.
 
-SIMD acceleration:
-
-| Architecture  | SIMD                      | vio | libjpeg-turbo | libjpeg |
-| ------------- | ------------------------- | :-: | :-----------: | :-----: |
-| x86-64        | SSE2, AVX2                |  ✓  |       ✓       |    ✗    |
-| i386          | MMX, SSE, SSE2, AVX2      |  ✓  |       ✓       |    ✗    |
-| AArch64       | NEON                      |  ✓  |       ✓       |    ✗    |
-| AArch32       | NEON                      |  ✓  |       ✓       |    ✗    |
-| AArch32       | NEON detected at run time |  ✓¹ |       ✓       |    ✗    |
-| PowerPC       | AltiVec                   |  ✓  |       ✓       |    ✗    |
-| MIPS64        | Loongson MMI              |  ✓² |       ✓       |    ✗    |
-| RISC-V 64     | RVV 1.0                   |  ✓³ |       ✓       |    ✗    |
-
-Toolchains:
-
-| OS / compiler                  | vio | libjpeg-turbo | libjpeg |
-| ------------------------------ | :-: | :-----------: | :-----: |
-| Linux, GCC                     |  ✓  |       ✓       |    ✓    |
-| Linux, Clang                   |  ✓  |       ✓       |    ✓    |
-| macOS, Apple Clang             |  ✓  |       ✓       |    ✓    |
-| Windows, MSVC                  |  ✓  |       ✓       |    ✓    |
-| Windows, clang-cl              |  ✓  |       ✓       |    ✓    |
-| Compilers without C++20        |  ✗  |       ✓       |    ✓    |
+| Feature                                                    | vio | libjpeg-turbo | libjpeg |
+| ---------------------------------------------------------- | :-: | :-----------: | :-----: |
+| SIMD: x86-64 SSE2, AVX2                                    |  ✓  |       ✓       |    ✗    |
+| SIMD: i386 MMX, SSE, SSE2, AVX2                            |  ✓  |       ✓       |    ✗    |
+| SIMD: AArch64 NEON                                         |  ✓  |       ✓       |    ✗    |
+| SIMD: AArch32 NEON                                         |  ✓  |       ✓       |    ✗    |
+| SIMD: AArch32 NEON detected at run time                    | ✓¹  |       ✓       |    ✗    |
+| SIMD: PowerPC AltiVec                                      |  ✓  |       ✓       |    ✗    |
+| SIMD: MIPS64 Loongson MMI                                  | ✓²  |       ✓       |    ✗    |
+| SIMD: RISC-V 64 RVV 1.0                                    | ✓³  |       ✓       |    ✗    |
+| SIMD: run-time selection via `JSIMD_*` variables           |  ✓  |       ✓       |    ✗    |
+| Toolchains: Linux GCC, Clang                               |  ✓  |       ✓       |    ✓    |
+| Toolchains: macOS Apple Clang                              |  ✓  |       ✓       |    ✓    |
+| Toolchains: Windows MSVC, clang-cl                         |  ✓  |       ✓       |    ✓    |
+| Toolchains: compilers without C++20                        |  ✗  |       ✓       |    ✓    |
+| JPEG: baseline and extended sequential                     |  ✓  |       ✓       |    ✓    |
+| JPEG: progressive                                          |  ✓  |       ✓       |    ✓    |
+| JPEG: arithmetic coding                                    |  ✓  |       ✓       |    ✓    |
+| JPEG: lossless (2- to 16-bit)                              |  ✓  |       ✓       |    ✗    |
+| JPEG: 12-bit lossy                                         |  ✓  |       ✓       |   ✓⁴    |
+| JPEG: lossless transforms (rotate, flip, crop, wipe, drop) |  ✓  |       ✓       |    ✓    |
+| JPEG: lossless roll transform                              |  ✓  |       ✓       |    ✗    |
+| JPEG: lossless negate transform                            |  ✗  |       ✗       |    ✓    |
+| JPEG: SmartScale (non-standard DCT block sizes)            |  ✗  |       ✗       |    ✓    |
+| JPEG: scaled decoding                                      |  ✓  |       ✓       |    ✓    |
+| JPEG: partial decoding (crop, skip rows)                   |  ✓  |       ✓       |    ✗    |
+| JPEG: raw (planar YCbCr) input and output                  |  ✓  |       ✓       |    ✓    |
+| JPEG: saved markers                                        |  ✓  |       ✓       |    ✓    |
+| JPEG: ICC profile read/write API                           |  ✓  |       ✓       |    ✗    |
+| JPEG: color quantization and dithering                     |  ✓  |       ✓       |    ✓    |
+| Integration: header-only, no build step                    |  ✓  |       ✗       |    ✗    |
+| Integration: no assembler needed                           |  ✓  |      ✗⁵       |    ✓    |
+| Integration: C++ API                                       |  ✓  |       ✗       |    ✗    |
+| Integration: libjpeg C API                                 |  ✗  |       ✓       |    ✓    |
+| Integration: TurboJPEG C API                               |  ✗  |       ✓       |    ✗    |
+| Integration: Java binding                                  |  ✗  |       ✓       |    ✗    |
 
 ¹ GCC only. ² Little-endian only. ³ GCC ≥ 14 or Clang ≥ 17.
-
-## Features
-
-| JPEG                                                 | vio | libjpeg-turbo | libjpeg |
-| ---------------------------------------------------- | :-: | :-----------: | :-----: |
-| Baseline and extended sequential                     |  ✓  |       ✓       |    ✓    |
-| Progressive                                          |  ✓  |       ✓       |    ✓    |
-| Arithmetic coding                                    |  ✓  |       ✓       |    ✓    |
-| Lossless (2- to 16-bit)                              |  ✓  |       ✓       |    ✗    |
-| 12-bit lossy                                         |  ✓  |       ✓       |    ✓⁵   |
-| Lossless transforms (rotate, flip, crop, wipe, drop) |  ✓  |       ✓       |    ✓    |
-| Lossless roll transform                              |  ✓  |       ✓       |    ✗    |
-| Lossless negate transform                            |  ✗  |       ✗       |    ✓    |
-| SmartScale (non-standard DCT block sizes)            |  ✗  |       ✗       |    ✓    |
-| Scaled decoding                                      |  ✓  |       ✓       |    ✓    |
-| Partial decoding (crop, skip rows)                   |  ✓  |       ✓       |    ✗    |
-| Raw (planar YCbCr) input and output                  |  ✓  |       ✓       |    ✓    |
-| Saved markers                                        |  ✓  |       ✓       |    ✓    |
-| ICC profile read/write API                           |  ✓  |       ✓       |    ✗    |
-| Color quantization and dithering                     |  ✓  |       ✓       |    ✓    |
-| Run-time SIMD selection via `JSIMD_*` variables      |  ✓  |       ✓       |    ✗    |
-
-| Integration                    | vio | libjpeg-turbo | libjpeg |
-| ------------------------------ | :-: | :-----------: | :-----: |
-| Header-only, no build step     |  ✓  |       ✗       |    ✗    |
-| No assembler needed            |  ✓  |      ✗⁶       |    ✓    |
-| C++ API                        |  ✓  |       ✗       |    ✗    |
-| libjpeg C API                  |  ✗  |       ✓       |    ✓    |
-| TurboJPEG C API                |  ✗  |       ✓       |    ✗    |
-| Java binding                   |  ✗  |       ✓       |    ✗    |
-
-⁵ A separate build of the library (8- or 12-bit, not both).
-⁶ NASM or Yasm for the x86 SIMD code.
+⁴ A separate build of the library (8- or 12-bit, not both).
+⁵ NASM or Yasm for the x86 SIMD code.
 
 ## Performance
 
@@ -99,70 +81,134 @@ Throughput measured by `tjbench` on GitHub-hosted runners: vio, libjpeg-turbo
 TurboJPEG layer, `tests/libjpeg/`), all built on the same machine with the
 same compiler (GCC on Linux, Apple Clang on macOS, MSVC on Windows; NASM for
 libjpeg-turbo's x86 SIMD).  The image is a 3632×2384 RGB tiling of `testorig.ppm`; each number
-is the best of 5 runs.  Results from commit `0e6f24d`.
+is the best of 5 runs.  Results from commit `648a2e1`.  Hosted Linux x86-64
+runners come with different processors; the on-demand workflow
+`bench-x64.yml` runs the benchmark on several at once, which measured the
+three AMD EPYC generations below.
 
-Speed relative to libjpeg (1.00× = libjpeg; libjpeg has no SIMD code),
-geometric mean over the configurations below except lossless, which libjpeg
-does not support.  In parentheses: vio relative to libjpeg-turbo over the
-same configurations (100% = same speed).
+How much faster vio is than libjpeg-turbo and than IJG libjpeg (which has no
+SIMD code): +20% means 1.2 times the throughput.  Geometric mean over the
+configurations below except lossless, which libjpeg does not support.
 
-| Platform       | CPU                      | SIMD   | Compress vio | libjpeg-turbo | Decompress vio | libjpeg-turbo |
-| -------------- | ------------------------ | ------ | -----------: | ------------: | -------------: | ------------: |
-| Linux x86-64   | AMD EPYC 9V45            | AVX2   | 5.78× (109%) |         5.31× |   2.49× (122%) |         2.04× |
-| Linux x86-64   | AMD EPYC 9V45            | SSE2   | 5.36× (114%) |         4.70× |   2.34× (123%) |         1.90× |
-| Linux x86-64   | AMD EPYC 9V45            | scalar | 2.46× (162%) |         1.52× |   1.41× (111%) |         1.27× |
-| macOS x86-64   | Intel Core i7-8700B      | AVX2   | 4.96× (107%) |         4.62× |   2.15× (105%) |         2.04× |
-| macOS x86-64   | Intel Core i7-8700B      | SSE2   |  4.39× (99%) |         4.41× |   2.14× (109%) |         1.96× |
-| macOS x86-64   | Intel Core i7-8700B      | scalar | 2.44× (157%) |         1.55× |   1.36× (101%) |         1.34× |
-| Linux AArch64  | Neoverse-N2              | NEON   | 3.77× (111%) |         3.39× |   1.91× (122%) |         1.57× |
-| Linux AArch64  | Neoverse-N2              | scalar | 2.22× (109%) |         2.05× |   1.22× (115%) |         1.06× |
-| macOS AArch64  | Apple M4¹                | NEON   | 5.11× (116%) |         4.41× |   2.02× (124%) |         1.63× |
-| macOS AArch64  | Apple M4¹                | scalar | 3.00× (122%) |         2.45× |   1.25× (112%) |         1.11× |
-| Windows x86-64 | Intel Core Ultra 9 285K² | AVX2   | 5.18× (109%) |         4.74× |   1.82× (113%) |         1.61× |
-| Windows x86-64 | Intel Core Ultra 9 285K² | SSE2   | 4.69× (111%) |         4.23× |   1.68× (113%) |         1.48× |
-| Windows x86-64 | Intel Core Ultra 9 285K² | scalar | 2.26× (159%) |         1.42× |   1.09× (105%) |         1.04× |
+JPEG compression:
+
+| Platform       | CPU                      | SIMD   | vs libjpeg-turbo | vs libjpeg |
+| -------------- | ------------------------ | ------ | ---------------: | ---------: |
+| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | AVX2   |             +21% |      +472% |
+| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | SSE2   |             +19% |      +420% |
+| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | scalar |             +40% |       +98% |
+| Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | AVX2   |             +24% |      +510% |
+| Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | SSE2   |             +23% |      +436% |
+| Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | scalar |             +51% |      +122% |
+| Linux x86-64   | AMD EPYC 9V45 (Zen 5)    | AVX2   |             +22% |      +548% |
+| Linux x86-64   | AMD EPYC 9V45 (Zen 5)    | SSE2   |             +25% |      +482% |
+| Linux x86-64   | AMD EPYC 9V45 (Zen 5)    | scalar |             +63% |      +145% |
+| macOS x86-64   | Intel Core i7-8700B      | AVX2   |             +19% |      +453% |
+| macOS x86-64   | Intel Core i7-8700B      | SSE2   |             +10% |      +370% |
+| macOS x86-64   | Intel Core i7-8700B      | scalar |             +56% |      +135% |
+| Linux AArch64  | Neoverse-N2              | NEON   |             +19% |      +306% |
+| Linux AArch64  | Neoverse-N2              | scalar |             +10% |      +126% |
+| macOS AArch64  | Apple M4¹                | NEON   |             +24% |      +445% |
+| macOS AArch64  | Apple M4¹                | scalar |             +23% |      +203% |
+| Windows x86-64 | Intel Core Ultra 9 285K² | AVX2   |              +9% |      +418% |
+| Windows x86-64 | Intel Core Ultra 9 285K² | SSE2   |             +11% |      +369% |
+| Windows x86-64 | Intel Core Ultra 9 285K² | scalar |             +59% |      +126% |
+
+JPEG decompression:
+
+| Platform       | CPU                      | SIMD   | vs libjpeg-turbo | vs libjpeg |
+| -------------- | ------------------------ | ------ | ---------------: | ---------: |
+| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | AVX2   |             +15% |      +147% |
+| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | SSE2   |             +17% |      +134% |
+| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | scalar |              +6% |       +28% |
+| Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | AVX2   |             +22% |      +158% |
+| Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | SSE2   |             +22% |      +139% |
+| Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | scalar |              +8% |       +30% |
+| Linux x86-64   | AMD EPYC 9V45 (Zen 5)    | AVX2   |             +24% |      +153% |
+| Linux x86-64   | AMD EPYC 9V45 (Zen 5)    | SSE2   |             +25% |      +134% |
+| Linux x86-64   | AMD EPYC 9V45 (Zen 5)    | scalar |             +12% |       +41% |
+| macOS x86-64   | Intel Core i7-8700B      | AVX2   |             +15% |      +131% |
+| macOS x86-64   | Intel Core i7-8700B      | SSE2   |             +12% |      +116% |
+| macOS x86-64   | Intel Core i7-8700B      | scalar |              +7% |       +36% |
+| Linux AArch64  | Neoverse-N2              | NEON   |             +23% |       +93% |
+| Linux AArch64  | Neoverse-N2              | scalar |             +16% |       +22% |
+| macOS AArch64  | Apple M4¹                | NEON   |             +25% |      +101% |
+| macOS AArch64  | Apple M4¹                | scalar |             +12% |       +24% |
+| Windows x86-64 | Intel Core Ultra 9 285K² | AVX2   |             +13% |       +82% |
+| Windows x86-64 | Intel Core Ultra 9 285K² | SSE2   |             +13% |       +68% |
+| Windows x86-64 | Intel Core Ultra 9 285K² | scalar |              +5% |        +9% |
 
 ¹ Measured on a local Mac (native, same build and benchmark script)
 instead of the GitHub-hosted runner, which is a virtualized Apple M1.
 ² Measured on a local Windows 11 machine with MSVC 19.44 (Visual Studio
-2022), pinned to the performance cores.  Built with clang-cl 19 instead
-(vio and libjpeg-turbo), vio is at 116% (AVX2), 111% (SSE2) and 181%
-(scalar) of libjpeg-turbo's compression speed and at 122%, 123% and 113%
-of its decompression speed.
+2022), pinned to the performance cores, at commit `0e6f24d` (before the
+latest compression work).  Built with clang-cl 19 instead (vio and
+libjpeg-turbo), vio compresses 16% (AVX2), 11% (SSE2) and 81% (scalar)
+faster than libjpeg-turbo and decompresses 22%, 23% and 13% faster.
 
-Per configuration, Mpixels/s, vio / libjpeg-turbo / libjpeg:
+Per configuration, on the same machines (by CPU; the summary gives their
+platforms), each summary figure above being the geometric mean of the first
+seven columns of its row. Columns: 4:4:4, 4:2:2, 4:2:0 and gray at quality
+95; fastDCT: 4:2:0 with the fast integer DCT; prog.: 4:2:0 progressive;
+arith.: 4:2:0 arithmetic-coded.
 
-| Configuration     | x86-64 AVX2 compress | decompress      | AArch64 NEON compress | decompress      |
-| ----------------- | -------------------: | --------------: | --------------------: | --------------: |
-| 4:4:4 q95         |      305 / 284 / 36  |  311 / 236 / 99  |       150 / 141 / 35  |  189 / 149 / 94 |
-| 4:2:2 q95         |      382 / 375 / 44  | 358 / 283 / 116  |       201 / 188 / 44  | 227 / 179 / 108 |
-| 4:2:0 q95         |      460 / 456 / 52  | 422 / 336 / 123  |       247 / 232 / 49  | 268 / 208 / 105 |
-| gray q95          |      595 / 603 / 80  | 574 / 440 / 210  |       379 / 342 / 81  | 405 / 303 / 234 |
-| 4:2:0 fast DCT    |      493 / 466 / 54  | 444 / 344 / 127  |       269 / 254 / 52  | 308 / 233 / 108 |
-| 4:2:0 progressive |        83 / 66 / 29  |   130 / 119 / 81 |         53 / 45 / 20  |   106 / 98 / 70 |
-| 4:2:0 arithmetic  |        41 / 33 / 24  |     32 / 31 / 28 |         42 / 34 / 24  |    32 / 31 / 27 |
-| lossless PSV1     |        61 / 37 / —   |     89 / 79 / —  |         40 / 24 / —   |    61 / 57 / —  |
+JPEG compression, vio vs libjpeg-turbo:
 
-The x86-64 column is the EPYC runner, the AArch64 column the Neoverse-N2
-runner.  Sequential decompression is 20–40% faster than libjpeg-turbo (from
-Huffman decoding), progressive and arithmetic-coded decompression 3–10%,
-baseline compression up to 10%, arithmetic-coded compression 20–30% and
-lossless compression about 1.6×.  Shared CI runners are noisy (the macOS
-x86-64 runner most of all), so differences of a few percent, such as the
-SSE2 compression on that runner, are within run-to-run variation.
+| CPU, SIMD            | 4:4:4 | 4:2:2 | 4:2:0 |  gray | fastDCT | prog. | arith. | lossless |
+| -------------------- | ----: | ----: | ----: | ----: | ------: | ----: | -----: | -------: |
+| EPYC 7763 AVX2       |  +27% |  +24% |  +22% |  +17% |    +27% |  +13% |   +16% |     +51% |
+| EPYC 7763 SSE2       |  +20% |  +20% |  +20% |  +17% |    +23% |  +14% |   +16% |     +51% |
+| EPYC 7763 scalar     |  +59% |  +49% |  +44% |  +52% |    +41% |  +18% |   +24% |     +51% |
+| EPYC 9V74 AVX2       |  +27% |  +23% |  +23% |  +23% |    +29% |  +17% |   +25% |     +60% |
+| EPYC 9V74 SSE2       |  +29% |  +24% |  +23% |  +21% |    +25% |  +18% |   +25% |     +59% |
+| EPYC 9V74 scalar     |  +74% |  +62% |  +58% |  +64% |    +55% |  +16% |   +33% |     +60% |
+| EPYC 9V45 AVX2       |  +24% |  +20% |  +20% |  +19% |    +18% |  +28% |   +28% |     +55% |
+| EPYC 9V45 SSE2       |  +28% |  +24% |  +22% |  +22% |    +23% |  +29% |   +28% |     +55% |
+| EPYC 9V45 scalar     |  +97% |  +77% |  +71% |  +85% |    +67% |  +21% |   +38% |     +55% |
+| i7-8700B AVX2        |  +28% |  +15% |  +20% |  +17% |    +12% |  +18% |   +27% |     +31% |
+| i7-8700B SSE2        |   +6% |   +1% |   +7% |   +2% |     +8% |  +14% |   +35% |     +28% |
+| i7-8700B scalar      |  +79% |  +69% |  +59% |  +70% |    +48% |  +21% |   +50% |     +31% |
+| Neoverse-N2 NEON     |  +14% |  +18% |  +18% |  +18% |    +20% |  +17% |   +27% |     +69% |
+| Neoverse-N2 scalar   |   +7% |   +6% |   +6% |   +9% |     +5% |  +14% |   +24% |     +69% |
+| M4¹ NEON             |  +24% |  +22% |  +20% |  +24% |    +21% |  +13% |   +43% |     +18% |
+| M4¹ scalar           |  +31% |  +17% |  +16% |  +36% |    +13% |   +9% |   +40% |     +17% |
+| Ultra 9 285K² AVX2   |   +5% |   +6% |   +7% |   +4% |    +10% |   +6% |   +30% |     +69% |
+| Ultra 9 285K² SSE2   |   +8% |   +7% |   +9% |   +8% |    +10% |   +6% |   +30% |     +68% |
+| Ultra 9 285K² scalar |  +90% |  +75% |  +67% |  +71% |    +62% |  +17% |   +42% |     +69% |
 
-On the Windows machine (MSVC, AVX2), same format:
+JPEG decompression, vio vs libjpeg-turbo:
 
-| Configuration     | Compress        | Decompress      |
-| ----------------- | --------------: | --------------: |
-| 4:4:4 q95         | 357 / 340 / 48  | 376 / 325 / 185 |
-| 4:2:2 q95         | 471 / 445 / 61  | 464 / 405 / 211 |
-| 4:2:0 q95         | 569 / 533 / 72  | 532 / 467 / 223 |
-| gray q95          | 676 / 649 / 107 | 623 / 548 / 379 |
-| 4:2:0 fast DCT    | 579 / 529 / 73  | 550 / 470 / 228 |
-| 4:2:0 progressive |   83 / 78 / 32  | 139 / 125 / 100 |
-| 4:2:0 arithmetic  |   52 / 40 / 30  |    41 / 40 / 37 |
-| lossless PSV1     |   57 / 34 / —   |   104 / 95 / —  |
+| CPU, SIMD            | 4:4:4 | 4:2:2 | 4:2:0 |  gray | fastDCT | prog. | arith. | lossless |
+| -------------------- | ----: | ----: | ----: | ----: | ------: | ----: | -----: | -------: |
+| EPYC 7763 AVX2       |  +20% |  +21% |  +21% |  +21% |    +27% |   +6% |    −7% |      +5% |
+| EPYC 7763 SSE2       |  +25% |  +25% |  +23% |  +23% |    +24% |   +7% |    −7% |      +5% |
+| EPYC 7763 scalar     |   +7% |   +7% |   +7% |  +11% |    +14% |   +3% |    −7% |      +5% |
+| EPYC 9V74 AVX2       |  +32% |  +29% |  +29% |  +35% |    +32% |   +5% |    −2% |      +9% |
+| EPYC 9V74 SSE2       |  +34% |  +31% |  +29% |  +36% |    +28% |   +6% |    −2% |      +9% |
+| EPYC 9V74 scalar     |  +10% |   +8% |   +8% |  +16% |    +16% |   +2% |    −2% |      +9% |
+| EPYC 9V45 AVX2       |  +33% |  +30% |  +29% |  +31% |    +32% |  +13% |    +3% |     +10% |
+| EPYC 9V45 SSE2       |  +38% |  +34% |  +31% |  +35% |    +28% |  +12% |    +0% |      +9% |
+| EPYC 9V45 scalar     |  +16% |  +12% |  +12% |  +21% |    +17% |   +8% |    +0% |     +10% |
+| i7-8700B AVX2        |  +22% |  +10% |  +18% |  +15% |    +18% |   −0% |   +20% |     +30% |
+| i7-8700B SSE2        |  +15% |  +13% |  +14% |  +13% |     +8% |   +3% |   +18% |     +22% |
+| i7-8700B scalar      |   +5% |   +6% |   +5% |  +11% |     +7% |   −1% |   +15% |     +22% |
+| Neoverse-N2 NEON     |  +27% |  +28% |  +29% |  +35% |    +32% |   +8% |    +4% |      +9% |
+| Neoverse-N2 scalar   |  +16% |  +16% |  +16% |  +27% |    +26% |   +6% |    +4% |      +9% |
+| M4¹ NEON             |  +41% |  +24% |  +25% |  +33% |    +28% |  +11% |   +18% |     +10% |
+| M4¹ scalar           |  +14% |  +12% |   +5% |  +22% |     +9% |   +5% |   +17% |     +12% |
+| Ultra 9 285K² AVX2   |  +16% |  +15% |  +14% |  +14% |    +17% |  +11% |    +4% |      +9% |
+| Ultra 9 285K² SSE2   |  +15% |  +15% |  +14% |  +14% |    +16% |  +12% |    +5% |      +9% |
+| Ultra 9 285K² scalar |   +0% |   +1% |   +3% |   +9% |    +11% |   +8% |    +3% |      +9% |
+
+With SIMD, baseline compression is 4–30% faster than libjpeg-turbo (1–8% on
+the macOS x86-64 runner with SSE2) and sequential decompression 10–41%;
+without SIMD, compression is 41–97% faster on x86 and 5–36% on AArch64.
+Progressive compression is 6–29% faster, arithmetic-coded 16–50% and
+lossless 17–69%.  Progressive decompression ranges from 1% slower to 13%
+faster, lossless decompression is 5–30% faster, and arithmetic-coded
+decompression ranges from 7% slower (Zen 3) to 20% faster.  Shared CI
+runners are noisy (the macOS x86-64 runner most of all), so differences of a
+few percent are within run-to-run variation.
 
 ## Building and testing
 
