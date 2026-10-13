@@ -51,7 +51,7 @@ VIO_INLINE std::uint64_t pack_bits(const uint8x8_t* rows) {
 // AC first pass: values[k] = |coef_k| >> Al, values[64 + k] = the value's
 // bits to emit (ones' complement for negative coefficients).  Returns the
 // bitmap of non-zero values.
-inline std::uint64_t ac_first_prepare(const std::int16_t* block, const int* order, int Sl, int Al,
+inline VIO_NO_STACK_CHECK std::uint64_t ac_first_prepare(const std::int16_t* block, const int* order, int Sl, int Al,
                                       std::uint16_t* values) {
   using namespace detail_phuff;
   const int16x8_t shift = vdupq_n_s16(static_cast<std::int16_t>(-Al));
@@ -69,7 +69,7 @@ inline std::uint64_t ac_first_prepare(const std::int16_t* block, const int* orde
 // AC refinement pass: absvalues[k] = |coef_k| >> Al; *zerobits = non-zero
 // bitmap, *signbits = bitmap of non-negative coefficients.  Returns the index
 // of the last coefficient whose magnitude is 1 (0 if none).
-inline int ac_refine_prepare(const std::int16_t* block, const int* order, int Sl, int Al,
+inline VIO_NO_STACK_CHECK int ac_refine_prepare(const std::int16_t* block, const int* order, int Sl, int Al,
                              std::uint16_t* absvalues, std::uint64_t* zerobits,
                              std::uint64_t* signbits) {
   using namespace detail_phuff;

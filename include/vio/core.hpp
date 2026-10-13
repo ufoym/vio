@@ -97,7 +97,24 @@ inline std::string strformat(const char* fmt, ...) {
   return buf;
 }
 
-#define VIO_FAIL(...) throw ::vio::Error(::vio::strformat(__VA_ARGS__))
+// Throws Error with a formatted message.  Out of line, so that code calling
+// it keeps no string or exception temporaries on its fast paths.
+[[noreturn]]
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((format(printf, 1, 2), noinline, cold))
+#elif defined(_MSC_VER)
+__declspec(noinline)
+#endif
+inline void fail(const char* fmt, ...) {
+  char buf[512];
+  va_list ap;
+  va_start(ap, fmt);
+  std::vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  throw Error(buf);
+}
+
+#define VIO_FAIL(...) ::vio::fail(__VA_ARGS__)
 
 // Non-fatal problems (corrupt data that can be worked around, etc.) are
 // reported through a Diagnostics sink.  By default warnings are counted and

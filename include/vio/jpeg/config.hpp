@@ -27,6 +27,19 @@
 #define VIO_UNLIKELY(x) __builtin_expect(!!(x), 0)
 #endif
 
+// Hot per-block functions whose small local arrays are only indexed within
+// bounds skip the stack-protector instrumentation.
+#if defined(_MSC_VER) && !defined(__clang__)
+#define VIO_NO_STACK_CHECK __declspec(safebuffers)
+#elif defined(__has_attribute)
+#if __has_attribute(no_stack_protector)
+#define VIO_NO_STACK_CHECK __attribute__((no_stack_protector))
+#endif
+#endif
+#ifndef VIO_NO_STACK_CHECK
+#define VIO_NO_STACK_CHECK
+#endif
+
 // Floating-point kernels whose results must be reproducible use explicit
 // std::fma() where the expected results assume a fused multiply-add;
 // implicit contraction is disabled for them.
