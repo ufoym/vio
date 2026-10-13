@@ -180,6 +180,7 @@ def main():
     a = ap.parse_args()
 
     tmp = tempfile.mkdtemp()
+    os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)  # also for annotations
     image = os.path.join(tmp, "bench.ppm")
     w, h = make_image(a.src, image)
     result = {"platform": a.platform, "cpu": cpu_name(),
