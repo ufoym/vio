@@ -9,7 +9,7 @@ on:
     inputs:
       isas:
         description: bench.py --isa arguments
-        default: --isa avx2= --isa sse2=JSIMD_FORCESSE2=1
+        default: --isa avx2= --isa sse2=JSIMD_FORCESSE2=1 --isa none=JSIMD_FORCENONE=1
 
 permissions:
   contents: read
@@ -36,18 +36,36 @@ jobs:
             sudo apt-get install -yq linux-tools-generic || true
           sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
 
+      # IJG libjpeg (see ci.yml); the benchmark runs without it if the
+      # download fails.
+      - name: Download IJG libjpeg
+        continue-on-error: true
+        run: |
+          curl -fsSL --retry 3 -o jpegsrc.tar.gz https://www.ijg.org/files/jpegsrc.v10.tar.gz
+          echo "8b9eaa13242690ebd03e1728ab1edf97a81a78ed6e83624d493655f31ac95ab5  jpegsrc.tar.gz" |
+            shasum -a 256 -c -
+          mkdir -p build && tar xzf jpegsrc.tar.gz -C build
+
       - name: Build
         run: |
-          cmake -S . -B build/vio -DCMAKE_BUILD_TYPE=Release -DVIO_TEST_SCALAR=OFF
-          cmake --build build/vio --parallel --target tjbench
+          libjpeg=""
+          targets="tjbench"
+          if [ -d build/jpeg-10 ]; then
+            libjpeg="-DVIO_LIBJPEG_SOURCE_DIR=$PWD/build/jpeg-10"
+            targets="tjbench tjbench-libjpeg"
+          fi
+          cmake -S . -B build/vio -DCMAKE_BUILD_TYPE=Release -DVIO_TEST_SCALAR=OFF $libjpeg
+          cmake --build build/vio --parallel --target $targets
           cmake -S tests/libjpeg-turbo -B build/ljt -DCMAKE_BUILD_TYPE=Release
           cmake --build build/ljt --parallel --target tjbench
 
       - name: Benchmark
         run: |
+          libjpeg=""
+          [ -x build/vio/tjbench-libjpeg ] && libjpeg="--libjpeg build/vio/tjbench-libjpeg"
           python3 .github/scripts/bench.py --platform linux-x64-${{ matrix.copy }} \
             --vio build/vio/tjbench --ref build/ljt/tjbench ${{ inputs.isas }} \
-            --reps 3 --out results/bench-linux-x64-${{ matrix.copy }}.json
+            $libjpeg --out results/bench-linux-x64-${{ matrix.copy }}.json
 
       - name: Upload results
         uses: actions/upload-artifact@v7
