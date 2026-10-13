@@ -3,8 +3,9 @@
 Header-only C++20 image I/O.  The JPEG codec supports sequential,
 progressive, arithmetic-coded and lossless JPEG with 8- to 16-bit samples,
 lossless transforms, and SIMD acceleration for x86 (MMX through AVX2), Arm
-NEON, PowerPC AltiVec, Loongson MMI and RISC-V Vector.  Its speed is on par
-with libjpeg-turbo (see [Performance](#performance)).
+NEON, PowerPC AltiVec, Loongson MMI and RISC-V Vector.  It is faster than
+libjpeg-turbo in almost every configuration measured (see
+[Performance](#performance)).
 
 ## Using the library
 
@@ -98,7 +99,7 @@ Throughput measured by `tjbench` on GitHub-hosted runners: vio, libjpeg-turbo
 TurboJPEG layer, `tests/libjpeg/`), all built on the same machine with the
 same compiler (GCC on Linux, Apple Clang on macOS, MSVC on Windows; NASM for
 libjpeg-turbo's x86 SIMD).  The image is a 3632×2384 RGB tiling of `testorig.ppm`; each number
-is the best of 5 runs.  Results from commit `aeef3f9`.
+is the best of 5 runs.  Results from commit `bb9833a`.
 
 Speed relative to libjpeg (1.00× = libjpeg; libjpeg has no SIMD code),
 geometric mean over the configurations below except lossless, which libjpeg
@@ -107,60 +108,61 @@ same configurations (100% = same speed).
 
 | Platform       | CPU                      | SIMD   | Compress vio | libjpeg-turbo | Decompress vio | libjpeg-turbo |
 | -------------- | ------------------------ | ------ | -----------: | ------------: | -------------: | ------------: |
-| Linux x86-64   | AMD EPYC 7763            | AVX2   |  4.46× (94%) |         4.73× |    2.08× (97%) |         2.15× |
-| Linux x86-64   | AMD EPYC 7763            | SSE2   |  3.96× (90%) |         4.39× |    1.98× (99%) |         2.00× |
-| Linux x86-64   | AMD EPYC 7763            | scalar |  1.40× (99%) |         1.41× |    1.18× (98%) |         1.21× |
-| macOS x86-64   | Intel Core i7-8700B      | AVX2   |  4.31× (94%) |         4.59× |    1.92× (95%) |         2.02× |
-| macOS x86-64   | Intel Core i7-8700B      | SSE2   |  3.72× (88%) |         4.23× |    1.90× (97%) |         1.96× |
-| macOS x86-64   | Intel Core i7-8700B      | scalar | 1.83× (128%) |         1.43× |    1.18× (96%) |         1.22× |
-| Linux AArch64  | Neoverse-N2              | NEON   |  3.36× (99%) |         3.40× |   1.57× (100%) |         1.57× |
-| Linux AArch64  | Neoverse-N2              | scalar |  1.90× (93%) |         2.05× |   1.07× (102%) |         1.06× |
-| macOS AArch64  | Apple M4¹                | NEON   |  4.32× (98%) |         4.41× |    1.59× (98%) |         1.63× |
-| macOS AArch64  | Apple M4¹                | scalar | 2.52× (103%) |         2.45× |    1.07× (96%) |         1.11× |
-| Windows x86-64 | Intel Core Ultra 9 285K² | AVX2   |  4.60× (98%) |         4.70× |    1.59× (99%) |         1.61× |
-| Windows x86-64 | Intel Core Ultra 9 285K² | SSE2   |  4.16× (99%) |         4.22× |   1.48× (100%) |         1.48× |
-| Windows x86-64 | Intel Core Ultra 9 285K² | scalar | 2.18× (153%) |         1.43× |    1.02× (98%) |         1.04× |
+| Linux x86-64   | AMD EPYC 9V45            | AVX2   | 5.78× (109%) |         5.31× |   2.49× (122%) |         2.04× |
+| Linux x86-64   | AMD EPYC 9V45            | SSE2   | 5.36× (114%) |         4.70× |   2.34× (123%) |         1.90× |
+| Linux x86-64   | AMD EPYC 9V45            | scalar | 2.46× (162%) |         1.52× |   1.41× (111%) |         1.27× |
+| macOS x86-64   | Intel Core i7-8700B      | AVX2   | 4.96× (107%) |         4.62× |   2.15× (105%) |         2.04× |
+| macOS x86-64   | Intel Core i7-8700B      | SSE2   |  4.39× (99%) |         4.41× |   2.14× (109%) |         1.96× |
+| macOS x86-64   | Intel Core i7-8700B      | scalar | 2.44× (157%) |         1.55× |   1.36× (101%) |         1.34× |
+| Linux AArch64  | Neoverse-N2              | NEON   | 3.77× (111%) |         3.39× |   1.91× (122%) |         1.57× |
+| Linux AArch64  | Neoverse-N2              | scalar | 2.22× (109%) |         2.05× |   1.22× (115%) |         1.06× |
+| macOS AArch64  | Apple M4¹                | NEON   | 5.11× (116%) |         4.41× |   2.02× (124%) |         1.63× |
+| macOS AArch64  | Apple M4¹                | scalar | 3.00× (122%) |         2.45× |   1.25× (112%) |         1.11× |
+| Windows x86-64 | Intel Core Ultra 9 285K² | AVX2   | 5.18× (109%) |         4.74× |   1.82× (113%) |         1.61× |
+| Windows x86-64 | Intel Core Ultra 9 285K² | SSE2   | 4.69× (111%) |         4.23× |   1.68× (113%) |         1.48× |
+| Windows x86-64 | Intel Core Ultra 9 285K² | scalar | 2.26× (159%) |         1.42× |   1.09× (105%) |         1.04× |
 
 ¹ Measured on a local Mac (native, same build and benchmark script)
 instead of the GitHub-hosted runner, which is a virtualized Apple M1.
 ² Measured on a local Windows 11 machine with MSVC 19.44 (Visual Studio
-2022), pinned to the performance cores, at commit `bdc104a`.  Built with
-clang-cl 19 instead (vio and libjpeg-turbo), vio is at 102% (AVX2), 99%
-(SSE2) and 164% (scalar) of libjpeg-turbo's compression speed and at 106%,
-109% and 103% of its decompression speed.
+2022), pinned to the performance cores.  Built with clang-cl 19 instead
+(vio and libjpeg-turbo), vio is at 116% (AVX2), 111% (SSE2) and 181%
+(scalar) of libjpeg-turbo's compression speed and at 122%, 123% and 113%
+of its decompression speed.
 
 Per configuration, Mpixels/s, vio / libjpeg-turbo / libjpeg:
 
 | Configuration     | x86-64 AVX2 compress | decompress      | AArch64 NEON compress | decompress      |
 | ----------------- | -------------------: | --------------: | --------------------: | --------------: |
-| 4:4:4 q95         |      161 / 173 / 26  |  155 / 164 / 68 |       138 / 142 / 35  |  149 / 150 / 94 |
-| 4:2:2 q95         |      217 / 236 / 33  |  193 / 201 / 76 |       186 / 188 / 44  | 179 / 179 / 108 |
-| 4:2:0 q95         |      267 / 290 / 38  |  221 / 235 / 79 |       229 / 232 / 49  | 210 / 208 / 105 |
-| gray q95          |      352 / 384 / 60  | 264 / 281 / 143 |       342 / 344 / 81  | 301 / 303 / 235 |
-| 4:2:0 fast DCT    |      281 / 293 / 40  |  232 / 243 / 80 |       249 / 255 / 52  | 233 / 233 / 108 |
-| 4:2:0 progressive |        45 / 45 / 20  |    83 / 85 / 53 |         45 / 45 / 20  |    97 / 98 / 70 |
-| 4:2:0 arithmetic  |        24 / 25 / 18  |    25 / 23 / 20 |         33 / 34 / 24  |    31 / 31 / 27 |
-| lossless PSV1     |        32 / 21 / —   |    50 / 52 / —  |         37 / 24 / —   |    53 / 57 / —  |
+| 4:4:4 q95         |      305 / 284 / 36  |  311 / 236 / 99  |       150 / 141 / 35  |  189 / 149 / 94 |
+| 4:2:2 q95         |      382 / 375 / 44  | 358 / 283 / 116  |       201 / 188 / 44  | 227 / 179 / 108 |
+| 4:2:0 q95         |      460 / 456 / 52  | 422 / 336 / 123  |       247 / 232 / 49  | 268 / 208 / 105 |
+| gray q95          |      595 / 603 / 80  | 574 / 440 / 210  |       379 / 342 / 81  | 405 / 303 / 234 |
+| 4:2:0 fast DCT    |      493 / 466 / 54  | 444 / 344 / 127  |       269 / 254 / 52  | 308 / 233 / 108 |
+| 4:2:0 progressive |        83 / 66 / 29  |   130 / 119 / 81 |         53 / 45 / 20  |   106 / 98 / 70 |
+| 4:2:0 arithmetic  |        41 / 33 / 24  |     32 / 31 / 28 |         42 / 34 / 24  |    32 / 31 / 27 |
+| lossless PSV1     |        61 / 37 / —   |     89 / 79 / —  |         40 / 24 / —   |    61 / 57 / —  |
 
 The x86-64 column is the EPYC runner, the AArch64 column the Neoverse-N2
-runner.  vio matches libjpeg-turbo on AArch64 and in decompression, and
-compresses lossless JPEG about 1.5× faster.  Baseline compression on x86 is
-still behind on these runners: 5–10% with AVX2, 10–20% with SSE2.  Shared CI
-runners are noisy (the macOS x86-64 runner most of all), so differences of a
-few percent are within run-to-run variation.
+runner.  Sequential decompression is 20–40% faster than libjpeg-turbo (from
+Huffman decoding), progressive and arithmetic-coded decompression 3–10%,
+baseline compression up to 10%, arithmetic-coded compression 20–30% and
+lossless compression about 1.6×.  Shared CI runners are noisy (the macOS
+x86-64 runner most of all), so differences of a few percent, such as the
+SSE2 compression on that runner, are within run-to-run variation.
 
 On the Windows machine (MSVC, AVX2), same format:
 
 | Configuration     | Compress        | Decompress      |
 | ----------------- | --------------: | --------------: |
-| 4:4:4 q95         | 313 / 331 / 47  | 306 / 320 / 182 |
-| 4:2:2 q95         | 414 / 437 / 61  | 381 / 395 / 210 |
-| 4:2:0 q95         | 499 / 519 / 71  | 432 / 462 / 222 |
-| gray q95          | 610 / 630 / 106 | 517 / 540 / 371 |
-| 4:2:0 fast DCT    | 501 / 514 / 72  | 443 / 466 / 223 |
-| 4:2:0 progressive |   78 / 77 / 32  |  135 / 122 / 98 |
-| 4:2:0 arithmetic  |   41 / 40 / 30  |    42 / 39 / 37 |
-| lossless PSV1     |   55 / 33 / —   |   103 / 94 / —  |
+| 4:4:4 q95         | 357 / 340 / 48  | 376 / 325 / 185 |
+| 4:2:2 q95         | 471 / 445 / 61  | 464 / 405 / 211 |
+| 4:2:0 q95         | 569 / 533 / 72  | 532 / 467 / 223 |
+| gray q95          | 676 / 649 / 107 | 623 / 548 / 379 |
+| 4:2:0 fast DCT    | 579 / 529 / 73  | 550 / 470 / 228 |
+| 4:2:0 progressive |   83 / 78 / 32  | 139 / 125 / 100 |
+| 4:2:0 arithmetic  |   52 / 40 / 30  |    41 / 40 / 37 |
+| lossless PSV1     |   57 / 34 / —   |   104 / 95 / —  |
 
 ## Building and testing
 
