@@ -75,7 +75,7 @@ static void start_source(Src& src, const unsigned char* data, std::size_t len, i
   src.color = vio::ColorSpace::RGB;
   src.precision = precision;
   src.max_pixels = max_pixels;
-  src.start(std::span<const std::uint8_t>(data, len));
+  src.start(vio::span<const std::uint8_t>(data, len));
 }
 
 template <class Dst>

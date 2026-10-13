@@ -1,8 +1,6 @@
 // vio::jpeg - arithmetic entropy decoding.
 #pragma once
 
-#include <bit>
-
 #include "arith_table.hpp"
 #include "huff_decode.hpp"  // init_coef_bits / update_progression
 
@@ -147,7 +145,7 @@ class ArithDecoder final : public EntropyDecoder {
   VIO_INLINE int decode(Coder& q, std::uint8_t* st) {
     if (q.a < 0x8000L) {
       // All the shifts at once when no byte has to be read.
-      int n = q.a ? std::countl_zero(static_cast<std::uint32_t>(q.a)) - 16 : 64;
+      int n = q.a ? clz32(static_cast<std::uint32_t>(q.a)) - 16 : 64;
       if (VIO_LIKELY(q.ct >= n)) {
         q.a <<= n;
         q.ct -= n;

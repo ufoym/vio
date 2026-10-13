@@ -24,9 +24,14 @@ inline constexpr JLong FIX_0_298631336 = 2446, FIX_0_390180644 = 3196, FIX_0_541
                        FIX_1_961570560 = 16069, FIX_2_053119869 = 16819,
                        FIX_2_562915447 = 20995, FIX_3_072711026 = 25172;
 
-VIO_INLINE constexpr JLong descale(JLong x, int n) { return (x + (JLong(1) << (n - 1))) >> n; }
-VIO_INLINE constexpr JLong lsh(JLong x, int n) {
-  return static_cast<JLong>(static_cast<unsigned long long>(x) << n);
+// x / 2^n rounded, and x * 2^n, in the arithmetic type A.
+template <class A>
+VIO_INLINE constexpr A descale(A x, int n) {
+  return (x + (A(1) << (n - 1))) >> n;
+}
+template <class A>
+VIO_INLINE constexpr A lsh(A x, int n) {
+  return static_cast<A>(static_cast<std::make_unsigned_t<A>>(x) << n);
 }
 
 // E: DCT element type (DctElem<T>, or int16_t for 8-bit samples).
@@ -35,10 +40,6 @@ void fdct_islow(E* data) {
   // Intermediates: 32 bits are enough for 8-bit samples (and much faster
   // than 64-bit arithmetic on most targets).
   using A = std::conditional_t<kBits<T> == 8, int, JLong>;
-  auto descale = [](A x, int n) VIO_LAMBDA_INLINE { return (x + (A(1) << (n - 1))) >> n; };
-  auto lsh = [](A x, int n) VIO_LAMBDA_INLINE {
-    return static_cast<A>(static_cast<std::make_unsigned_t<A>>(x) << n);
-  };
   constexpr int CONST_BITS = 13;
   constexpr int PASS1_BITS = kBits<T> == 8 ? 2 : 1;
   E* dataptr = data;
@@ -53,11 +54,13 @@ void fdct_islow(E* data) {
     A tmp4 = dataptr[3] - dataptr[4];
     A tmp10 = tmp0 + tmp3, tmp13 = tmp0 - tmp3;
     A tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
-    dataptr[0] = static_cast<E>(lsh(tmp10 + tmp11, PASS1_BITS));
-    dataptr[4] = static_cast<E>(lsh(tmp10 - tmp11, PASS1_BITS));
+    dataptr[0] = static_cast<E>(lsh<A>(tmp10 + tmp11, PASS1_BITS));
+    dataptr[4] = static_cast<E>(lsh<A>(tmp10 - tmp11, PASS1_BITS));
     A z1 = (tmp12 + tmp13) * A(FIX_0_541196100);
-    dataptr[2] = static_cast<E>(descale(z1 + tmp13 * A(FIX_0_765366865), CONST_BITS - PASS1_BITS));
-    dataptr[6] = static_cast<E>(descale(z1 + tmp12 * -A(FIX_1_847759065), CONST_BITS - PASS1_BITS));
+    dataptr[2] =
+        static_cast<E>(descale<A>(z1 + tmp13 * A(FIX_0_765366865), CONST_BITS - PASS1_BITS));
+    dataptr[6] =
+        static_cast<E>(descale<A>(z1 + tmp12 * -A(FIX_1_847759065), CONST_BITS - PASS1_BITS));
     z1 = tmp4 + tmp7;
     A z2 = tmp5 + tmp6, z3 = tmp4 + tmp6, z4 = tmp5 + tmp7;
     A z5 = (z3 + z4) * A(FIX_1_175875602);
@@ -71,10 +74,10 @@ void fdct_islow(E* data) {
     z4 = z4 * -A(FIX_0_390180644);
     z3 += z5;
     z4 += z5;
-    dataptr[7] = static_cast<E>(descale(tmp4 + z1 + z3, CONST_BITS - PASS1_BITS));
-    dataptr[5] = static_cast<E>(descale(tmp5 + z2 + z4, CONST_BITS - PASS1_BITS));
-    dataptr[3] = static_cast<E>(descale(tmp6 + z2 + z3, CONST_BITS - PASS1_BITS));
-    dataptr[1] = static_cast<E>(descale(tmp7 + z1 + z4, CONST_BITS - PASS1_BITS));
+    dataptr[7] = static_cast<E>(descale<A>(tmp4 + z1 + z3, CONST_BITS - PASS1_BITS));
+    dataptr[5] = static_cast<E>(descale<A>(tmp5 + z2 + z4, CONST_BITS - PASS1_BITS));
+    dataptr[3] = static_cast<E>(descale<A>(tmp6 + z2 + z3, CONST_BITS - PASS1_BITS));
+    dataptr[1] = static_cast<E>(descale<A>(tmp7 + z1 + z4, CONST_BITS - PASS1_BITS));
     dataptr += DCTSIZE;
   }
   dataptr = data;
@@ -89,13 +92,13 @@ void fdct_islow(E* data) {
     A tmp4 = dataptr[DCTSIZE * 3] - dataptr[DCTSIZE * 4];
     A tmp10 = tmp0 + tmp3, tmp13 = tmp0 - tmp3;
     A tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
-    dataptr[DCTSIZE * 0] = static_cast<E>(descale(tmp10 + tmp11, PASS1_BITS));
-    dataptr[DCTSIZE * 4] = static_cast<E>(descale(tmp10 - tmp11, PASS1_BITS));
+    dataptr[DCTSIZE * 0] = static_cast<E>(descale<A>(tmp10 + tmp11, PASS1_BITS));
+    dataptr[DCTSIZE * 4] = static_cast<E>(descale<A>(tmp10 - tmp11, PASS1_BITS));
     A z1 = (tmp12 + tmp13) * A(FIX_0_541196100);
     dataptr[DCTSIZE * 2] =
-        static_cast<E>(descale(z1 + tmp13 * A(FIX_0_765366865), CONST_BITS + PASS1_BITS));
+        static_cast<E>(descale<A>(z1 + tmp13 * A(FIX_0_765366865), CONST_BITS + PASS1_BITS));
     dataptr[DCTSIZE * 6] =
-        static_cast<E>(descale(z1 + tmp12 * -A(FIX_1_847759065), CONST_BITS + PASS1_BITS));
+        static_cast<E>(descale<A>(z1 + tmp12 * -A(FIX_1_847759065), CONST_BITS + PASS1_BITS));
     z1 = tmp4 + tmp7;
     A z2 = tmp5 + tmp6, z3 = tmp4 + tmp6, z4 = tmp5 + tmp7;
     A z5 = (z3 + z4) * A(FIX_1_175875602);
@@ -109,11 +112,56 @@ void fdct_islow(E* data) {
     z4 = z4 * -A(FIX_0_390180644);
     z3 += z5;
     z4 += z5;
-    dataptr[DCTSIZE * 7] = static_cast<E>(descale(tmp4 + z1 + z3, CONST_BITS + PASS1_BITS));
-    dataptr[DCTSIZE * 5] = static_cast<E>(descale(tmp5 + z2 + z4, CONST_BITS + PASS1_BITS));
-    dataptr[DCTSIZE * 3] = static_cast<E>(descale(tmp6 + z2 + z3, CONST_BITS + PASS1_BITS));
-    dataptr[DCTSIZE * 1] = static_cast<E>(descale(tmp7 + z1 + z4, CONST_BITS + PASS1_BITS));
+    dataptr[DCTSIZE * 7] = static_cast<E>(descale<A>(tmp4 + z1 + z3, CONST_BITS + PASS1_BITS));
+    dataptr[DCTSIZE * 5] = static_cast<E>(descale<A>(tmp5 + z2 + z4, CONST_BITS + PASS1_BITS));
+    dataptr[DCTSIZE * 3] = static_cast<E>(descale<A>(tmp6 + z2 + z3, CONST_BITS + PASS1_BITS));
+    dataptr[DCTSIZE * 1] = static_cast<E>(descale<A>(tmp7 + z1 + z4, CONST_BITS + PASS1_BITS));
     dataptr++;
+  }
+}
+
+// fdct_ifast() product: var * c / 256 (c = constant * 256).
+template <class E, class A>
+VIO_INLINE E ifast_mul(E var, A c) {
+  return static_cast<E>((A(var) * c) >> 8);
+}
+
+// One fdct_ifast() pass over the 8 vectors with element stride S, vectors D
+// apart, with products in A.
+template <int S, int D, class E, class A>
+VIO_INLINE void fdct_ifast_pass(E* data) {
+  constexpr A FIX_0_382683433 = 98, FIX_0_541196100 = 139, FIX_0_707106781 = 181,
+              FIX_1_306562965 = 334;
+  E* dataptr = data;
+  for (int ctr = DCTSIZE - 1; ctr >= 0; ctr--) {
+    E tmp0 = dataptr[0 * S] + dataptr[7 * S];
+    E tmp7 = dataptr[0 * S] - dataptr[7 * S];
+    E tmp1 = dataptr[1 * S] + dataptr[6 * S];
+    E tmp6 = dataptr[1 * S] - dataptr[6 * S];
+    E tmp2 = dataptr[2 * S] + dataptr[5 * S];
+    E tmp5 = dataptr[2 * S] - dataptr[5 * S];
+    E tmp3 = dataptr[3 * S] + dataptr[4 * S];
+    E tmp4 = dataptr[3 * S] - dataptr[4 * S];
+    E tmp10 = tmp0 + tmp3, tmp13 = tmp0 - tmp3;
+    E tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
+    dataptr[0 * S] = tmp10 + tmp11;
+    dataptr[4 * S] = tmp10 - tmp11;
+    E z1 = ifast_mul<E, A>(tmp12 + tmp13, FIX_0_707106781);
+    dataptr[2 * S] = tmp13 + z1;
+    dataptr[6 * S] = tmp13 - z1;
+    tmp10 = tmp4 + tmp5;
+    tmp11 = tmp5 + tmp6;
+    tmp12 = tmp6 + tmp7;
+    E z5 = ifast_mul<E, A>(tmp10 - tmp12, FIX_0_382683433);
+    E z2 = ifast_mul<E, A>(tmp10, FIX_0_541196100) + z5;
+    E z4 = ifast_mul<E, A>(tmp12, FIX_1_306562965) + z5;
+    E z3 = ifast_mul<E, A>(tmp11, FIX_0_707106781);
+    E z11 = tmp7 + z3, z13 = tmp7 - z3;
+    dataptr[5 * S] = z13 + z2;
+    dataptr[3 * S] = z13 - z2;
+    dataptr[1 * S] = z11 + z4;
+    dataptr[7 * S] = z11 - z4;
+    dataptr += D;
   }
 }
 
@@ -121,45 +169,8 @@ template <class T, class E = DctElem<T>>
 void fdct_ifast(E* data) {
   // 32-bit products are exact for 8-bit samples (|var * c| < 2^23).
   using A = std::conditional_t<kBits<T> == 8, int, JLong>;
-  constexpr A FIX_0_382683433 = 98, FIX_0_541196100 = 139, FIX_0_707106781 = 181,
-              FIX_1_306562965 = 334;
-  auto mul = [](E var, A c) VIO_LAMBDA_INLINE { return static_cast<E>((A(var) * c) >> 8); };
-  // One pass over the 8 vectors with element stride S, vectors D apart.
-  auto pass = [&]<int S, int D>() VIO_LAMBDA_INLINE {
-    E* dataptr = data;
-    for (int ctr = DCTSIZE - 1; ctr >= 0; ctr--) {
-      E tmp0 = dataptr[0 * S] + dataptr[7 * S];
-      E tmp7 = dataptr[0 * S] - dataptr[7 * S];
-      E tmp1 = dataptr[1 * S] + dataptr[6 * S];
-      E tmp6 = dataptr[1 * S] - dataptr[6 * S];
-      E tmp2 = dataptr[2 * S] + dataptr[5 * S];
-      E tmp5 = dataptr[2 * S] - dataptr[5 * S];
-      E tmp3 = dataptr[3 * S] + dataptr[4 * S];
-      E tmp4 = dataptr[3 * S] - dataptr[4 * S];
-      E tmp10 = tmp0 + tmp3, tmp13 = tmp0 - tmp3;
-      E tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
-      dataptr[0 * S] = tmp10 + tmp11;
-      dataptr[4 * S] = tmp10 - tmp11;
-      E z1 = mul(tmp12 + tmp13, FIX_0_707106781);
-      dataptr[2 * S] = tmp13 + z1;
-      dataptr[6 * S] = tmp13 - z1;
-      tmp10 = tmp4 + tmp5;
-      tmp11 = tmp5 + tmp6;
-      tmp12 = tmp6 + tmp7;
-      E z5 = mul(tmp10 - tmp12, FIX_0_382683433);
-      E z2 = mul(tmp10, FIX_0_541196100) + z5;
-      E z4 = mul(tmp12, FIX_1_306562965) + z5;
-      E z3 = mul(tmp11, FIX_0_707106781);
-      E z11 = tmp7 + z3, z13 = tmp7 - z3;
-      dataptr[5 * S] = z13 + z2;
-      dataptr[3 * S] = z13 - z2;
-      dataptr[1 * S] = z11 + z4;
-      dataptr[7 * S] = z11 - z4;
-      dataptr += D;
-    }
-  };
-  pass.template operator()<1, DCTSIZE>();
-  pass.template operator()<DCTSIZE, 1>();
+  fdct_ifast_pass<1, DCTSIZE, E, A>(data);
+  fdct_ifast_pass<DCTSIZE, 1, E, A>(data);
 }
 
 VIO_NO_FP_CONTRACT inline void fdct_float(float* data) {

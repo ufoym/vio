@@ -1,6 +1,6 @@
 # vio
 
-Header-only C++20 image I/O.  The JPEG codec supports sequential,
+Header-only C++17 image I/O.  The JPEG codec supports sequential,
 progressive, arithmetic-coded and lossless JPEG with 8- to 16-bit samples,
 lossless transforms, and SIMD acceleration for x86 (MMX through AVX2), Arm
 NEON, PowerPC AltiVec, Loongson MMI and RISC-V Vector.  It is faster than
@@ -10,7 +10,8 @@ libjpeg-turbo in almost every configuration measured (see
 ## Using the library
 
 Add `include/` to the include path (or link the `vio::vio` CMake target) and
-include only the formats you need:
+include only the formats you need.  vio compiles as C++17 or later and needs
+no other compiler options or macros:
 
 | Header           | API                                                      |
 | ---------------- | -------------------------------------------------------- |
@@ -24,13 +25,14 @@ include only the formats you need:
 The packed-pixel readers and writers implement `vio::ImageReader<T>` /
 `vio::ImageWriter<T>` (`vio/core.hpp`), which exchange rows of
 samples; `T` is `uint8_t`, `int16_t` or `uint16_t` for 8-, 12- and 16-bit
-data.
+data.  Encoded files are passed as `vio::span<const uint8_t>`, which converts
+from `std::vector`, `std::array`, `{pointer, size}` and, in C++20, `std::span`.
 
 ## Features
 
 Compared with libjpeg-turbo 3.2 and IJG libjpeg 10.  All three run on any
 architecture through portable code; libjpeg, written in plain ANSI C, builds
-with the widest range of compilers and systems, while vio needs a C++20
+with the widest range of compilers and systems, while vio needs a C++17
 compiler.
 
 | Feature                                                    | vio | libjpeg-turbo | libjpeg |
@@ -47,7 +49,7 @@ compiler.
 | Toolchains: Linux GCC, Clang                               |  ✓  |       ✓       |    ✓    |
 | Toolchains: macOS Apple Clang                              |  ✓  |       ✓       |    ✓    |
 | Toolchains: Windows MSVC, clang-cl                         |  ✓  |       ✓       |    ✓    |
-| Toolchains: compilers without C++20                        |  ✗  |       ✓       |    ✓    |
+| Toolchains: compilers without C++17                        |  ✗  |       ✓       |    ✓    |
 | JPEG: baseline and extended sequential                     |  ✓  |       ✓       |    ✓    |
 | JPEG: progressive                                          |  ✓  |       ✓       |    ✓    |
 | JPEG: arithmetic coding                                    |  ✓  |       ✓       |    ✓    |
@@ -225,7 +227,8 @@ Other presets: `debug`, `x64` (macOS x86-64 under Rosetta), `a32` (AArch32
 NEON code paths on an AArch64 host).  Every build tree lives under `build/`.
 Options: `VIO_BUILD_TESTS` (on when vio is the top-level project),
 `VIO_TEST_SCALAR` (also test every program with SIMD disabled, as the
-`-scalar` variant).
+`-scalar` variant), `CMAKE_CXX_STANDARD` (17 by default; CI also builds the
+tests as C++20 with GCC and MSVC).
 
 On Windows, configure from a Visual Studio developer command prompt with
 Ninja (add `-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl` for
@@ -253,8 +256,9 @@ cmake --build build/native --target tjbench-libjpeg
 
 ```
 include/vio/
-├── core.hpp                          shared by all codecs: color spaces,
-│                                     vio::Error, row reader/writer interfaces
+├── core.hpp                          shared by all codecs: vio::span, color
+│                                     spaces, vio::Error, row reader/writer
+│                                     interfaces
 ├── bmp.hpp gif.hpp ppm.hpp targa.hpp one file per format; needs only core.hpp
 ├── png.hpp                           own DEFLATE (zlib-identical output) and
 │                                     checksums

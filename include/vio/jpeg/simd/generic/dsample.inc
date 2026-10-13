@@ -33,6 +33,15 @@ VIO_INLINE void store_pairs(std::uint8_t* out, V::T even_lo, V::T odd_lo, V::T e
   V::storeu_lanes(out + 16, 32, V::interleave_u8(even_hi, odd_hi));
 }
 
+// Column sums 3 row + adj (16-bit) of the low and high halves, adj being the
+// row above or below.
+VIO_INLINE V::T colsum_lo(V::T row, V::T adj, V::T three) {
+  return V::add_16(V::mullo_16(V::widenlo_u8(row), three), V::widenlo_u8(adj));
+}
+VIO_INLINE V::T colsum_hi(V::T row, V::T adj, V::T three) {
+  return V::add_16(V::mullo_16(V::widenhi_u8(row), three), V::widenhi_u8(adj));
+}
+
 }  // namespace detail_us
 
 // out[2i] = (3 in[i] + in[i-1] + 1) >> 2, out[2i+1] = (3 in[i] + in[i+1] + 2) >> 2
@@ -66,12 +75,6 @@ inline void h2v2_fancy_upsample(int max_v_samp_factor, unsigned downsampled_widt
   alignas(32) std::uint8_t tmp0[N + 2], tmp1[N + 2];
   const V::T three = V::set1_16(3), seven = V::set1_16(7),
              eight = V::set1_16(8);
-  auto colsum_lo = [&](V::T near, V::T far) VIO_LAMBDA_INLINE {
-    return V::add_16(V::mullo_16(V::widenlo_u8(near), three), V::widenlo_u8(far));
-  };
-  auto colsum_hi = [&](V::T near, V::T far) VIO_LAMBDA_INLINE {
-    return V::add_16(V::mullo_16(V::widenhi_u8(near), three), V::widenhi_u8(far));
-  };
   for (int inrow = 0, outrow = 0; outrow < max_v_samp_factor; inrow++) {
     for (int v = 0; v < 2; v++) {
       const std::uint8_t* inptr0 = input_data[inrow];
@@ -80,12 +83,16 @@ inline void h2v2_fancy_upsample(int max_v_samp_factor, unsigned downsampled_widt
       for (unsigned col = 0; col < downsampled_width; col += N, outptr += 2 * N) {
         Taps a = load_taps(inptr0, col, downsampled_width, tmp0);
         Taps b = load_taps(inptr1, col, downsampled_width, tmp1);
-        V::T s_lo = V::mullo_16(colsum_lo(a.cur, b.cur), three);
-        V::T s_hi = V::mullo_16(colsum_hi(a.cur, b.cur), three);
-        V::T e_lo = V::srli_16<4>(V::add_16(V::add_16(s_lo, colsum_lo(a.prev, b.prev)), eight));
-        V::T e_hi = V::srli_16<4>(V::add_16(V::add_16(s_hi, colsum_hi(a.prev, b.prev)), eight));
-        V::T o_lo = V::srli_16<4>(V::add_16(V::add_16(s_lo, colsum_lo(a.next, b.next)), seven));
-        V::T o_hi = V::srli_16<4>(V::add_16(V::add_16(s_hi, colsum_hi(a.next, b.next)), seven));
+        V::T s_lo = V::mullo_16(colsum_lo(a.cur, b.cur, three), three);
+        V::T s_hi = V::mullo_16(colsum_hi(a.cur, b.cur, three), three);
+        V::T e_lo =
+            V::srli_16<4>(V::add_16(V::add_16(s_lo, colsum_lo(a.prev, b.prev, three)), eight));
+        V::T e_hi =
+            V::srli_16<4>(V::add_16(V::add_16(s_hi, colsum_hi(a.prev, b.prev, three)), eight));
+        V::T o_lo =
+            V::srli_16<4>(V::add_16(V::add_16(s_lo, colsum_lo(a.next, b.next, three)), seven));
+        V::T o_hi =
+            V::srli_16<4>(V::add_16(V::add_16(s_hi, colsum_hi(a.next, b.next, three)), seven));
         store_pairs(outptr, e_lo, o_lo, e_hi, o_hi);
       }
     }

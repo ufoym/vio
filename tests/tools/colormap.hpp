@@ -7,7 +7,7 @@
 
 namespace cli {
 
-inline std::vector<std::vector<int>> read_color_map(std::span<const std::uint8_t> file,
+inline std::vector<std::vector<int>> read_color_map(vio::span<const std::uint8_t> file,
                                                     int precision) {
   if (precision != 8 && precision != 12) VIO_FAIL("Unsupported JPEG data precision %d", precision);
   const int maxj = (1 << precision) - 1;

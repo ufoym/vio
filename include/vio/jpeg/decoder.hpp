@@ -12,8 +12,6 @@
 //   dec.finish();
 #pragma once
 
-#include <span>
-
 #include "detail/decompress.hpp"
 
 namespace vio::jpeg {
@@ -43,7 +41,7 @@ struct Header {
 class Decoder {
  public:
   Decoder() = default;
-  explicit Decoder(std::span<const std::uint8_t> data) { open(data); }
+  explicit Decoder(span<const std::uint8_t> data) { open(data); }
 
   Decoder(const Decoder&) = delete;
   Decoder& operator=(const Decoder&) = delete;
@@ -59,7 +57,7 @@ class Decoder {
   // Attach a JPEG datastream and parse its header.  The data must stay alive
   // until decoding completes.  Returns false for a tables-only datastream
   // (whose tables are retained for a subsequent abbreviated image).
-  bool open(std::span<const std::uint8_t> data, bool require_image = true) {
+  bool open(span<const std::uint8_t> data, bool require_image = true) {
     d_.st.marker_list.clear();
     d_.set_source(data.data(), data.size());
     return d_.read_header(require_image);
@@ -191,7 +189,7 @@ class Decoder {
   // Reassembles an ICC profile from saved APP2 markers (requires
   // save_markers(M_APP2) before open()).  Returns an empty vector if none.
   std::vector<std::uint8_t> icc_profile() {
-    constexpr int OVERHEAD = 14;
+    static constexpr int OVERHEAD = 14;
     auto is_icc = [](const SavedMarker& m) {
       static const char id[12] = {'I', 'C', 'C', '_', 'P', 'R', 'O', 'F', 'I', 'L', 'E', 0};
       return m.marker == M_APP2 && m.data.size() >= OVERHEAD &&

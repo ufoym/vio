@@ -148,7 +148,7 @@ VIO_INLINE void idct_islow_pass(T* in) {
 // Fast (AAN) integer IDCT pass, in 16 bits.
 VIO_INLINE void idct_ifast_pass(T* in) {
   const T k1414 = V::set1_16(362 << IFAST_SHIFT), k1847 = V::set1_16(473 << IFAST_SHIFT),
-          km1613 = V::set1_16(-(669 - 256) << IFAST_SHIFT),
+          km1613 = V::set1_16(-((669 - 256) << IFAST_SHIFT)),
           k1082 = V::set1_16(277 << IFAST_SHIFT);
   T tmp10 = V::add_16(in[0], in[4]), tmp11 = V::sub_16(in[0], in[4]);
   T tmp13 = V::add_16(in[2], in[6]);

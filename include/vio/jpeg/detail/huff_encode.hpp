@@ -4,7 +4,6 @@
 #include <climits>
 #include <utility>
 #if defined(_MSC_VER) && !defined(__clang__)
-#include <bit>
 #include <intrin.h>
 #endif
 
@@ -41,7 +40,10 @@ VIO_INLINE int ctz64(std::uint64_t x) {  // x != 0
   _BitScanForward64(&i, x);
   return static_cast<int>(i);
 #else
-  return std::countr_zero(x);
+  unsigned long i;
+  if (_BitScanForward(&i, static_cast<std::uint32_t>(x))) return static_cast<int>(i);
+  _BitScanForward(&i, static_cast<std::uint32_t>(x >> 32));
+  return static_cast<int>(i) + 32;
 #endif
 }
 #else
@@ -296,26 +298,33 @@ class HuffEncoder final : public EntropyEncoder {
     cs_.dest.next = buffer;
   }
 
-  void encode_one_block(const Coef* block, int last_dc_val, const CDerivedTable& dctbl,
-                        const CDerivedTable& actbl) {
-    vio::jpeg::simd::HuffBitWriter w(bits_, raw_next_);
-    const int max_coef_bits = cs_.data_precision + 2;
-    auto put_bits = [&](std::uint64_t code, int size) VIO_LAMBDA_INLINE { w.put_bits(code, size); };
-    auto put_code = [&](int temp, int nb, unsigned code, int size) VIO_LAMBDA_INLINE {
+  using BitWriter = vio::jpeg::simd::HuffBitWriter;
+
+  // encode_one_block()'s operations are objects holding references to its
+  // locals, as lambdas capturing by reference would (MSVC force-inlines
+  // lambdas only from C++20 on); in this shape GCC keeps the block pointer
+  // and the coder state in registers.
+
+  // Writers bound to the bit writer.
+  struct PutBits {
+    BitWriter& w;
+    VIO_INLINE void operator()(std::uint64_t code, int size) const { w.put_bits(code, size); }
+  };
+  struct PutCode {
+    BitWriter& w;
+    VIO_INLINE void operator()(int temp, int nb, unsigned code, int size) const {
       w.put_code(code, size, static_cast<unsigned>(temp) & ((1u << nb) - 1), nb);
-    };
-
-    int temp = block[0] - last_dc_val;
-    int nb = temp >> (CHAR_BIT * sizeof(int) - 1);
-    temp += nb;
-    nb ^= temp;
-    nb = nbits(static_cast<unsigned>(nb));
-    if (nb > max_coef_bits + 1)
-      VIO_FAIL("DCT coefficient (lossy) or spatial difference (lossless) out of range");
-    put_code(temp, nb, dctbl.ehufco[nb], dctbl.ehufsi[nb]);
-
-    int r = 0;
-    auto ac = [&](int temp) VIO_LAMBDA_INLINE {
+    }
+  };
+  // Codes an AC coefficient after the zero run r (in units of 16), which a
+  // zero coefficient only extends.
+  struct AcCoder {
+    int& r;
+    const int& max_coef_bits;
+    const PutBits& put_bits;
+    const PutCode& put_code;
+    const CDerivedTable& actbl;
+    VIO_INLINE void operator()(int temp) const {
       if (temp == 0) {
         r += 16;
       } else {
@@ -333,11 +342,43 @@ class HuffEncoder final : public EntropyEncoder {
         put_code(temp, nb, actbl.ehufco[r], actbl.ehufsi[r]);
         r = 0;
       }
-    };
+    }
+  };
+  // Codes the coefficient at zig-zag position K + 1.
+  struct AcAt {
+    const AcCoder& ac;
+    const Coef* const& block;
+    template <class K>
+    VIO_INLINE void operator()(K) const {
+      ac(block[natural_order[K::value + 1]]);
+    }
+  };
+  // Calls f(std::integral_constant<std::size_t, K>{}) for each K, unrolled.
+  template <class F, std::size_t... K>
+  static VIO_INLINE void for_each_index(const F& f, std::index_sequence<K...>) {
+    (f(std::integral_constant<std::size_t, K>{}), ...);
+  }
+
+  void encode_one_block(const Coef* block, int last_dc_val, const CDerivedTable& dctbl,
+                        const CDerivedTable& actbl) {
+    BitWriter w(bits_, raw_next_);
+    const int max_coef_bits = cs_.data_precision + 2;
+    const PutBits put_bits{w};
+    const PutCode put_code{w};
+
+    int temp = block[0] - last_dc_val;
+    int nb = temp >> (CHAR_BIT * sizeof(int) - 1);
+    temp += nb;
+    nb ^= temp;
+    nb = nbits(static_cast<unsigned>(nb));
+    if (nb > max_coef_bits + 1)
+      VIO_FAIL("DCT coefficient (lossy) or spatial difference (lossless) out of range");
+    put_code(temp, nb, dctbl.ehufco[nb], dctbl.ehufsi[nb]);
+
+    int r = 0;
+    const AcCoder ac{r, max_coef_bits, put_bits, put_code, actbl};
     // Fully unrolled: every zigzag position becomes a constant offset.
-    [&]<std::size_t... K>(std::index_sequence<K...>) VIO_LAMBDA_INLINE {
-      (ac(block[natural_order[K + 1]]), ...);
-    }(std::make_index_sequence<DCTSIZE2 - 1>{});
+    for_each_index(AcAt{ac, block}, std::make_index_sequence<DCTSIZE2 - 1>{});
     if (r > 0) put_bits(actbl.ehufco[0], actbl.ehufsi[0]);
 
     bits_ = w.state();

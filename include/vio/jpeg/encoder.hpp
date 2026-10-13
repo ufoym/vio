@@ -8,8 +8,6 @@
 //   std::vector<uint8_t> jpeg = enc.finish();
 #pragma once
 
-#include <span>
-
 #include "detail/compress.hpp"
 
 namespace vio::jpeg {
@@ -102,10 +100,10 @@ class Encoder {
   // ---- compression ----------------------------------------------------------
   void start(bool write_all_tables = true) { c_.start_compress(write_all_tables); }
 
-  void write_marker(int marker, std::span<const std::uint8_t> data) {
+  void write_marker(int marker, span<const std::uint8_t> data) {
     c_.write_marker(marker, data.data(), static_cast<unsigned>(data.size()));
   }
-  void write_icc_profile(std::span<const std::uint8_t> icc) {
+  void write_icc_profile(span<const std::uint8_t> icc) {
     c_.write_icc_profile(icc.data(), static_cast<unsigned>(icc.size()));
   }
 

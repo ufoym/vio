@@ -150,7 +150,7 @@ class Inflater {
   // Decompresses `src` and appends the result to `out`.  Returns the number
   // of input bytes consumed.  If `limit` is nonzero, decoding stops with an
   // error once the output would exceed it.
-  std::size_t decompress(std::span<const std::uint8_t> src, std::vector<std::uint8_t>& out,
+  std::size_t decompress(span<const std::uint8_t> src, std::vector<std::uint8_t>& out,
                          std::size_t limit = 0) {
     in_ = src.data();
     end_ = in_ + src.size();
@@ -377,7 +377,7 @@ class Inflater {
 };
 
 // uncompress(): one-shot zlib-format decompression.
-inline std::vector<std::uint8_t> uncompress(std::span<const std::uint8_t> src,
+inline std::vector<std::uint8_t> uncompress(span<const std::uint8_t> src,
                                             std::size_t limit = 0) {
   std::vector<std::uint8_t> out;
   Inflater().decompress(src, out, limit);
@@ -1550,7 +1550,7 @@ class Deflater {
 };
 
 // compress2(): one-shot zlib-format compression.
-inline std::vector<std::uint8_t> compress(std::span<const std::uint8_t> src,
+inline std::vector<std::uint8_t> compress(span<const std::uint8_t> src,
                                           int level = kDefaultCompression) {
   Deflater d(level);
   std::vector<std::uint8_t> out(Deflater::bound(src.size()));
@@ -1841,7 +1841,7 @@ class Decoder {
   bool has_icc = false;
 
   // Parses the signature and IHDR chunk (spng_get_ihdr()).
-  void read_header(std::span<const std::uint8_t> file) {
+  void read_header(span<const std::uint8_t> file) {
     using namespace detail;
     file_ = file;
     if (file.size() < 8 || std::memcmp(file.data(), signature, 8) != 0) fail("invalid signature");
@@ -1857,7 +1857,7 @@ class Decoder {
   // Parses the remaining chunks and decodes the image.  Samples are stored
   // in native PNG layout, rows of row_bytes() bytes, 16-bit samples in host
   // byte order, sub-byte samples packed MSB first.
-  void decode(std::span<const std::uint8_t> file, unsigned long long max_pixels = 0) {
+  void decode(span<const std::uint8_t> file, unsigned long long max_pixels = 0) {
     if (!have_header_ || file.data() != file_.data()) read_header(file);
     if (max_pixels && static_cast<unsigned long long>(header.width) * header.height > max_pixels)
       VIO_FAIL("Maximum supported image dimension is %u pixels",
@@ -1957,7 +1957,7 @@ class Decoder {
     if (n == 0 || n >= 80 || n + 2 > len) fail("invalid iCCP profile name");
     if (d[n + 1] != 0) fail("invalid iCCP compression method");
     try {
-      icc_profile = zlib::uncompress(std::span(d + n + 2, len - n - 2));
+      icc_profile = zlib::uncompress(span<const std::uint8_t>(d + n + 2, len - n - 2));
       has_icc = true;
     } catch (const Error&) {
       fail("inflate error");
@@ -2060,7 +2060,7 @@ class Decoder {
     }
   }
 
-  std::span<const std::uint8_t> file_;
+  span<const std::uint8_t> file_;
   std::size_t pos_ = 0;
   bool have_header_ = false;
   std::size_t row_bytes_ = 0;
@@ -2231,7 +2231,7 @@ class Writer : public ImageWriter<T> {
   using PngSample = std::conditional_t<sizeof(T) == 1, std::uint8_t, std::uint16_t>;
 
  public:
-  void set_icc_profile(std::span<const std::uint8_t> icc) override {
+  void set_icc_profile(span<const std::uint8_t> icc) override {
     if (icc.empty()) VIO_FAIL("Empty input file");
     writer_.icc_profile.assign(icc.begin(), icc.end());
   }

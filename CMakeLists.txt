@@ -4,7 +4,10 @@ project(vio VERSION 0.1.0 LANGUAGES C CXX)
 # vio is header-only: the library itself is the `vio` INTERFACE target.
 # tests/ builds the conformance test suite and the programs it runs.
 
-set(CMAKE_CXX_STANDARD 20)
+# vio needs C++17; -DCMAKE_CXX_STANDARD=20 builds the tests as C++20.
+if(NOT CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 17)
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release)
@@ -15,7 +18,7 @@ add_library(vio::vio ALIAS vio)
 target_include_directories(vio INTERFACE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
-target_compile_features(vio INTERFACE cxx_std_20)
+target_compile_features(vio INTERFACE cxx_std_17)
 
 set(VIO_TARGET_ARCH ${CMAKE_SYSTEM_PROCESSOR})
 if(CMAKE_OSX_ARCHITECTURES)

@@ -1,8 +1,6 @@
 // vio::jpeg - arithmetic entropy encoding.
 #pragma once
 
-#include <bit>
-
 #include "arith_table.hpp"
 #include "huff_encode.hpp"
 
@@ -189,7 +187,7 @@ class ArithEncoder final : public EntropyEncoder {
     }
     // Renormalize: shift a (0 < a < 0x8000) and c left until a >= 0x8000,
     // outputting a byte each time ct counts down to 0.
-    int n = std::countl_zero(static_cast<std::uint32_t>(k.a)) - 16;
+    int n = clz32(static_cast<std::uint32_t>(k.a)) - 16;
     k.a <<= n;
     if (VIO_LIKELY(n < k.ct)) {
       k.c <<= n;

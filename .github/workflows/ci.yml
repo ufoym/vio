@@ -39,6 +39,7 @@ jobs:
           # timeout: job limit in minutes (default 120); test_timeout: per-test
           # limit in seconds (default 1800)
           # runs: one per line, "label|VAR=value ...|extra ctest args"
+          # std: C++ standard of the build (default: CMakeLists.txt's, 17)
           - name: linux-x64-gcc
             os: ubuntu-24.04
             runs: |
@@ -48,6 +49,11 @@ jobs:
             os: ubuntu-24.04
             cc: clang
             cxx: clang++
+            runs: |
+              avx2||
+          - name: linux-x64-gcc-c++20
+            os: ubuntu-24.04
+            std: 20
             runs: |
               avx2||
           - name: linux-i686
@@ -85,6 +91,14 @@ jobs:
             msvc: x64
             cc: clang-cl
             cxx: clang-cl
+            runs: |
+              avx2||
+          - name: windows-x64-msvc-c++20
+            os: windows-2025
+            msvc: x64
+            cc: cl
+            cxx: cl
+            std: 20
             runs: |
               avx2||
           - name: windows-x86-msvc
@@ -278,6 +292,7 @@ jobs:
               args+=(-DCMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/${{ matrix.emulator }})
             fi
           fi
+          [ -n "${{ matrix.std }}" ] && args+=(-DCMAKE_CXX_STANDARD=${{ matrix.std }})
           [ "$RUNNER_OS" = Windows ] && args+=(-G Ninja)
           [ -z "$CC" ] && unset CC CXX
           cmake -S . -B build/ci "${args[@]}"

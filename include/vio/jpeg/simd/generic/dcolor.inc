@@ -92,6 +92,19 @@ VIO_INLINE void emit16(std::uint8_t* out, std::ptrdiff_t lane_stride, V::T ye, V
   store_pixels<PS>(out, lane_stride, pe, po);
 }
 
+// One output row of merged_upsample(): 32 pixels per lane from the luma at
+// yp and the chroma terms lo/hi; only cols of them are stored (via tmp).
+template <int R, int G, int B, int PS>
+VIO_INLINE void merged_row(const std::uint8_t* yp, std::uint8_t* out, int cols, const Chroma& lo,
+                           const Chroma& hi, std::uint8_t* tmp) {
+  constexpr int N = 32 * V::kLanes;
+  V::T ya = V::loadu_lanes(yp, 32), yb = V::loadu_lanes(yp + 16, 32);
+  std::uint8_t* dst = cols < N ? tmp : out;
+  emit16<R, G, B, PS>(dst, 32 * PS, V::even_u8(ya), V::odd_u8(ya), lo, lo);
+  emit16<R, G, B, PS>(dst + 16 * PS, 32 * PS, V::even_u8(yb), V::odd_u8(yb), hi, hi);
+  if (cols < N) std::memcpy(out, tmp, static_cast<std::size_t>(cols) * PS);
+}
+
 }  // namespace detail_dc
 
 template <int R, int G, int B, int PS>
@@ -137,21 +150,13 @@ void merged_upsample(unsigned output_width, std::uint8_t*** input_buf, unsigned 
   const std::uint8_t* inptr2 = input_buf[2][in_row_group_ctr];
   std::uint8_t* outptr0 = output_buf[0];
   std::uint8_t* outptr1 = V2 ? output_buf[1] : nullptr;
-  auto row = [&](const std::uint8_t* yp, std::uint8_t* out, int cols, const Chroma& lo,
-                 const Chroma& hi) VIO_LAMBDA_INLINE {
-    V::T ya = V::loadu_lanes(yp, 32), yb = V::loadu_lanes(yp + 16, 32);
-    std::uint8_t* dst = cols < N ? tmp : out;
-    emit16<R, G, B, PS>(dst, 32 * PS, V::even_u8(ya), V::odd_u8(ya), lo, lo);
-    emit16<R, G, B, PS>(dst + 16 * PS, 32 * PS, V::even_u8(yb), V::odd_u8(yb), hi, hi);
-    if (cols < N) std::memcpy(out, tmp, static_cast<std::size_t>(cols) * PS);
-  };
   for (int cols = static_cast<int>(output_width); cols > 0; cols -= N) {
     V::T cb = V::loadu(inptr1), cr = V::loadu(inptr2);
     Chroma lo = chroma(V::add_16(V::widenlo_u8(cb), m128), V::add_16(V::widenlo_u8(cr), m128));
     Chroma hi = chroma(V::add_16(V::widenhi_u8(cb), m128), V::add_16(V::widenhi_u8(cr), m128));
-    row(inptr00, outptr0, cols, lo, hi);
+    merged_row<R, G, B, PS>(inptr00, outptr0, cols, lo, hi, tmp);
     if constexpr (V2) {
-      row(inptr01, outptr1, cols, lo, hi);
+      merged_row<R, G, B, PS>(inptr01, outptr1, cols, lo, hi, tmp);
       inptr01 += N;
       outptr1 += N * PS;
     }

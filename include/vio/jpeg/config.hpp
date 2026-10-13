@@ -7,20 +7,15 @@
 #if defined(_MSC_VER) && !defined(__clang__)
 #define VIO_INLINE __forceinline
 #define VIO_NOINLINE __declspec(noinline)
-#if defined(__has_cpp_attribute)
-#if __has_cpp_attribute(msvc::forceinline)
-#define VIO_LAMBDA_INLINE [[msvc::forceinline]]
-#endif
-#endif
-#ifndef VIO_LAMBDA_INLINE
-#define VIO_LAMBDA_INLINE
-#endif
+// No VIO_LAMBDA_INLINE: before C++20, MSVC can force-inline lambdas only with
+// /Zc:lambda.  Code that MSVC compiles uses VIO_INLINE functions instead.
 #define VIO_RESTRICT __restrict
 #define VIO_LIKELY(x) (x)
 #define VIO_UNLIKELY(x) (x)
 #else
 #define VIO_INLINE inline __attribute__((always_inline))
 #define VIO_NOINLINE __attribute__((noinline))
+// Only for code that MSVC never compiles (the NEON back end).
 #define VIO_LAMBDA_INLINE __attribute__((always_inline))
 #define VIO_RESTRICT __restrict__
 #define VIO_LIKELY(x) __builtin_expect(!!(x), 1)
@@ -106,7 +101,9 @@
 // Per-function instruction-set targets for the x86 kernels, so that SSE2 and
 // AVX2 code can be compiled without the corresponding -m flags and selected
 // at run time.  VIO_TARGET_PUSH_*() / VIO_TARGET_POP() bracket the kernel
-// definitions (MSVC needs no annotation).
+// definitions (MSVC needs no annotation).  Kernels use functions rather than
+// lambdas: before C++20, clang-cl parses function template bodies at the end
+// of the translation unit, where the pragma no longer reaches lambdas.
 #if defined(__clang__)
 #define VIO_TARGET_PUSH_(isa) \
   _Pragma(VIO_STR_(clang attribute push(__attribute__((target(isa))), apply_to = function)))

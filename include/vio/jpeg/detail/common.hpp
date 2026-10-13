@@ -11,6 +11,14 @@
 
 #include "../types.hpp"
 
+#if defined(_MSC_VER) && !defined(__clang__)
+#include <intrin.h>
+#if defined(_M_IX86) || defined(_M_X64)
+#include <isa_availability.h>
+extern "C" int __isa_available;  // CPU level detected by the C runtime
+#endif
+#endif
+
 namespace vio::jpeg::detail {
 
 // Sample containers: 8-bit samples use uint8_t, 9..12-bit samples use int16_t
@@ -51,6 +59,24 @@ VIO_INLINE constexpr I rshift(I x, int n) {
 template <class I>
 VIO_INLINE constexpr I lshift(I x, int n) {
   return static_cast<I>(static_cast<std::make_unsigned_t<I>>(x) << n);
+}
+
+// Number of leading zero bits of x (32 for x == 0).
+VIO_INLINE int clz32(std::uint32_t x) {
+#if defined(_MSC_VER) && !defined(__clang__) && (defined(_M_IX86) || defined(_M_X64))
+#if defined(__AVX2__)
+  return static_cast<int>(__lzcnt(x));
+#else
+  // lzcnt when the CPU has it: bsr also reads its destination register.
+  if (__isa_available >= __ISA_AVAILABLE_AVX2) return static_cast<int>(__lzcnt(x));
+  unsigned long i;
+  return _BitScanReverse(&i, x) ? 31 - static_cast<int>(i) : 32;
+#endif
+#elif defined(_MSC_VER) && !defined(__clang__)
+  return static_cast<int>(_CountLeadingZeros(x));
+#else
+  return x ? __builtin_clz(x) : 32;
+#endif
 }
 
 // ---------------------------------------------------------------------------

@@ -18,13 +18,66 @@
 #include <cstring>
 #include <functional>
 #include <memory>
-#include <span>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace vio {
+
+// ---------------------------------------------------------------------------
+// Contiguous views
+// ---------------------------------------------------------------------------
+
+// Non-owning view of n contiguous elements of type T.  It converts from any
+// container with data() and size() (std::vector, std::array, std::span, ...)
+// and from {pointer, size}; in C++20 it also converts to std::span.
+template <class T>
+class span {
+  template <class C>
+  using DataPtr = decltype(std::declval<C&>().data());
+  template <class C>
+  using EnableFrom = std::enable_if_t<
+      !std::is_same_v<std::decay_t<C>, span> &&
+      (std::is_const_v<T> || std::is_lvalue_reference_v<C>) &&
+      std::is_convertible_v<std::remove_pointer_t<DataPtr<C>> (*)[], T (*)[]> &&
+      std::is_convertible_v<decltype(std::declval<C&>().size()), std::size_t>>;
+
+ public:
+  using element_type = T;
+  using value_type = std::remove_cv_t<T>;
+  using size_type = std::size_t;
+  using pointer = T*;
+  using reference = T&;
+  using iterator = T*;
+
+  constexpr span() noexcept = default;
+  constexpr span(T* p, std::size_t n) noexcept : p_(p), n_(n) {}
+  template <std::size_t N>
+  constexpr span(T (&a)[N]) noexcept : p_(a), n_(N) {}
+  template <class C, class = EnableFrom<C>>
+  constexpr span(C&& c) noexcept(noexcept(c.data()) && noexcept(c.size()))
+      : p_(c.data()), n_(static_cast<std::size_t>(c.size())) {}
+
+  constexpr T* data() const noexcept { return p_; }
+  constexpr std::size_t size() const noexcept { return n_; }
+  constexpr std::size_t size_bytes() const noexcept { return n_ * sizeof(T); }
+  constexpr bool empty() const noexcept { return n_ == 0; }
+  constexpr T* begin() const noexcept { return p_; }
+  constexpr T* end() const noexcept { return p_ + n_; }
+  constexpr T& operator[](std::size_t i) const noexcept { return p_[i]; }
+
+  constexpr span first(std::size_t count) const noexcept { return {p_, count}; }
+  constexpr span last(std::size_t count) const noexcept { return {p_ + n_ - count, count}; }
+  constexpr span subspan(std::size_t offset, std::size_t count = std::size_t(-1)) const noexcept {
+    return {p_ + offset, count == std::size_t(-1) ? n_ - offset : count};
+  }
+
+ private:
+  T* p_ = nullptr;
+  std::size_t n_ = 0;
+};
 
 // ---------------------------------------------------------------------------
 // Color spaces
@@ -227,7 +280,7 @@ class OutBuffer {
 class InBuffer {
  public:
   InBuffer() = default;
-  explicit InBuffer(std::span<const std::uint8_t> d) : data_(d) {}
+  explicit InBuffer(span<const std::uint8_t> d) : data_(d) {}
   int getc() { return pos_ < data_.size() ? data_[pos_++] : -1; }
   bool read(void* dst, std::size_t n) {
     if (data_.size() - pos_ < n) {
@@ -251,10 +304,10 @@ class InBuffer {
   std::size_t pos() const { return pos_; }
   void seek(std::size_t p) { pos_ = p < data_.size() ? p : data_.size(); }
   std::size_t remaining() const { return data_.size() - pos_; }
-  std::span<const std::uint8_t> data() const { return data_; }
+  span<const std::uint8_t> data() const { return data_; }
 
  private:
-  std::span<const std::uint8_t> data_;
+  span<const std::uint8_t> data_;
   std::size_t pos_ = 0;
 };
 
@@ -285,7 +338,7 @@ class ImageReader {
   unsigned next_row = 0;  // rows delivered so far (maintained by read_rows)
   Diagnostics diag;       // non-fatal problems in the input file
 
-  void start(std::span<const std::uint8_t> file) {
+  void start(span<const std::uint8_t> file) {
     detail::check_precision<T>(precision);
     in_ = detail::InBuffer(file);
     next_row = 0;
@@ -349,7 +402,7 @@ class ImageWriter {
 
   bool quantized() const { return !colormap.empty(); }
 
-  virtual void set_icc_profile(std::span<const std::uint8_t>) {}
+  virtual void set_icc_profile(span<const std::uint8_t>) {}
   // Whether the format can be written with a width/height that changes after
   // construction (cropped decoding); BMP cannot.
   virtual bool supports_partial() const { return true; }

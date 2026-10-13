@@ -186,7 +186,7 @@ R guarded(tjinstance* self, R error_value, F&& body, C&& cleanup) {
 
 // ---------------------------------------------------------------------------
 // Memory destination (jdatadst-tj.c semantics)
-void store_output(tjinstance* self, std::span<const std::uint8_t> data, unsigned char** buf,
+void store_output(tjinstance* self, vio::span<const std::uint8_t> data, unsigned char** buf,
                   size_t* size, bool alloc) {
   if (!alloc) {
     if (data.size() > *size) {

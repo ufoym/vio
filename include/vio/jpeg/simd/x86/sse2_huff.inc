@@ -205,6 +205,28 @@ VIO_INLINE void load_zigzag(const std::int16_t* block, T z[8]) {
 
 }  // namespace detail_huff
 
+// Appends the next non-zero coefficient (at most 31 bits): t[pos] for the
+// lowest bit pos set in index, which is cleared.  k is the zig-zag position
+// after the last coefficient coded.
+template <class Table>
+VIO_INLINE void encode_next(detail_huff::BitWriter& w, std::uint64_t& index, unsigned& k,
+                            const std::int16_t* t, const Table& actbl) {
+  using namespace detail_huff;
+  const unsigned pos = ctz64(index);  // coefficient pos + 1
+  index = clear_lowest(index);
+  unsigned run = pos - k;
+  k = pos + 1;
+  while (VIO_UNLIKELY(run > 15)) {
+    w.put_bits(actbl.ehufco[0xf0], actbl.ehufsi[0xf0]);
+    run -= 16;
+  }
+  const int code = t[pos];
+  const int nbits = ac_bit_length(static_cast<unsigned>(code ^ (code >> 31)));
+  const std::uint64_t e = actbl.emit[(run << 4) + static_cast<unsigned>(nbits)];
+  w.append(static_cast<std::uint32_t>(e) | low_bits(static_cast<unsigned>(code), nbits),
+           static_cast<int>(e >> 32));
+}
+
 // Encodes one block with the bit writer w.
 template <class Table>
 VIO_INLINE void encode_block(detail_huff::BitWriter& w, const std::int16_t* block, int last_dc_val,
@@ -236,28 +258,13 @@ VIO_INLINE void encode_block(detail_huff::BitWriter& w, const std::int16_t* bloc
   // cleared, so the only dependency between iterations is that one
   // operation (shifting the bitmap by the run would chain tzcnt and shifts).
   unsigned k = 0;  // zig-zag position of the last coefficient coded
-  auto next = [&]() VIO_LAMBDA_INLINE {  // appends the next coefficient (at most 31 bits)
-    const unsigned pos = ctz64(index);  // coefficient pos + 1
-    index = clear_lowest(index);
-    unsigned run = pos - k;
-    k = pos + 1;
-    while (VIO_UNLIKELY(run > 15)) {
-      w.put_bits(actbl.ehufco[0xf0], actbl.ehufsi[0xf0]);
-      run -= 16;
-    }
-    const int code = t[pos];
-    nbits = ac_bit_length(static_cast<unsigned>(code ^ (code >> 31)));
-    const std::uint64_t e = actbl.emit[(run << 4) + static_cast<unsigned>(nbits)];
-    w.append(static_cast<std::uint32_t>(e) | low_bits(static_cast<unsigned>(code), nbits),
-             static_cast<int>(e >> 32));
-  };
   // The output is written after every second coefficient, or after one
   // when (rarely) another one might not fit.
   while (index) {
-    next();
+    encode_next(w, index, k, t, actbl);
     if (VIO_UNLIKELY(w.count > 32)) w.flush();
     if (!index) break;
-    next();
+    encode_next(w, index, k, t, actbl);
     w.flush();
   }
   if (k != 63) w.append(actbl.ehufco[0], actbl.ehufsi[0]);

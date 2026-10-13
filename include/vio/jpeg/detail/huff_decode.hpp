@@ -395,27 +395,20 @@ class HuffDecoder final : public EntropyDecoder {
     }
   }
 
-  // Fast path: operates directly on the input buffer; bails out (returning
-  // false, with all state untouched) if a marker is encountered.  The bit
-  // buffer is kept left-aligned and refilled 8 bytes at a time until a 0xFF
-  // byte is reached; ff_ caches the position of the next 0xFF byte.
-  VIO_NO_STACK_CHECK bool decode_mcu_fast(Block** MCU_data) {
-    if (br_.bits_left > 63) return false;
-    std::uint64_t buf = br_.bits_left ? br_.get_buffer << (64 - br_.bits_left) : 0;
-    int cnt = br_.bits_left;
-    const std::uint8_t* p = st_.next_input_byte;
-    const std::uint8_t* const end = p + st_.bytes_in_buffer;
-    if (end != ff_end_ || ff_ < p) {
-      ff_end_ = end;
-      ff_ = find_ff(p, end);
-    }
-    const std::uint8_t* ff = ff_;
-    int last_dc[MAX_COMPS_IN_SCAN];
-    for (int i = 0; i < st_.comps_in_scan; i++) last_dc[i] = last_dc_val_[i];
-    int marker = 0;
-
-    // Bits below the cnt valid ones are kept zero.
-    auto refill = [&]() VIO_LAMBDA_INLINE {
+  // The bit reader of decode_mcu_fast().  The bit buffer is kept
+  // left-aligned, with the bits below the cnt valid ones zero, and refilled 8
+  // bytes at a time until a 0xFF byte is reached.  Each operation is an
+  // object holding references to decode_mcu_fast()'s locals, as a lambda
+  // capturing by reference would (MSVC force-inlines lambdas only from C++20
+  // on); in this shape GCC keeps the reader state in registers.
+  struct Refill {
+    std::uint64_t& buf;
+    int& cnt;
+    const std::uint8_t*& p;
+    const std::uint8_t*& ff;  // next 0xFF byte at or after p, or end
+    const std::uint8_t* const& end;
+    int& marker;
+    VIO_INLINE void operator()() const {
       const int n = (63 - cnt) >> 3;  // whole bytes that fit
       if (VIO_LIKELY(p + n <= ff)) {
         std::uint64_t w;
@@ -447,27 +440,42 @@ class HuffDecoder final : public EntropyDecoder {
         cnt += 8;
       }
       if (p > ff) ff = find_ff(p, end);
-    };
-    // Table index.  The barrier stops the compiler from merging the shift
-    // with the index scaling into two dependent instructions.
-    auto peek = [&](int bits) VIO_LAMBDA_INLINE {
+    }
+  };
+  // Table index.  The barrier stops the compiler from merging the shift with
+  // the index scaling into two dependent instructions.
+  struct Peek {
+    const std::uint64_t& buf;
+    VIO_INLINE std::size_t operator()(int bits) const {
       std::size_t i = static_cast<std::size_t>(buf >> (64 - bits));
 #if defined(__GNUC__) || defined(__clang__)
       __asm__("" : "+r"(i));
 #endif
       return i;
-    };
-    auto consume = [&](int n) VIO_LAMBDA_INLINE {
+    }
+  };
+  struct Consume {
+    std::uint64_t& buf;
+    int& cnt;
+    VIO_INLINE void operator()(int n) const {
       buf <<= n;
       cnt -= n;
-    };
-    auto get_value = [&](int s) VIO_LAMBDA_INLINE {  // s >= 1
+    }
+  };
+  struct GetValue {
+    const std::uint64_t& buf;
+    const Consume& consume;
+    VIO_INLINE int operator()(int s) const {  // s >= 1
       int v = huff_extend(static_cast<int>(buf >> (64 - s)), s);
       consume(s);
       return v;
-    };
-    // Symbol of an entry without a decoded value.
-    auto symbol = [&](std::int32_t e, const DerivedTable& d, int bits) VIO_LAMBDA_INLINE {
+    }
+  };
+  // Symbol of an entry without a decoded value.
+  struct Symbol {
+    const Consume& consume;
+    const std::uint64_t& buf;
+    VIO_INLINE int operator()(std::int32_t e, const DerivedTable& d, int bits) const {
       if (VIO_LIKELY(e & 0xFF)) {
         consume(e & 0xFF);
         return (e >> 8) & 0xFF;
@@ -481,10 +489,17 @@ class HuffDecoder final : public EntropyDecoder {
       }
       consume(l);
       return l > 16 ? 0 : static_cast<int>(d.huffval[static_cast<int>(code + d.valoffset[l]) & 0xFF]);
-    };
-    // Decodes the AC coefficients of one block; Store = false only skips them.
-    auto decode_ac = [&]<bool Store>(Coef* block, const DerivedTable& d,
-                                     const FastTable<AC_BITS>& t) VIO_LAMBDA_INLINE {
+    }
+  };
+  // Decodes the AC coefficients of one block; Store = false only skips them.
+  struct DecodeAc {
+    const Peek& peek;
+    const Refill& refill;
+    const Consume& consume;
+    const Symbol& symbol;
+    const GetValue& get_value;
+    template <bool Store>
+    VIO_INLINE void run(Coef* block, const DerivedTable& d, const FastTable<AC_BITS>& t) const {
       int k = 0;
       do {
         std::int32_t e = t[peek(AC_BITS)];
@@ -507,7 +522,33 @@ class HuffDecoder final : public EntropyDecoder {
           }
         }
       } while (k < DCTSIZE2 - 1);
-    };
+    }
+  };
+
+  // Fast path: operates directly on the input buffer; bails out (returning
+  // false, with all state untouched) if a marker is encountered.  ff_ caches
+  // the position of the next 0xFF byte.
+  VIO_NO_STACK_CHECK bool decode_mcu_fast(Block** MCU_data) {
+    if (br_.bits_left > 63) return false;
+    std::uint64_t buf = br_.bits_left ? br_.get_buffer << (64 - br_.bits_left) : 0;
+    int cnt = br_.bits_left;
+    const std::uint8_t* p = st_.next_input_byte;
+    const std::uint8_t* const end = p + st_.bytes_in_buffer;
+    if (end != ff_end_ || ff_ < p) {
+      ff_end_ = end;
+      ff_ = find_ff(p, end);
+    }
+    const std::uint8_t* ff = ff_;
+    int last_dc[MAX_COMPS_IN_SCAN];
+    for (int i = 0; i < st_.comps_in_scan; i++) last_dc[i] = last_dc_val_[i];
+    int marker = 0;
+
+    const Refill refill{buf, cnt, p, ff, end, marker};
+    const Peek peek{buf};
+    const Consume consume{buf, cnt};
+    const GetValue get_value{buf, consume};
+    const Symbol symbol{consume, buf};
+    const DecodeAc decode_ac{peek, refill, consume, symbol, get_value};
 
     // Each symbol takes at most 32 bits and each refill leaves at least 56,
     // so the window bits are always available: the table is looked up before
@@ -532,9 +573,9 @@ class HuffDecoder final : public EntropyDecoder {
         if (block) block[0] = static_cast<Coef>(s);
       }
       if (ac_needed_[blkn] && block)
-        decode_ac.template operator()<true>(block, *ac_cur_[blkn], *ac_fast_cur_[blkn]);
+        decode_ac.run<true>(block, *ac_cur_[blkn], *ac_fast_cur_[blkn]);
       else
-        decode_ac.template operator()<false>(block, *ac_cur_[blkn], *ac_fast_cur_[blkn]);
+        decode_ac.run<false>(block, *ac_cur_[blkn], *ac_fast_cur_[blkn]);
     }
     if (marker != 0) {
       // Discard partial results; the caller re-decodes via the slow path.
