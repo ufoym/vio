@@ -1,6 +1,7 @@
 // vio::jpeg - Huffman entropy encoding (sequential, progressive, lossless).
 #pragma once
 
+#include <bit>
 #include <climits>
 #include <utility>
 #if defined(_MSC_VER) && !defined(__clang__)
@@ -18,6 +19,9 @@ class EntropyEncoder {
   virtual ~EntropyEncoder() = default;
   virtual void start_pass(bool gather_statistics) = 0;
   virtual void encode_mcu(Block** MCU_data) { (void)MCU_data; }
+  // Single-component scans: encode n MCUs (one block each) from consecutive
+  // blocks; returns false if the encoder has no such path.
+  virtual bool encode_blocks(const Block* /*blocks*/, unsigned /*n*/) { return false; }
   virtual unsigned encode_mcus(int** const* /*diff_buf*/, unsigned /*row*/, unsigned /*col*/,
                                unsigned nMCU) {
     return nMCU;
@@ -49,6 +53,7 @@ VIO_INLINE int nbits_nonzero(unsigned x) { return 32 - __builtin_clz(x); }
 VIO_INLINE int ctz64(std::uint64_t x) { return __builtin_ctzll(x); }  // x != 0
 #endif
 VIO_INLINE int nbits(unsigned x) { return x ? nbits_nonzero(x) : 0; }
+VIO_INLINE int popcount64(std::uint64_t x) { return std::popcount(x); }
 
 struct CDerivedTable {
   unsigned ehufco[256];
@@ -482,6 +487,15 @@ struct WordBitWriter {
       write32(dest, static_cast<std::uint32_t>(acc >> n));
     }
   }
+  // Appends the low `size` (<= 64) bits of `bits`, which has no higher bits.
+  VIO_INLINE void put_long(ByteSink& dest, std::uint64_t bits, int size) {
+    if (size > 32) {
+      put(dest, static_cast<std::uint32_t>(bits >> 32), size - 32);
+      size = 32;
+    }
+    put(dest, static_cast<std::uint32_t>(bits) & static_cast<std::uint32_t>(~0ull >> (64 - size)),
+        size);
+  }
   void flush(ByteSink& dest) {
     put(dest, 0x7F, 7);  // pad the last byte with 1 bits
     while (n >= 8) {
@@ -550,13 +564,10 @@ class PhuffEncoder final : public EntropyEncoder {
   }
 
   void encode_mcu(Block** MCU_data) override {
+    if (encode_blocks(MCU_data[0], 1)) return;
     if (cs_.restart_interval && restarts_to_go_ == 0) emit_restart(next_restart_num_);
-    switch (mode_) {
-      case DC_FIRST: dc_first(MCU_data); break;
-      case AC_FIRST: ac_first(MCU_data); break;
-      case DC_REFINE: dc_refine(MCU_data); break;
-      case AC_REFINE: ac_refine(MCU_data); break;
-    }
+    if (mode_ == DC_FIRST) dc_first(MCU_data);
+    else dc_refine(MCU_data);
     if (cs_.restart_interval) {
       if (restarts_to_go_ == 0) {
         restarts_to_go_ = cs_.restart_interval;
@@ -564,6 +575,19 @@ class PhuffEncoder final : public EntropyEncoder {
       }
       restarts_to_go_--;
     }
+  }
+
+  bool encode_blocks(const Block* blocks, unsigned n) override {
+    if (mode_ == AC_FIRST) {
+      if (gather_) encode_ac_blocks<true, false>(blocks, n);
+      else encode_ac_blocks<false, false>(blocks, n);
+    } else if (mode_ == AC_REFINE) {
+      if (gather_) encode_ac_blocks<true, true>(blocks, n);
+      else encode_ac_blocks<false, true>(blocks, n);
+    } else {
+      return false;
+    }
+    return true;
   }
 
   void finish_pass() override {
@@ -608,42 +632,43 @@ class PhuffEncoder final : public EntropyEncoder {
     else emit_bits(derived_[tbl_no].ehufco[symbol], derived_[tbl_no].ehufsi[symbol]);
   }
 
-  // emit_symbol() followed by emit_bits(bits, nb), 0 < nb <= 15, in one write.
-  void emit_symbol_bits(int tbl_no, int symbol, unsigned bits, int nb) {
-    if (gather_) {
-      count_[tbl_no][symbol]++;
-      return;
-    }
-    int size = derived_[tbl_no].ehufsi[symbol];
-    if (size == 0) VIO_FAIL("Missing Huffman code table entry");
-    bw_.put(cs_.dest, (derived_[tbl_no].ehufco[symbol] << nb) | (bits & ((1u << nb) - 1)),
-            size + nb);
+  // The pending end-of-band run and the correction bits that follow it.
+  template <bool Gather>
+  VIO_INLINE void flush_eobrun(WordBitWriter& bw, unsigned& EOBRUN, unsigned& BE) {
+    if (EOBRUN > 0) emit_eobrun_now<Gather>(bw, EOBRUN, BE);
   }
-
-  // The correction bits (one per char), up to 16 per write.
-  void emit_buffered_bits(const char* bufstart, unsigned nb) {
-    if (gather_) return;
-    while (nb > 0) {
-      int n = nb < 16 ? static_cast<int>(nb) : 16;
-      unsigned w = 0;
-      for (int i = 0; i < n; i++) w = (w << 1) | static_cast<unsigned>(bufstart[i] & 1);
-      bw_.put(cs_.dest, w, n);
-      bufstart += n;
-      nb -= static_cast<unsigned>(n);
+  template <bool Gather>
+  void emit_eobrun_now(WordBitWriter& bw, unsigned& EOBRUN, unsigned& BE) {
+    const int nb = nbits_nonzero(EOBRUN) - 1;
+    if (nb > 14) VIO_FAIL("Missing Huffman code table entry");
+    if constexpr (Gather) {
+      count_[ac_tbl_no_][nb << 4]++;
+    } else {
+      const CDerivedTable& t = derived_[ac_tbl_no_];
+      const int size = t.ehufsi[nb << 4];
+      if (size == 0) VIO_FAIL("Missing Huffman code table entry");
+      bw.put(cs_.dest, (t.ehufco[nb << 4] << nb) | (EOBRUN & ((1u << nb) - 1)), size + nb);
+      // The correction bits, packed most significant first.
+      unsigned i = 0;
+      for (; 64 * (i + 1) <= BE; i++) bw.put_long(cs_.dest, corr_[i], 64);
+      if (BE & 63) bw.put_long(cs_.dest, corr_[i] >> (64 - (BE & 63)), static_cast<int>(BE & 63));
     }
+    EOBRUN = 0;
+    BE = 0;
+  }
+  // Appends n (<= 63) correction bits, given left-aligned in bits, to those
+  // of the pending end-of-band run.
+  VIO_INLINE void append_corrections(unsigned& BE, std::uint64_t bits, int n) {
+    if (n == 0) return;
+    const unsigned i = BE >> 6, o = BE & 63;
+    corr_[i] = (o ? corr_[i] : 0) | bits >> o;
+    if (o + static_cast<unsigned>(n) > 64) corr_[i + 1] = bits << (64 - o);
+    BE += static_cast<unsigned>(n);
   }
 
   void emit_eobrun() {
-    if (EOBRUN_ > 0) {
-      int temp = static_cast<int>(EOBRUN_);
-      int nb = nbits_nonzero(static_cast<unsigned>(temp)) - 1;
-      if (nb > 14) VIO_FAIL("Missing Huffman code table entry");
-      emit_symbol(ac_tbl_no_, nb << 4);
-      if (nb) emit_bits(EOBRUN_, nb);
-      EOBRUN_ = 0;
-      emit_buffered_bits(bit_buffer_, BE_);
-      BE_ = 0;
-    }
+    if (gather_) flush_eobrun<true>(bw_, EOBRUN_, BE_);
+    else flush_eobrun<false>(bw_, EOBRUN_, BE_);
   }
 
   void emit_restart(int restart_num) {
@@ -683,56 +708,6 @@ class PhuffEncoder final : public EntropyEncoder {
     }
   }
 
-  VIO_NO_STACK_CHECK void ac_first(Block** MCU_data) {
-    const Coef* block = MCU_data[0]->data();
-    int Sl = cs_.Se - cs_.Ss + 1;
-    int Al = cs_.Al;
-    int max_coef_bits = cs_.data_precision + 2;
-    alignas(16) std::uint16_t values[2 * DCTSIZE2];
-    std::uint64_t zerobits = 0;
-    const int* order = natural_order + cs_.Ss;
-    if (simd_.ac_first_prepare) {
-      zerobits = simd_.ac_first_prepare(block, order, Sl, Al, values);
-    } else {
-    for (int k = 0; k < Sl; k++) {
-      int temp = block[order[k]];
-      if (temp == 0) continue;
-      int temp2 = temp >> (CHAR_BIT * sizeof(int) - 1);
-      temp ^= temp2;
-      temp -= temp2;
-      temp >>= Al;
-      if (temp == 0) continue;
-      temp2 ^= temp;
-      values[k] = static_cast<std::uint16_t>(temp);
-      values[k + DCTSIZE2] = static_cast<std::uint16_t>(temp2);
-      zerobits |= std::uint64_t(1) << k;
-    }
-    }
-    if (zerobits && EOBRUN_ > 0) emit_eobrun();
-    const std::uint16_t* cvalue = values;
-    while (zerobits) {
-      int r = ctz64(zerobits);
-      zerobits >>= r;
-      cvalue += r;
-      int temp = cvalue[0];
-      int temp2 = cvalue[DCTSIZE2];
-      while (r > 15) {
-        emit_symbol(ac_tbl_no_, 0xF0);
-        r -= 16;
-      }
-      int nb = nbits_nonzero(static_cast<unsigned>(temp));
-      if (nb > max_coef_bits)
-        VIO_FAIL("DCT coefficient (lossy) or spatial difference (lossless) out of range");
-      emit_symbol_bits(ac_tbl_no_, (r << 4) + nb, static_cast<unsigned>(temp2), nb);
-      cvalue++;
-      zerobits >>= 1;
-    }
-    if (cvalue < values + Sl) {
-      EOBRUN_++;
-      if (EOBRUN_ == 0x7FFF) emit_eobrun();
-    }
-  }
-
   void dc_refine(Block** MCU_data) {
     int Al = cs_.Al;
     for (int blkn = 0; blkn < cs_.blocks_in_MCU; blkn++) {
@@ -741,71 +716,181 @@ class PhuffEncoder final : public EntropyEncoder {
     }
   }
 
-  VIO_NO_STACK_CHECK void ac_refine(Block** MCU_data) {
-    const Coef* block = MCU_data[0]->data();
-    int Sl = cs_.Se - cs_.Ss + 1;
-    int Al = cs_.Al;
+  // Runs of blocks of an AC scan, with the coder state in locals.
+  template <bool Gather, bool Refine>
+  VIO_NO_STACK_CHECK void encode_ac_blocks(const Block* blocks, unsigned n) {
+    for (unsigned i = 0; i < n;) {
+      unsigned m = n - i;
+      if (cs_.restart_interval) {
+        if (restarts_to_go_ == 0) {
+          emit_restart(next_restart_num_);
+          restarts_to_go_ = cs_.restart_interval;
+          next_restart_num_ = (next_restart_num_ + 1) & 7;
+        }
+        if (restarts_to_go_ < m) m = restarts_to_go_;
+        restarts_to_go_ -= m;
+      }
+      WordBitWriter bw = bw_;
+      unsigned EOBRUN = EOBRUN_, BE = BE_;
+      for (const unsigned end = i + m; i < end; i++) {
+        if constexpr (Refine) ac_refine_block<Gather>(blocks[i].data(), bw, EOBRUN, BE);
+        else ac_first_block<Gather>(blocks[i].data(), bw, EOBRUN, BE);
+      }
+      bw_ = bw;
+      EOBRUN_ = EOBRUN;
+      BE_ = BE;
+    }
+  }
+
+  // A symbol followed by nb (< 16) bits.
+  template <bool Gather>
+  VIO_INLINE void symbol_bits(WordBitWriter& bw, int symbol, unsigned bits, int nb) {
+    if constexpr (Gather) {
+      count_[ac_tbl_no_][symbol]++;
+    } else {
+      const CDerivedTable& t = derived_[ac_tbl_no_];
+      const int size = t.ehufsi[symbol];
+      if (VIO_UNLIKELY(size == 0)) VIO_FAIL("Missing Huffman code table entry");
+      bw.put(cs_.dest, (t.ehufco[symbol] << nb) | (bits & ((1u << nb) - 1)), size + nb);
+    }
+  }
+
+  template <bool Gather>
+  VIO_INLINE void ac_first_block(const Coef* block, WordBitWriter& bw, unsigned& EOBRUN,
+                                 unsigned& BE) {
+    const int Sl = cs_.Se - cs_.Ss + 1;
+    const int Al = cs_.Al;
+    const int max_coef_bits = cs_.data_precision + 2;
+    alignas(16) std::uint16_t values[2 * DCTSIZE2];
+    std::uint64_t zerobits = 0;
+    const int* order = natural_order + cs_.Ss;
+    if (simd_.ac_first_prepare) {
+      zerobits = simd_.ac_first_prepare(block, order, Sl, Al, values);
+    } else {
+      for (int k = 0; k < Sl; k++) {
+        int temp = block[order[k]];
+        if (temp == 0) continue;
+        int temp2 = temp >> (CHAR_BIT * sizeof(int) - 1);
+        temp ^= temp2;
+        temp -= temp2;
+        temp >>= Al;
+        if (temp == 0) continue;
+        temp2 ^= temp;
+        values[k] = static_cast<std::uint16_t>(temp);
+        values[k + DCTSIZE2] = static_cast<std::uint16_t>(temp2);
+        zerobits |= std::uint64_t(1) << k;
+      }
+    }
+    if (zerobits) flush_eobrun<Gather>(bw, EOBRUN, BE);
+    int last = -1;  // the last coefficient coded
+    while (zerobits) {
+      const int k = ctz64(zerobits);
+      zerobits &= zerobits - 1;
+      int r = k - last - 1;
+      last = k;
+      for (; r > 15; r -= 16) symbol_bits<Gather>(bw, 0xF0, 0, 0);
+      const int temp = values[k];
+      const int nb = nbits_nonzero(static_cast<unsigned>(temp));
+      if (nb > max_coef_bits)
+        VIO_FAIL("DCT coefficient (lossy) or spatial difference (lossless) out of range");
+      symbol_bits<Gather>(bw, (r << 4) + nb, values[k + DCTSIZE2], nb);
+    }
+    if (last < Sl - 1) {
+      EOBRUN++;
+      if (EOBRUN == 0x7FFF) emit_eobrun_now<Gather>(bw, EOBRUN, BE);
+    }
+  }
+
+  // A refinement scan codes the coefficients that become non-zero (value 1
+  // at bit Al) as symbols, with the zero coefficients before them as runs;
+  // the coefficients already non-zero get one correction bit each, sent
+  // after the next symbol (or after the end-of-band run they fall in).
+  template <bool Gather>
+  VIO_INLINE void ac_refine_block(const Coef* block, WordBitWriter& bw, unsigned& EOBRUN,
+                                  unsigned& BE) {
+    const int Sl = cs_.Se - cs_.Ss + 1;
+    const int Al = cs_.Al;
     alignas(16) std::uint16_t absvalues[DCTSIZE2];
     std::uint64_t zerobits = 0, signbits = 0;
-    int EOB = 0;
     const int* order = natural_order + cs_.Ss;
     if (simd_.ac_refine_prepare) {
-      EOB = simd_.ac_refine_prepare(block, order, Sl, Al, absvalues, &zerobits, &signbits);
+      simd_.ac_refine_prepare(block, order, Sl, Al, absvalues, &zerobits, &signbits);
     } else {
-    for (int k = 0; k < Sl; k++) {
-      int temp = block[order[k]];
-      int temp2 = temp >> (CHAR_BIT * sizeof(int) - 1);
-      temp ^= temp2;
-      temp -= temp2;
-      temp >>= Al;
-      if (temp != 0) {
-        zerobits |= std::uint64_t(1) << k;
-        signbits |= static_cast<std::uint64_t>(temp2 + 1) << k;
+      for (int k = 0; k < Sl; k++) {
+        int temp = block[order[k]];
+        int temp2 = temp >> (CHAR_BIT * sizeof(int) - 1);
+        temp ^= temp2;
+        temp -= temp2;
+        temp >>= Al;
+        if (temp != 0) {
+          zerobits |= std::uint64_t(1) << k;
+          signbits |= static_cast<std::uint64_t>(temp2 + 1) << k;
+        }
+        absvalues[k] = static_cast<std::uint16_t>(temp);
       }
-      absvalues[k] = static_cast<std::uint16_t>(temp);
-      if (temp == 1) EOB = k;
     }
+    // New coefficients, and the correction bits of the others in order.
+    std::uint64_t newbits = 0, corr = 0;
+    int ncorr = 0;
+    for (std::uint64_t z = zerobits; z; z &= z - 1) {
+      const int k = ctz64(z);
+      const unsigned a = absvalues[k];
+      const bool is_new = a == 1;
+      newbits |= static_cast<std::uint64_t>(is_new) << k;
+      corr = is_new ? corr : corr << 1 | (a & 1);
+      ncorr += !is_new;
     }
-    const std::uint16_t* EOBPTR = absvalues + EOB;
-    const std::uint16_t* cabsvalue = absvalues;
-    int r = 0;
-    unsigned BR = 0;
-    char* BR_buffer = bit_buffer_ + BE_;
-    while (zerobits) {
-      int idx = ctz64(zerobits);
-      zerobits >>= idx;
-      r += idx;
-      cabsvalue += idx;
-      signbits >>= idx;
-      while (r > 15 && cabsvalue <= EOBPTR) {
-        emit_eobrun();
-        emit_symbol(ac_tbl_no_, 0xF0);
-        r -= 16;
-        emit_buffered_bits(BR_buffer, BR);
-        BR_buffer = bit_buffer_;
-        BR = 0;
+    const std::uint64_t corrbits = zerobits & ~newbits;
+    corr = ncorr ? corr << (64 - ncorr) : 0;  // left-aligned: next bit first
+    int start = 0;  // the first position after the last symbol
+    for (std::uint64_t nw = newbits; nw; nw &= nw - 1) {
+      const int k = ctz64(nw);
+      const std::uint64_t between = corrbits & ((std::uint64_t(1) << k) - 1) >> start << start;
+      const int nc = popcount64(between);
+      int r = k - start - nc;  // zero coefficients before this one
+      if (VIO_UNLIKELY(r > 15)) {
+        // Runs of 16 zeros, each sent once a non-zero coefficient follows
+        // it, take the correction bits gathered so far.
+        branch_barrier();
+        int zr = 0, sent = 0, prev = start - 1;
+        for (std::uint64_t c = between | std::uint64_t(1) << k; c; c &= c - 1) {
+          const int j = ctz64(c);
+          zr += j - prev - 1;
+          prev = j;
+          for (; zr > 15; zr -= 16) {
+            flush_eobrun<Gather>(bw, EOBRUN, BE);
+            symbol_bits<Gather>(bw, 0xF0, 0, 0);
+            const int pending = popcount64(between & ((std::uint64_t(1) << j) - 1)) - sent;
+            if constexpr (!Gather)
+              if (pending) bw.put_long(cs_.dest, corr >> (64 - pending), pending);
+            if (pending) corr <<= pending;
+            sent += pending;
+          }
+        }
+        flush_eobrun<Gather>(bw, EOBRUN, BE);
+        symbol_bits<Gather>(bw, (zr << 4) + 1, static_cast<unsigned>(signbits >> k) & 1, 1);
+        const int pending = nc - sent;
+        if constexpr (!Gather)
+          if (pending) bw.put_long(cs_.dest, corr >> (64 - pending), pending);
+        if (pending) corr <<= pending;
+        ncorr -= nc;
+      } else {
+        flush_eobrun<Gather>(bw, EOBRUN, BE);
+        symbol_bits<Gather>(bw, (r << 4) + 1, static_cast<unsigned>(signbits >> k) & 1, 1);
+        if (nc) {
+          if constexpr (!Gather) bw.put_long(cs_.dest, corr >> (64 - nc), nc);
+          corr <<= nc;
+          ncorr -= nc;
+        }
       }
-      int temp = *cabsvalue++;
-      if (temp > 1) {
-        BR_buffer[BR++] = static_cast<char>(temp & 1);
-        signbits >>= 1;
-        zerobits >>= 1;
-        continue;
-      }
-      emit_eobrun();
-      emit_symbol_bits(ac_tbl_no_, (r << 4) + 1, static_cast<unsigned>(signbits & 1), 1);
-      emit_buffered_bits(BR_buffer, BR);
-      BR_buffer = bit_buffer_;
-      BR = 0;
-      r = 0;
-      signbits >>= 1;
-      zerobits >>= 1;
+      start = k + 1;
     }
-    r |= static_cast<int>((absvalues + Sl) - cabsvalue);
-    if (r > 0 || BR > 0) {
-      EOBRUN_++;
-      BE_ += BR;
-      if (EOBRUN_ == 0x7FFF || BE_ > (MAX_CORR_BITS - DCTSIZE2 + 1)) emit_eobrun();
+    if (start < Sl) {  // zeros or correction bits follow the last symbol
+      EOBRUN++;
+      if constexpr (Gather) BE += static_cast<unsigned>(ncorr);
+      else append_corrections(BE, corr, ncorr);
+      if (EOBRUN == 0x7FFF || BE > (MAX_CORR_BITS - DCTSIZE2 + 1))
+        emit_eobrun_now<Gather>(bw, EOBRUN, BE);
     }
   }
 
@@ -817,7 +902,7 @@ class PhuffEncoder final : public EntropyEncoder {
   int last_dc_val_[MAX_COMPS_IN_SCAN]{};
   int ac_tbl_no_ = 0;
   unsigned EOBRUN_ = 0, BE_ = 0;
-  char bit_buffer_[MAX_CORR_BITS]{};
+  std::uint64_t corr_[MAX_CORR_BITS / 64 + 2]{};  // BE_ correction bits, most significant first
   unsigned restarts_to_go_ = 0;
   int next_restart_num_ = 0;
   CDerivedTable derived_[NUM_HUFF_TBLS];
@@ -879,13 +964,31 @@ class LhuffEncoder final : public EntropyEncoder {
       input_ptr[ptrn] = diff_buf[inf.ci][MCU_row_num + inf.yoffset] + MCU_col_num * inf.MCU_width;
     }
     const int blocks = cs_.blocks_in_MCU;
+    // Sample sampn of MCU m: in[sampn][m * step[sampn]] (no pointers to
+    // update through memory).
+    const int* in[C_MAX_BLOCKS_IN_MCU];
+    unsigned step[C_MAX_BLOCKS_IN_MCU];
+    for (int sampn = 0, prev = -1, x = 0; sampn < blocks; sampn++) {
+      const int ptrn = ptr_index_[sampn];
+      x = ptrn == prev ? x + 1 : 0;
+      prev = ptrn;
+      in[sampn] = input_ptr[ptrn] + x;
+      step[sampn] = static_cast<unsigned>(info_[ptrn].MCU_width);
+    }
     if (gather_) {
+      // Four interleaved histograms per sample position: consecutive equal
+      // categories would otherwise chain their increments through memory.
+      unsigned hist[C_MAX_BLOCKS_IN_MCU][4][17] = {};
       for (unsigned mcu_num = 0; mcu_num < nMCU; mcu_num++) {
         for (int sampn = 0; sampn < blocks; sampn++) {
-          int nb = magnitude_bits(*input_ptr[ptr_index_[sampn]]++).nbits;
-          cur_counts_[sampn][nb]++;
+          int nb = magnitude_bits(in[sampn][mcu_num * step[sampn]]).nbits;
+          hist[sampn][mcu_num & 3][nb]++;
         }
       }
+      for (int sampn = 0; sampn < blocks; sampn++)
+        for (int nb = 0; nb <= 16; nb++)
+          cur_counts_[sampn][nb] += hist[sampn][0][nb] + hist[sampn][1][nb] + hist[sampn][2][nb] +
+                                    hist[sampn][3][nb];
       return nMCU;
     }
 
@@ -897,31 +1000,40 @@ class LhuffEncoder final : public EntropyEncoder {
     std::uint64_t acc = bw_.put_bits ? bw_.put_buffer >> (24 - bw_.put_bits) : 0;
     int n = bw_.put_bits;
     const CDerivedTable* tbls[C_MAX_BLOCKS_IN_MCU];
-    const int* ptrs[C_MAX_BLOCKS_IN_MCU];
-    int ptr_index[C_MAX_BLOCKS_IN_MCU];
-    for (int sampn = 0; sampn < blocks; sampn++) {
-      tbls[sampn] = cur_tbls_[sampn];
-      ptr_index[sampn] = ptr_index_[sampn];
-    }
-    for (int ptrn = 0; ptrn < num_input_ptrs_; ptrn++) ptrs[ptrn] = input_ptr[ptrn];
+    for (int sampn = 0; sampn < blocks; sampn++) tbls[sampn] = cur_tbls_[sampn];
+    // The bits go out 32 at a time (byte-wise, with stuffing, only when one
+    // of the 4 bytes is 0xFF).
+    auto write32 = [&](std::uint32_t w) VIO_LAMBDA_INLINE {
+      if (VIO_LIKELY(!((~w - 0x01010101u) & w & 0x80808080u))) {
+        out[0] = static_cast<std::uint8_t>(w >> 24);
+        out[1] = static_cast<std::uint8_t>(w >> 16);
+        out[2] = static_cast<std::uint8_t>(w >> 8);
+        out[3] = static_cast<std::uint8_t>(w);
+        out += 4;
+        return;
+      }
+      for (int sh = 24; sh >= 0; sh -= 8) {
+        const std::uint8_t c = static_cast<std::uint8_t>(w >> sh);
+        *out++ = c;
+        if (c == 0xFF) *out++ = 0;
+      }
+    };
     for (unsigned mcu_num = 0; mcu_num < nMCU; mcu_num++) {
       for (int sampn = 0; sampn < blocks; sampn++) {
-        Magnitude m = magnitude_bits(*ptrs[ptr_index[sampn]]++);
+        Magnitude m = magnitude_bits(in[sampn][mcu_num * step[sampn]]);
         const CDerivedTable& dctbl = *tbls[sampn];
         int size = dctbl.ehufsi[m.nbits];
-        if (size == 0) VIO_FAIL("Missing Huffman code table entry");
-        std::uint64_t code = dctbl.ehufco[m.nbits];
-        if (m.nbits && m.nbits != 16) {
-          code = (code << m.nbits) | (static_cast<unsigned>(m.bits) & ((1u << m.nbits) - 1));
-          size += m.nbits;
-        }
-        acc = (acc << size) | code;
+        if (VIO_UNLIKELY(size == 0)) VIO_FAIL("Missing Huffman code table entry");
+        // Category 16 has no value bits.
+        const int nb = m.nbits & -static_cast<int>(m.nbits != 16);
+        const std::uint64_t code = static_cast<std::uint64_t>(dctbl.ehufco[m.nbits]) << nb |
+                                   (static_cast<unsigned>(m.bits) & ((1u << nb) - 1));
+        size += nb;
+        acc = (acc << size) | code;  // at most 31 + 31 bits pending
         n += size;
-        while (n >= 8) {
-          n -= 8;
-          std::uint8_t c = static_cast<std::uint8_t>(acc >> n);
-          *out++ = c;
-          if (VIO_UNLIKELY(c == 0xFF)) *out++ = 0;
+        if (n >= 32) {
+          n -= 32;
+          write32(static_cast<std::uint32_t>(acc >> n));
         }
       }
       if (cs_.restart_interval) {
@@ -931,6 +1043,12 @@ class LhuffEncoder final : public EntropyEncoder {
         }
         restarts_to_go_--;
       }
+    }
+    while (n >= 8) {
+      n -= 8;
+      const std::uint8_t c = static_cast<std::uint8_t>(acc >> n);
+      *out++ = c;
+      if (c == 0xFF) *out++ = 0;
     }
     dest.free_in_buffer -= static_cast<std::size_t>(out - dest.next);
     dest.next = out;
@@ -963,18 +1081,13 @@ class LhuffEncoder final : public EntropyEncoder {
   struct Magnitude {
     int nbits, bits;  // magnitude category and the value's bits to emit
   };
+  // Without branches: the sign of a difference is unpredictable.  A 16-bit
+  // difference -32768 (bit 15 set, magnitude bits 0) has magnitude 32768.
   VIO_INLINE static Magnitude magnitude_bits(int temp) {
-    int temp2;
-    if (temp & 0x8000) {
-      temp = (-temp) & 0x7FFF;
-      if (temp == 0) temp = 0x8000;
-      temp2 = ~temp;
-    } else {
-      temp &= 0x7FFF;
-      temp2 = temp;
-    }
-    int nb = nbits(static_cast<unsigned>(temp));
-    return {nb, temp2};
+    const int neg = -((temp >> 15) & 1);
+    int mag = ((temp ^ neg) - neg) & 0x7FFF;
+    mag |= -static_cast<int>(mag == 0) & neg & 0x8000;
+    return {static_cast<int>(std::bit_width(static_cast<unsigned>(mag))), mag ^ neg};
   }
   CState& cs_;
   bool gather_ = false;

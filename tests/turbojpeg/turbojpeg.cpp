@@ -188,6 +188,10 @@ R guarded(tjinstance* self, R error_value, F&& body, C&& cleanup) {
 // Memory destination (jdatadst-tj.c semantics)
 void store_output(tjinstance* self, std::span<const std::uint8_t> data, unsigned char** buf,
                   size_t* size, bool alloc) {
+  if (data.data() == *buf && data.size() <= *size) {  // written in place (use_dest())
+    *size = data.size();
+    return;
+  }
   if (!alloc) {
     if (data.size() > *size) {
       throw vio::Error("Buffer passed to JPEG library is too small");
@@ -210,6 +214,12 @@ void check_dest(unsigned char** buf, size_t* size, bool alloc) {
   if (buf == nullptr || size == nullptr) throw vio::Error("Buffer passed to JPEG library is too small");
   if ((*buf == nullptr || *size == 0) && !alloc)
     throw vio::Error("Buffer passed to JPEG library is too small");
+}
+
+// The next datastream is written directly into the caller's buffer while it
+// fits (call before start_compress()).
+void use_dest(tjinstance* self, unsigned char* buf, size_t size) {
+  if (buf != nullptr) self->cs().dest.use_buffer(buf, size);
 }
 
 // ---------------------------------------------------------------------------
@@ -382,6 +392,7 @@ bool dstate_before_header(tjinstance* self) {
 }
 
 void abort_compress(tjinstance* self) {
+  self->cs().dest.use_buffer(nullptr, 0);
   if (self->c().state != vd::Compressor::State::Start) self->c().abort();
 }
 void abort_decompress(tjinstance* self) {
@@ -418,6 +429,7 @@ int compress_impl(tjhandle handle, const T* srcBuf, int width, int pitch, int he
     setCompDefaults(self, pixelFormat, false);
     bool alloc = !self->noRealloc;
     check_dest(jpegBuf, jpegSize, alloc);
+    use_dest(self, *jpegBuf, *jpegSize);
     self->c().start_compress(true);
     if (!self->iccBuf.empty()) self->enc.write_icc_profile(self->iccBuf);
     std::vector<T*> rows(static_cast<std::size_t>(height));
@@ -1098,6 +1110,7 @@ DLLEXPORT int tj3CompressFromYUVPlanes8(tjhandle handle, const unsigned char* co
     check_dest(jpegBuf, jpegSize, alloc);
     setCompDefaults(self, TJPF_RGB, true);
     cs.raw_data_in = true;
+    use_dest(self, *jpegBuf, *jpegSize);
     self->c().start_compress(true);
     if (!self->iccBuf.empty()) self->enc.write_icc_profile(self->iccBuf);
     const int nc = cs.num_components;

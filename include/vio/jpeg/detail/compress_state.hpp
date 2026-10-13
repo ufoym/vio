@@ -16,16 +16,31 @@ struct ScanInfo {
 // Growable in-memory destination (jpeg_mem_dest equivalent).
 class ByteSink {
  public:
-  ByteSink() { buf_.resize(4096); next = buf_.data(); free_in_buffer = buf_.size(); }
+  ByteSink() { reset(); }
 
+  // Starts a datastream: in the buffer given to use_buffer() since the last
+  // reset (while the data fit, after which it moves to an internal one), or
+  // in the internal buffer.
   void reset() {
+    if (ext_) {
+      base_ = ext_;
+      next = ext_;
+      free_in_buffer = ext_size_;
+      ext_ = nullptr;
+      return;
+    }
     if (buf_.size() < 4096) buf_.resize(4096);
-    next = buf_.data();
+    base_ = buf_.data();
+    next = base_;
     free_in_buffer = buf_.size();
+  }
+  void use_buffer(std::uint8_t* p, std::size_t n) {
+    ext_ = n ? p : nullptr;
+    ext_size_ = n;
   }
 
   // Called when free_in_buffer reaches 0: enlarges the buffer.
-  void empty_output_buffer() { grow(buf_.size()); }
+  void empty_output_buffer() { grow(capacity()); }
 
   void ensure(std::size_t n) {
     if (free_in_buffer < n) grow(n);
@@ -36,28 +51,44 @@ class ByteSink {
     if (--free_in_buffer == 0) empty_output_buffer();
   }
 
-  std::size_t size() const { return static_cast<std::size_t>(next - buf_.data()); }
+  std::size_t size() const { return static_cast<std::size_t>(next - base_); }
   std::vector<std::uint8_t> take() {
-    buf_.resize(size());
-    std::vector<std::uint8_t> out = std::move(buf_);
-    buf_.clear();
+    std::vector<std::uint8_t> out;
+    if (base_ == buf_.data()) {
+      buf_.resize(size());
+      out = std::move(buf_);
+      buf_.clear();
+    } else {
+      out.assign(base_, next);
+    }
     reset();
     return out;
   }
-  const std::uint8_t* data() const { return buf_.data(); }
+  const std::uint8_t* data() const { return base_; }
 
   std::uint8_t* next = nullptr;
   std::size_t free_in_buffer = 0;
 
  private:
+  std::size_t capacity() const { return size() + free_in_buffer; }
   void grow(std::size_t extra) {
     std::size_t used = size();
-    std::size_t nsize = std::max(buf_.size() * 2, used + extra + 4096);
-    buf_.resize(nsize);
-    next = buf_.data() + used;
+    std::size_t nsize = std::max(capacity() * 2, used + extra + 4096);
+    if (base_ != buf_.data()) {  // leave the caller's buffer
+      std::vector<std::uint8_t> nb(nsize);
+      std::memcpy(nb.data(), base_, used);
+      buf_ = std::move(nb);
+    } else {
+      buf_.resize(nsize);
+    }
+    base_ = buf_.data();
+    next = base_ + used;
     free_in_buffer = nsize - used;
   }
   std::vector<std::uint8_t> buf_;
+  std::uint8_t* base_ = nullptr;
+  std::uint8_t* ext_ = nullptr;
+  std::size_t ext_size_ = 0;
 };
 
 inline constexpr unsigned std_luminance_quant_tbl[DCTSIZE2] = {

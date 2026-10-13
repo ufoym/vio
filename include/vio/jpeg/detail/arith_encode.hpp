@@ -172,23 +172,27 @@ class ArithEncoder final : public EntropyEncoder {
     qe >>= 8;
     std::uint8_t nm = static_cast<std::uint8_t>(qe & 0xFF);
     qe >>= 8;
-    k.a -= qe;
-    if (val != (sv >> 7)) {
-      if (k.a >= qe) {
-        k.c += k.a;
-        k.a = qe;
-      }
-      *st = static_cast<std::uint8_t>((sv & 0x80) ^ nl);
-    } else {
-      if (k.a >= 0x8000L) return;
-      if (k.a < qe) {
-        k.c += k.a;
-        k.a = qe;
-      }
-      *st = static_cast<std::uint8_t>((sv & 0x80) ^ nm);
-    }
-    // Renormalize: shift a (0 < a < 0x8000) and c left until a >= 0x8000,
-    // outputting a byte each time ct counts down to 0.
+    // Without branches (the symbol is as unpredictable as the data).  The
+    // interval splits into a1 = a - qe for the more probable symbol and qe
+    // above it for the less probable one (lps), swapped when qe is the
+    // larger (conditional exchange); taking the upper part adds a1 to c.
+    // The state moves on after the LPS, and after the MPS when the interval
+    // needs renormalization; otherwise nothing changes and the
+    // renormalization below shifts by 0.
+    const JLong a1 = k.a - qe;
+    const bool lps = val != (sv >> 7);
+    const JLong exch = -static_cast<JLong>(lps != (a1 < qe));  // mask
+    k.c += a1 & exch;
+    k.a = a1 ^ ((a1 ^ qe) & exch);
+    const int next = (sv & 0x80) ^ (lps ? nl : nm);
+#if defined(_MSC_VER) && !defined(__clang__)
+    const int update = -static_cast<int>(lps | (a1 < 0x8000L));
+    *st = static_cast<std::uint8_t>(sv ^ ((next ^ sv) & update));
+#else
+    *st = static_cast<std::uint8_t>(lps || a1 < 0x8000L ? next : sv);
+#endif
+    // Renormalize: shift a and c left until a >= 0x8000, outputting a byte
+    // each time ct counts down to 0.
     int n = std::countl_zero(static_cast<std::uint32_t>(k.a)) - 16;
     k.a <<= n;
     if (VIO_LIKELY(n < k.ct)) {
