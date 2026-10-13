@@ -10,49 +10,35 @@
 
 namespace vio::jpeg::simd {
 
-// Sequential Huffman encoder bit buffer (64-bit put_buffer/free_bits).
+// Sequential Huffman encoder bit buffer: `count` (0-7) pending bits,
+// left-aligned in `bits` (the bits below them are zero).
 struct HuffBitState {
-  std::uint64_t put_buffer = 0;
-  int free_bits = 64;
+  std::uint64_t bits = 0;
+  int count = 0;
 };
 
-// Appends codes to an output buffer that has room for at least one block's
-// worth of output, stuffing a zero byte after each 0xFF.
+// Appends codes to a raw output buffer: no byte stuffing (the caller inserts
+// a zero byte after each 0xFF as it copies the data out), and no branches:
+// every append stores 8 bytes and advances past the completed ones, so the
+// buffer needs 8 bytes of room beyond the output.
 struct HuffBitWriter {
-  std::uint64_t put_buffer;
-  int free_bits;
+  std::uint64_t bits;
+  int count;
   std::uint8_t* buffer;
 
   VIO_INLINE HuffBitWriter(const HuffBitState& st, std::uint8_t* out)
-      : put_buffer(st.put_buffer), free_bits(st.free_bits), buffer(out) {}
-  VIO_INLINE HuffBitState state() const { return {put_buffer, free_bits}; }
+      : bits(st.bits), count(st.count), buffer(out) {}
+  VIO_INLINE HuffBitState state() const { return {bits, count}; }
 
-  VIO_INLINE void flush() {
-    if (put_buffer & 0x8080808080808080ULL & ~(put_buffer + 0x0101010101010101ULL)) {
-      for (int sh = 56; sh >= 0; sh -= 8) {
-        std::uint8_t b = static_cast<std::uint8_t>(put_buffer >> sh);
-        buffer[0] = b;
-        buffer[1] = 0;
-        buffer += 1 + (b == 0xFF);
-      }
-    } else {
-      std::uint64_t be = to_big_endian(put_buffer);
-      std::memcpy(buffer, &be, 8);
-      buffer += 8;
-    }
-  }
-
-  // Appends the low `size` bits of `code` (code must have no higher bits set).
+  // Appends the low `size` (at most 56) bits of `code` (no higher bits set).
   VIO_INLINE void put_bits(std::uint64_t code, int size) {
-    free_bits -= size;
-    if (free_bits < 0) {
-      put_buffer = (put_buffer << (size + free_bits)) | (code >> -free_bits);
-      flush();
-      free_bits += 64;
-      put_buffer = code;
-    } else {
-      put_buffer = (put_buffer << size) | code;
-    }
+    count += size;
+    bits |= code << ((64 - count) & 63);
+    std::uint64_t be = to_big_endian(bits);
+    std::memcpy(buffer, &be, 8);
+    buffer += count >> 3;
+    bits <<= count & ~7;
+    count &= 7;
   }
 
   // Appends a Huffman code followed by `nbits` value bits (already masked).

@@ -76,9 +76,12 @@ VIO_INLINE void huff_encode_one_block(const std::int16_t* block, int last_dc_val
   uint8x16_t b7654 = vpaddq_u8(vandq_u8(r76, mask), vandq_u8(r54, mask));
   uint8x16_t b76543210 = vpaddq_u8(b7654, b3210);
   uint8x8_t bitmap_all = vpadd_u8(vget_low_u8(b76543210), vget_high_u8(b76543210));
-  bitmap_all = vreinterpret_u8_u64(vshl_n_u64(vreinterpret_u64_u8(bitmap_all), 1));
-  unsigned non_zero = vaddv_u8(vcnt_u8(bitmap_all));
-  std::uint64_t bitmap = vget_lane_u64(vreinterpret_u64_u8(bitmap_all), 0);
+  // Bit k of the bitmap is set when AC coefficient k (zig-zag order) is
+  // non-zero: walking it from the lowest bit keeps the loop-carried
+  // dependency to clearing that bit.
+  bitmap_all = vrev64_u8(vrbit_u8(bitmap_all));
+  std::uint64_t bitmap = vget_lane_u64(vreinterpret_u64_u8(bitmap_all), 0) & ~std::uint64_t(1);
+  unsigned non_zero = static_cast<unsigned>(__builtin_popcountll(bitmap));
 
   // DC coefficient
   int16x8_t abs_row0 = vabsq_s16(row0);
@@ -88,7 +91,7 @@ VIO_INLINE void huff_encode_one_block(const std::int16_t* block, int last_dc_val
   unsigned lz = vgetq_lane_u16(vreinterpretq_u16_s16(row0_lz), 0);
   unsigned nbits = 16 - lz;
   unsigned diff = vgetq_lane_u16(row0_diff, 0);
-  put_code(dctbl.ehufco[nbits], dctbl.ehufsi[nbits], diff, nbits);
+  put_bits(static_cast<std::uint32_t>(dctbl.emit[nbits]) | diff, static_cast<int>(dctbl.emit[nbits] >> 32));
 
   unsigned r = 0, i = 1;
   const unsigned code_0xf0 = actbl.ehufco[0xf0];
@@ -112,19 +115,18 @@ VIO_INLINE void huff_encode_one_block(const std::int16_t* block, int last_dc_val
       vst1q_u16(block_diff + k * 8, veorq_u16(vreinterpretq_u16_s16(abs_rows[k]), m));
     }
     while (bitmap != 0) {
-      r = static_cast<unsigned>(__builtin_clzll(bitmap));
-      i += r;
-      bitmap <<= r;
-      nbits = block_nbits[i];
-      diff = block_diff[i];
+      const unsigned k = static_cast<unsigned>(__builtin_ctzll(bitmap));
+      bitmap &= bitmap - 1;
+      r = k - i;
+      i = k + 1;
+      nbits = block_nbits[k];
+      diff = block_diff[k];
       while (r > 15) {
         put_bits(code_0xf0, size_0xf0);
         r -= 16;
       }
-      unsigned rs = (r << 4) + nbits;
-      put_code(actbl.ehufco[rs], actbl.ehufsi[rs], diff, nbits);
-      i++;
-      bitmap <<= 1;
+      const std::uint64_t e = actbl.emit[(r << 4) + nbits];
+      put_bits(static_cast<std::uint32_t>(e) | diff, static_cast<int>(e >> 32));
     }
   } else if (bitmap != 0) {
     alignas(16) std::uint16_t block_abs[64];
@@ -136,20 +138,19 @@ VIO_INLINE void huff_encode_one_block(const std::int16_t* block, int last_dc_val
       vst1q_u16(block_diff + k * 8, veorq_u16(vreinterpretq_u16_s16(a), vcltzq_s16(rows[k])));
     }
     while (bitmap != 0) {
-      r = static_cast<unsigned>(__builtin_clzll(bitmap));
-      i += r;
-      bitmap <<= r;
-      lz = static_cast<unsigned>(__builtin_clz(block_abs[i]));
+      const unsigned k = static_cast<unsigned>(__builtin_ctzll(bitmap));
+      bitmap &= bitmap - 1;
+      r = k - i;
+      i = k + 1;
+      lz = static_cast<unsigned>(__builtin_clz(block_abs[k]));
       nbits = 32 - lz;
-      diff = (static_cast<unsigned>(block_diff[i]) << lz) >> lz;
+      diff = (static_cast<unsigned>(block_diff[k]) << lz) >> lz;
       while (r > 15) {
         put_bits(code_0xf0, size_0xf0);
         r -= 16;
       }
-      unsigned rs = (r << 4) + nbits;
-      put_code(actbl.ehufco[rs], actbl.ehufsi[rs], diff, nbits);
-      i++;
-      bitmap <<= 1;
+      const std::uint64_t e = actbl.emit[(r << 4) + nbits];
+      put_bits(static_cast<std::uint32_t>(e) | diff, static_cast<int>(e >> 32));
     }
   }
   if (i != 64) put_bits(actbl.ehufco[0], actbl.ehufsi[0]);
@@ -224,7 +225,7 @@ VIO_INLINE void huff_encode_one_block(const std::int16_t* block, int last_dc_val
 // Common SIMD Huffman kernel signature: encodes one block into `buffer` and
 // returns the advanced output pointer.
 template <class Table>
-inline std::uint8_t* encode_one_block(HuffBitState& st, std::uint8_t* buffer,
+inline VIO_NO_STACK_CHECK std::uint8_t* encode_one_block(HuffBitState& st, std::uint8_t* buffer,
                                       const std::int16_t* block, int last_dc_val,
                                       const Table& dctbl, const Table& actbl) {
   HuffBitWriter w(st, buffer);

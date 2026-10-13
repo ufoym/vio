@@ -106,49 +106,22 @@ VIO_INLINE unsigned low_bits(unsigned v, int n) { return v & kMaskBits[n]; }  //
 VIO_INLINE std::uint64_t clear_lowest(std::uint64_t v) { return v & (v - 1); }
 #endif
 
-// Writes the 8 bytes of v (most significant first) with 0xFF 0x00 stuffing.
-VIO_NOINLINE inline std::uint8_t* emit_stuffed(std::uint8_t* buffer, std::uint64_t v) {
-  for (int sh = 56; sh >= 0; sh -= 8) {
-    std::uint8_t b = static_cast<std::uint8_t>(v >> sh);
-    buffer[0] = b;
-    buffer[1] = 0;
-    buffer += 1 + (b == 0xFF);
-  }
-  return buffer;
-}
-
-// Bit writer for the encoder loop.  It keeps few general-purpose registers
-// live: 0xFF bytes are detected with an SSE2 compare, the 8 bytes are
-// stored speculatively, and the rare byte-stuffing path is out of line.
+// Raw bit writer for the encoder loop (see HuffBitWriter), with the shifts
+// spelled out for the BMI2 build.
 struct BitWriter {
-  std::uint64_t put_buffer;
-  int free_bits;
+  std::uint64_t bits;
+  int count;
   std::uint8_t* buffer;
 
-  VIO_INLINE void flush(std::uint64_t v) {
-    std::uint64_t be = HuffBitWriter::to_big_endian(v);
-    std::memcpy(buffer, &be, 8);
-#if VIO_SIMD_X86_64
-    T x = _mm_cvtsi64_si128(static_cast<long long>(v));
-#else
-    T x = _mm_loadl_epi64(reinterpret_cast<const T*>(&v));
-#endif
-    if (VIO_UNLIKELY(_mm_movemask_epi8(_mm_cmpeq_epi8(x, _mm_set1_epi8(-1))) & 0xFF))
-      buffer = emit_stuffed(buffer, v);
-    else
-      buffer += 8;
-  }
-  // Appends the low `size` bits of `code` (no higher bits set).
+  // Appends the low `size` (at most 56) bits of `code` (no higher bits set).
   VIO_INLINE void put_bits(std::uint64_t code, int size) {
-    free_bits -= size;
-    if (free_bits < 0) {
-      flush(shl64(put_buffer, static_cast<unsigned>(size + free_bits)) |
-            shr64(code, static_cast<unsigned>(-free_bits)));
-      free_bits += 64;
-      put_buffer = code;
-    } else {
-      put_buffer = shl64(put_buffer, static_cast<unsigned>(size)) | code;
-    }
+    count += size;
+    bits |= shl64(code, static_cast<unsigned>(-count) & 63);
+    std::uint64_t be = HuffBitWriter::to_big_endian(bits);
+    std::memcpy(buffer, &be, 8);
+    buffer += count >> 3;
+    bits = shl64(bits, static_cast<unsigned>(count & ~7));
+    count &= 7;
   }
 };
 
@@ -225,7 +198,7 @@ VIO_INLINE void load_zigzag(const std::int16_t* block, T z[8]) {
 }  // namespace detail_huff
 
 template <class Table>
-inline std::uint8_t* encode_one_block(HuffBitState& st, std::uint8_t* buffer,
+inline VIO_NO_STACK_CHECK std::uint8_t* encode_one_block(HuffBitState& st, std::uint8_t* buffer,
                                       const std::int16_t* block, int last_dc_val,
                                       const Table& dctbl, const Table& actbl) {
   using namespace detail_huff;
@@ -243,14 +216,14 @@ inline std::uint8_t* encode_one_block(HuffBitState& st, std::uint8_t* buffer,
   }
   std::uint64_t index = ~movemask64(eq);
 
-  BitWriter w{st.put_buffer, st.free_bits, buffer};
+  BitWriter w{st.bits, st.count, buffer};
   // DC difference (32-bit, as in the scalar encoder).
   int temp = block[0] - last_dc_val;
   int sign = temp >> 31;
   int nbits = bit_length(static_cast<unsigned>(temp ^ sign) - static_cast<unsigned>(sign));
-  w.put_bits(shl64(dctbl.ehufco[nbits], static_cast<unsigned>(nbits)) |
+  w.put_bits(static_cast<std::uint32_t>(dctbl.emit[nbits]) |
                  low_bits(static_cast<unsigned>(temp + sign), nbits),
-             dctbl.ehufsi[nbits] + nbits);
+             static_cast<int>(dctbl.emit[nbits] >> 32));
 
   // Each non-zero coefficient is found from the bitmap with its lowest bit
   // cleared, so the only dependency between iterations is that one
@@ -267,15 +240,14 @@ inline std::uint8_t* encode_one_block(HuffBitState& st, std::uint8_t* buffer,
     }
     const int code = t[pos];
     nbits = ac_bit_length(static_cast<unsigned>(code ^ (code >> 31)));
-    const unsigned rs = (run << 4) + static_cast<unsigned>(nbits);
-    w.put_bits(shl64(actbl.ehufco[rs], static_cast<unsigned>(nbits)) |
-                   low_bits(static_cast<unsigned>(code), nbits),
-               actbl.ehufsi[rs] + nbits);
+    const std::uint64_t e = actbl.emit[(run << 4) + static_cast<unsigned>(nbits)];
+    w.put_bits(static_cast<std::uint32_t>(e) | low_bits(static_cast<unsigned>(code), nbits),
+               static_cast<int>(e >> 32));
   }
   if (k != 63) w.put_bits(actbl.ehufco[0], actbl.ehufsi[0]);
   // Member-wise: a 16-byte copy would read back two narrower stores.
-  st.put_buffer = w.put_buffer;
-  st.free_bits = w.free_bits;
+  st.bits = w.bits;
+  st.count = w.count;
   return w.buffer;
 }
 
@@ -288,7 +260,7 @@ VIO_INLINE void gather_band(const std::int16_t* block, const int* order, int Sl,
 }
 }  // namespace detail_huff
 
-inline std::uint64_t ac_first_prepare(const std::int16_t* block, const int* order, int Sl, int Al,
+inline VIO_NO_STACK_CHECK std::uint64_t ac_first_prepare(const std::int16_t* block, const int* order, int Sl, int Al,
                                       std::uint16_t* values) {
   using namespace detail_huff;
   // Bands starting at coefficient 1 (the usual case) are loaded in
@@ -318,7 +290,7 @@ inline std::uint64_t ac_first_prepare(const std::int16_t* block, const int* orde
   return bits;
 }
 
-inline int ac_refine_prepare(const std::int16_t* block, const int* order, int Sl, int Al,
+inline VIO_NO_STACK_CHECK int ac_refine_prepare(const std::int16_t* block, const int* order, int Sl, int Al,
                              std::uint16_t* absvalues, std::uint64_t* zerobits,
                              std::uint64_t* signbits) {
   using namespace detail_huff;

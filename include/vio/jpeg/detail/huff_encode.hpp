@@ -53,6 +53,9 @@ VIO_INLINE int nbits(unsigned x) { return x ? nbits_nonzero(x) : 0; }
 struct CDerivedTable {
   unsigned ehufco[256];
   char ehufsi[256];
+  // Each symbol's code shifted past the n magnitude bits that follow it
+  // (n = symbol for DC, its low 4 bits for AC), with size + n in bits 32-39.
+  std::uint64_t emit[256];
 };
 
 inline void make_c_derived_tbl(CState& cs, bool isDC, int tblno, CDerivedTable& dtbl) {
@@ -90,6 +93,11 @@ inline void make_c_derived_tbl(CState& cs, bool isDC, int tblno, CDerivedTable& 
     if (i < 0 || i > maxsymbol || dtbl.ehufsi[i]) VIO_FAIL("Bogus Huffman table definition");
     dtbl.ehufco[i] = huffcode[p];
     dtbl.ehufsi[i] = huffsize[p];
+  }
+  for (int i = 0; i < 256; i++) {
+    int n = isDC ? std::min(i, 16) : i & 15;
+    dtbl.emit[i] = (static_cast<std::uint64_t>(dtbl.ehufsi[i] + n) << 32) |
+                   (static_cast<std::uint64_t>(dtbl.ehufco[i]) << n);
   }
 }
 
@@ -195,8 +203,8 @@ class HuffEncoder final : public EntropyEncoder {
       }
       last_dc_val_[ci] = 0;
     }
-    put_buffer_ = 0;
-    free_bits_ = 64;
+    bits_ = {};
+    raw_next_ = raw_.get();
     restarts_to_go_ = cs_.restart_interval;
     next_restart_num_ = 0;
   }
@@ -207,6 +215,9 @@ class HuffEncoder final : public EntropyEncoder {
       return;
     }
     if (cs_.restart_interval && restarts_to_go_ == 0) emit_restart(next_restart_num_);
+    if (raw_.get() + RAW_SIZE - raw_next_ <
+        static_cast<std::ptrdiff_t>(cs_.blocks_in_MCU) * (BUFSIZE + 16))
+      flush_raw();
     for (int blkn = 0; blkn < cs_.blocks_in_MCU; blkn++) {
       int ci = cs_.MCU_membership[blkn];
       ComponentInfo* c = cs_.cur_comp_info[ci];
@@ -230,26 +241,34 @@ class HuffEncoder final : public EntropyEncoder {
 
  private:
   static constexpr int BUFSIZE = DCTSIZE2 * 8;
+  // Raw (unstuffed) output collected before it is copied to the destination.
+  static constexpr std::ptrdiff_t RAW_SIZE = 32768;
 
+  // Pads the pending bits with ones to a byte boundary and writes out all
+  // the data.
   void flush_bits() {
-    cs_.dest.ensure(BUFSIZE);
-    std::uint8_t* buffer = cs_.dest.next;
-    int put_bits = 64 - free_bits_;
-    std::uint64_t put_buffer = put_buffer_;
-    auto emit = [&](std::uint8_t b) {
-      buffer[0] = b;
-      buffer[1] = 0;
-      buffer += 1 + (b == 0xFF);
-    };
-    while (put_bits >= 8) {
-      put_bits -= 8;
-      emit(static_cast<std::uint8_t>(put_buffer >> put_bits));
+    if (bits_.count)
+      *raw_next_++ = static_cast<std::uint8_t>((bits_.bits >> 56) | (0xFFu >> bits_.count));
+    bits_ = {};
+    flush_raw();
+  }
+
+  // Copies the raw data to the destination, with a zero byte after each 0xFF.
+  void flush_raw() {
+    const std::uint8_t* p = raw_.get();
+    const std::uint8_t* const end = raw_next_;
+    cs_.dest.ensure(2 * static_cast<std::size_t>(end - p));
+    std::uint8_t* out = cs_.dest.next;
+    while (p < end) {
+      const void* ff = std::memchr(p, 0xFF, static_cast<std::size_t>(end - p));
+      const std::uint8_t* stop = ff ? static_cast<const std::uint8_t*>(ff) + 1 : end;
+      std::memcpy(out, p, static_cast<std::size_t>(stop - p));
+      out += stop - p;
+      p = stop;
+      if (ff) *out++ = 0;
     }
-    if (put_bits)
-      emit(static_cast<std::uint8_t>((put_buffer << (8 - put_bits)) | (0xFF >> put_bits)));
-    put_buffer_ = 0;
-    free_bits_ = 64;
-    store(buffer);
+    store(out);
+    raw_next_ = raw_.get();
   }
 
   VIO_INLINE void store(std::uint8_t* buffer) {
@@ -259,18 +278,13 @@ class HuffEncoder final : public EntropyEncoder {
 
   void encode_one_block(const Coef* block, int last_dc_val, const CDerivedTable& dctbl,
                         const CDerivedTable& actbl) {
-    cs_.dest.ensure(BUFSIZE + 16);
     if (simd_huff_) {
       // The SIMD path is used for any data precision (coefficients are
       // 16-bit).
-      simd::HuffBitState st{put_buffer_, free_bits_};
-      std::uint8_t* buffer = simd_huff_(st, cs_.dest.next, block, last_dc_val, dctbl, actbl);
-      put_buffer_ = st.put_buffer;
-      free_bits_ = st.free_bits;
-      store(buffer);
+      raw_next_ = simd_huff_(bits_, raw_next_, block, last_dc_val, dctbl, actbl);
       return;
     }
-    vio::jpeg::simd::HuffBitWriter w({put_buffer_, free_bits_}, cs_.dest.next);
+    vio::jpeg::simd::HuffBitWriter w(bits_, raw_next_);
     const int max_coef_bits = cs_.data_precision + 2;
     auto put_bits = [&](std::uint64_t code, int size) VIO_LAMBDA_INLINE { w.put_bits(code, size); };
     auto put_code = [&](int temp, int nb, unsigned code, int size) VIO_LAMBDA_INLINE {
@@ -312,9 +326,8 @@ class HuffEncoder final : public EntropyEncoder {
     }(std::make_index_sequence<DCTSIZE2 - 1>{});
     if (r > 0) put_bits(actbl.ehufco[0], actbl.ehufsi[0]);
 
-    put_buffer_ = w.put_buffer;
-    free_bits_ = w.free_bits;
-    store(w.buffer);
+    bits_ = w.state();
+    raw_next_ = w.buffer;
   }
 
   void emit_restart(int restart_num) {
@@ -396,8 +409,9 @@ class HuffEncoder final : public EntropyEncoder {
 
   CState& cs_;
   bool gather_ = false;
-  std::uint64_t put_buffer_ = 0;
-  int free_bits_ = 64;
+  simd::HuffBitState bits_;
+  std::unique_ptr<std::uint8_t[]> raw_{new std::uint8_t[RAW_SIZE]};
+  std::uint8_t* raw_next_ = raw_.get();
   simd::HuffEncodeFn<CDerivedTable> simd_huff_ = nullptr;
   int last_dc_val_[MAX_COMPS_IN_SCAN]{};
   unsigned restarts_to_go_ = 0;
@@ -653,7 +667,7 @@ class PhuffEncoder final : public EntropyEncoder {
     }
   }
 
-  void ac_first(Block** MCU_data) {
+  VIO_NO_STACK_CHECK void ac_first(Block** MCU_data) {
     const Coef* block = MCU_data[0]->data();
     int Sl = cs_.Se - cs_.Ss + 1;
     int Al = cs_.Al;
@@ -711,7 +725,7 @@ class PhuffEncoder final : public EntropyEncoder {
     }
   }
 
-  void ac_refine(Block** MCU_data) {
+  VIO_NO_STACK_CHECK void ac_refine(Block** MCU_data) {
     const Coef* block = MCU_data[0]->data();
     int Sl = cs_.Se - cs_.Ss + 1;
     int Al = cs_.Al;
