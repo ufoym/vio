@@ -110,6 +110,7 @@ VIO_INLINE unsigned low_bits(unsigned v, int n) { return v & kMaskBits[n]; }  //
 VIO_INLINE std::uint64_t clear_lowest(std::uint64_t v) { return v & (v - 1); }
 #endif
 
+#if VIO_HUFF_BMI2
 // Raw bit writer for the encoder loop (see HuffBitWriter), with the shifts
 // spelled out for the BMI2 build.
 struct BitWriter {
@@ -131,7 +132,58 @@ struct BitWriter {
     append(code, size);
     flush();
   }
+  static BitWriter from(const HuffBitState& st, std::uint8_t* buffer) {
+    return {st.bits, static_cast<unsigned>(st.count), buffer};
+  }
+  void to(HuffBitState& st) const {
+    // Member-wise: a 16-byte copy would read back two narrower stores.
+    st.bits = bits;
+    st.count = static_cast<int>(count);
+  }
 };
+#else
+// Without BMI2, shifts by a register count take several micro-ops on Intel
+// cores (they keep the flags).  The bits are kept left-aligned instead, and
+// each code goes in place by a multiply by a power of two (one micro-op,
+// off the accumulator's dependency chain).
+struct Pow2Table {
+  std::uint64_t v[65];
+  constexpr Pow2Table() : v() {
+    for (int i = 0; i < 64; i++) v[i] = std::uint64_t(1) << i;
+  }
+};
+alignas(64) inline constexpr Pow2Table kPow2{};
+
+struct BitWriter {
+  std::uint64_t acc;  // count bits, from the top
+  unsigned count;
+  std::uint8_t* buffer;
+
+  VIO_INLINE void append(std::uint64_t code, int size) {
+    count += static_cast<unsigned>(size);
+    acc |= code * kPow2.v[64 - count];
+  }
+  VIO_INLINE void flush() {
+    std::uint64_t be = HuffBitWriter::to_big_endian(acc);
+    std::memcpy(buffer, &be, 8);
+    buffer += count >> 3;
+    acc *= kPow2.v[count & ~7u];
+    count &= 7;
+  }
+  VIO_INLINE void put_bits(std::uint64_t code, int size) {
+    append(code, size);
+    flush();
+  }
+  static BitWriter from(const HuffBitState& st, std::uint8_t* buffer) {
+    const unsigned n = static_cast<unsigned>(st.count);
+    return {n ? st.bits << (64 - n) : 0, n, buffer};
+  }
+  void to(HuffBitState& st) const {
+    st.bits = count ? acc >> (64 - count) : 0;
+    st.count = static_cast<int>(count);
+  }
+};
+#endif
 
 // Loads coefficients 1..63 of a natural-order block in zig-zag order into
 // eight vectors (z[r] lane i = zig-zag position 8r+i+1; z[7] lane 7 = 0),
@@ -271,11 +323,9 @@ inline VIO_NO_STACK_CHECK std::uint8_t* encode_blocks(HuffBitState& st, std::uin
                                                       const int* last_dc,
                                                       const Table* const* dctbl,
                                                       const Table* const* actbl, int n) {
-  detail_huff::BitWriter w{st.bits, static_cast<unsigned>(st.count), buffer};
+  detail_huff::BitWriter w = detail_huff::BitWriter::from(st, buffer);
   for (int i = 0; i < n; i++) encode_block(w, blocks[i], last_dc[i], *dctbl[i], *actbl[i]);
-  // Member-wise: a 16-byte copy would read back two narrower stores.
-  st.bits = w.bits;
-  st.count = static_cast<int>(w.count);
+  w.to(st);
   return w.buffer;
 }
 
