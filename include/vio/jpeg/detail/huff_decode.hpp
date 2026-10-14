@@ -1213,6 +1213,7 @@ class PhuffDecoder final : public EntropyDecoder {
     const std::uint64_t nz = nonzero_mask(block) & band;
 #endif
     std::uint64_t acc = 0;  // correction bits read so far
+    int nacc = 0;           // their number
     int late = 0;           // a coefficient placed past the band (corrupt data)
     if (EOBRUN == 0) {
       std::uint64_t zeros = ~nz & band;  // zero coefficients from k on
@@ -1263,6 +1264,7 @@ class PhuffDecoder final : public EntropyDecoder {
           v = 0;
         }
         acc = acc << n | take(b, n);
+        nacc += n;
         b.single_bits(n);
         if (v) block[natural_order[target]] = static_cast<Coef>(v);
         k = target + 1;
@@ -1275,15 +1277,18 @@ class PhuffDecoder final : public EntropyDecoder {
     if (EOBRUN > 0) {
       const int n = popcount64(nz & (~std::uint64_t(0) << k));
       acc = acc << n | take(b, n);
+      nacc += n;
       b.single_bits(n);
       EOBRUN--;
     }
-    // acc's lowest bit belongs to the last non-zero coefficient.
-    for (std::uint64_t m = nz; m;) {
-      const int pos = 63 - std::countl_zero(m);
-      m ^= std::uint64_t(1) << pos;
-      refine_coef(block + natural_order[pos], static_cast<int>(acc & 1), p1);
-      acc >>= 1;
+    // One bit per non-zero coefficient (nacc = popcount(nz) < 64), the
+    // first one's highest.  From the lowest position up, so the only
+    // dependency between iterations is clearing a bit of m (finding the
+    // highest takes a slow lzcnt on x86 each time).
+    std::uint64_t bits = acc << 1 << (63 - nacc);
+    for (std::uint64_t m = nz; m; m &= m - 1) {
+      refine_coef(block + natural_order[std::countr_zero(m)], static_cast<int>(bits >> 63), p1);
+      bits <<= 1;
     }
     if (late) block[natural_order[Se + 1]] = static_cast<Coef>(late);
   }
