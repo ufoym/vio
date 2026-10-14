@@ -236,14 +236,35 @@ inline void forward_islow2(std::uint8_t** sample_data, unsigned start_col,
   using namespace detail_fdct;
   const int16x4x3_t k = {{vld1_s16(opaque(islow_consts)), vld1_s16(opaque(islow_consts) + 4),
                           vld1_s16(opaque(islow_consts) + 8)}};
-  Block8 a, b;
-  for (int r = 0; r < 8; r++) {
-    const uint8x16_t s = vld1q_u8(sample_data[r] + start_col);
-    a.v[r] = vreinterpretq_s16_u16(vsubl_u8(vget_low_u8(s), vdup_n_u8(128)));
-    b.v[r] = vreinterpretq_s16_u16(vsubl_u8(vget_high_u8(s), vdup_n_u8(128)));
+  // Both 8x8 blocks transposed at once as bytes (the byte, halfword and
+  // word transpositions stay within 64-bit halves), then widened.
+  uint8x16_t r[8];
+  for (int i = 0; i < 8; i++) r[i] = vld1q_u8(sample_data[i] + start_col);
+  for (int i = 0; i < 8; i += 2) {
+    const uint8x16x2_t t = vtrnq_u8(r[i], r[i + 1]);
+    r[i] = t.val[0];
+    r[i + 1] = t.val[1];
   }
-  a = islow_pass<1>(transpose(a), k);
-  b = islow_pass<1>(transpose(b), k);
+  for (int i = 0; i < 8; i += 4)
+    for (int j = 0; j < 2; j++) {
+      const uint16x8x2_t t =
+          vtrnq_u16(vreinterpretq_u16_u8(r[i + j]), vreinterpretq_u16_u8(r[i + j + 2]));
+      r[i + j] = vreinterpretq_u8_u16(t.val[0]);
+      r[i + j + 2] = vreinterpretq_u8_u16(t.val[1]);
+    }
+  for (int j = 0; j < 4; j++) {
+    const uint32x4x2_t t =
+        vtrnq_u32(vreinterpretq_u32_u8(r[j]), vreinterpretq_u32_u8(r[j + 4]));
+    r[j] = vreinterpretq_u8_u32(t.val[0]);
+    r[j + 4] = vreinterpretq_u8_u32(t.val[1]);
+  }
+  Block8 a, b;  // columns
+  for (int i = 0; i < 8; i++) {
+    a.v[i] = vreinterpretq_s16_u16(vsubl_u8(vget_low_u8(r[i]), vdup_n_u8(128)));
+    b.v[i] = vreinterpretq_s16_u16(vsubl_u8(vget_high_u8(r[i]), vdup_n_u8(128)));
+  }
+  a = islow_pass<1>(a, k);
+  b = islow_pass<1>(b, k);
   a = islow_pass<2>(transpose(a), k);
   b = islow_pass<2>(transpose(b), k);
   for (int i = 0; i < 8; i++) {
