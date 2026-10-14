@@ -85,6 +85,9 @@ struct FdctKernels {
                         const std::uint16_t* divisors, std::int16_t* coef) = nullptr;
   void (*forward_ifast)(std::uint8_t** sample_data, unsigned start_col,
                         const std::uint16_t* divisors, std::int16_t* coef) = nullptr;
+  // forward_islow on two horizontally adjacent blocks (optional)
+  void (*forward_islow2)(std::uint8_t** sample_data, unsigned start_col,
+                         const std::uint16_t* divisors, std::int16_t* coef) = nullptr;
   void (*convsamp_float)(std::uint8_t** sample_data, unsigned start_col, float* ws) = nullptr;
   void (*fdct_float)(float* data) = nullptr;
   void (*quantize_float)(std::int16_t* coef, const float* divisors, const float* ws) = nullptr;

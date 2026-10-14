@@ -757,44 +757,51 @@ class CoefControllerC final : public CCoefController<T> {
   unsigned run_length() const { return std::max(1, kRunBlocks / cs_.blocks_in_MCU); }
 
   bool compress_onepass(T*** input_buf) {
-    unsigned last_MCU_col = cs_.MCUs_per_row - 1;
-    unsigned last_iMCU_row = cs_.total_iMCU_rows - 1;
+    const unsigned last_MCU_col = cs_.MCUs_per_row - 1;
+    const unsigned last_iMCU_row = cs_.total_iMCU_rows - 1;
     const unsigned run = run_length();
+    const int bim = cs_.blocks_in_MCU;
     for (int yoffset = MCU_vert_offset_; yoffset < MCU_rows_per_iMCU_row_; yoffset++) {
-      unsigned in_run = 0;
-      for (unsigned MCU_col_num = mcu_ctr_; MCU_col_num <= last_MCU_col; MCU_col_num++) {
-        Block** MCU_buffer = MCU_buffer_ + in_run * cs_.blocks_in_MCU;
-        int blkn = 0;
+      for (unsigned m0 = mcu_ctr_; m0 <= last_MCU_col; m0 += run) {
+        const unsigned len = std::min(run, last_MCU_col + 1 - m0);
+        const bool last_col = m0 + len - 1 == last_MCU_col;
+        // The blocks of each component row of the run are consecutive in
+        // mcu_blocks_ (one forward_dct() call each); MCU_buffer_ lists them
+        // in MCU order.  Blocks past the image (dummy blocks) are zero with
+        // the DC of the block before them in MCU order.
+        Block* storage = mcu_blocks_.get();
+        int blk0 = 0;  // index of the row's first block within an MCU
         for (int ci = 0; ci < cs_.comps_in_scan; ci++) {
           ComponentInfo* c = cs_.cur_comp_info[ci];
-          int blockcnt = (MCU_col_num < last_MCU_col) ? c->MCU_width : c->last_col_width;
-          unsigned xpos = MCU_col_num * c->MCU_sample_width;
+          const unsigned w = static_cast<unsigned>(c->MCU_width);
+          const unsigned real =
+              (len - 1) * w + (last_col ? static_cast<unsigned>(c->last_col_width) : w);
           unsigned ypos = yoffset * DCTSIZE;
-          for (int yindex = 0; yindex < c->MCU_height; yindex++) {
-            if (iMCU_row_num_ < last_iMCU_row || yoffset + yindex < c->last_row_height) {
-              fdct_->forward_dct(c->quant_tbl_no, input_buf[c->component_index],
-                                 MCU_buffer[blkn], ypos, xpos, static_cast<unsigned>(blockcnt));
-              if (blockcnt < c->MCU_width) {
-                std::memset(MCU_buffer[blkn + blockcnt], 0,
-                            (c->MCU_width - blockcnt) * sizeof(Block));
-                for (int bi = blockcnt; bi < c->MCU_width; bi++)
-                  (*MCU_buffer[blkn + bi])[0] = (*MCU_buffer[blkn + bi - 1])[0];
+          for (int yindex = 0; yindex < c->MCU_height; yindex++, ypos += DCTSIZE) {
+            const bool row_real =
+                iMCU_row_num_ < last_iMCU_row || yoffset + yindex < c->last_row_height;
+            if (row_real)
+              fdct_->forward_dct(c->quant_tbl_no, input_buf[c->component_index], storage, ypos,
+                                 m0 * c->MCU_sample_width, real);
+            for (unsigned m = 0; m < len; m++)
+              for (unsigned x = 0; x < w; x++) {
+                Block* blk = storage + m * w + x;
+                MCU_buffer_[m * bim + blk0 + x] = blk;
+                if (!row_real || m * w + x >= real) {
+                  std::memset(blk, 0, sizeof(Block));
+                  dummy_[m * bim + blk0 + x] = true;
+                } else {
+                  dummy_[m * bim + blk0 + x] = false;
+                }
               }
-            } else {
-              std::memset(MCU_buffer[blkn], 0, c->MCU_width * sizeof(Block));
-              for (int bi = 0; bi < c->MCU_width; bi++)
-                (*MCU_buffer[blkn + bi])[0] = (*MCU_buffer[blkn - 1])[0];
-            }
-            blkn += c->MCU_width;
-            ypos += DCTSIZE;
+            storage += len * w;
+            blk0 += static_cast<int>(w);
           }
         }
-        if (++in_run == run) {
-          (*entropy_)->encode_mcu_run(MCU_buffer_, cs_.blocks_in_MCU, in_run);
-          in_run = 0;
-        }
+        for (unsigned j = 0; j < len * bim; j++)
+          if (dummy_[j] && j % bim) (*MCU_buffer_[j])[0] = (*MCU_buffer_[j - 1])[0];
+        (*entropy_)->encode_mcu_run(MCU_buffer_, bim, len);
       }
-      if (in_run) (*entropy_)->encode_mcu_run(MCU_buffer_, cs_.blocks_in_MCU, in_run);
       mcu_ctr_ = 0;
     }
     iMCU_row_num_++;
@@ -900,6 +907,7 @@ class CoefControllerC final : public CCoefController<T> {
   int MCU_vert_offset_ = 0, MCU_rows_per_iMCU_row_ = 0;
   static constexpr int kRunBlocks = 32;  // >= C_MAX_BLOCKS_IN_MCU
   Block* MCU_buffer_[kRunBlocks]{};
+  bool dummy_[kRunBlocks]{};
   AlignedPtr<Block> mcu_blocks_;
   std::vector<BlockArray> whole_image_;
 };

@@ -228,6 +228,29 @@ inline void forward_islow(std::uint8_t** sample_data, unsigned start_col,
   Block8 out = islow_pass<2>(transpose(islow_pass<1>(load_samples(sample_data, start_col), k)), k);
   for (int i = 0; i < 8; i++) quantize8(coef_block, divisors, 8 * i, out.v[i]);
 }
+// Two horizontally adjacent blocks (coef: two consecutive blocks): two
+// independent chains for the compiler to interleave, as one block leaves
+// the core waiting on each pass.
+inline void forward_islow2(std::uint8_t** sample_data, unsigned start_col,
+                           const std::uint16_t* divisors, std::int16_t* coef_block) {
+  using namespace detail_fdct;
+  const int16x4x3_t k = {{vld1_s16(opaque(islow_consts)), vld1_s16(opaque(islow_consts) + 4),
+                          vld1_s16(opaque(islow_consts) + 8)}};
+  Block8 a, b;
+  for (int r = 0; r < 8; r++) {
+    const uint8x16_t s = vld1q_u8(sample_data[r] + start_col);
+    a.v[r] = vreinterpretq_s16_u16(vsubl_u8(vget_low_u8(s), vdup_n_u8(128)));
+    b.v[r] = vreinterpretq_s16_u16(vsubl_u8(vget_high_u8(s), vdup_n_u8(128)));
+  }
+  a = islow_pass<1>(transpose(a), k);
+  b = islow_pass<1>(transpose(b), k);
+  a = islow_pass<2>(transpose(a), k);
+  b = islow_pass<2>(transpose(b), k);
+  for (int i = 0; i < 8; i++) {
+    quantize8(coef_block, divisors, 8 * i, a.v[i]);
+    quantize8(coef_block + 64, divisors, 8 * i, b.v[i]);
+  }
+}
 inline void forward_ifast(std::uint8_t** sample_data, unsigned start_col,
                           const std::uint16_t* divisors, std::int16_t* coef_block) {
   using namespace detail_fdct;

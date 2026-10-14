@@ -329,7 +329,12 @@ class ForwardDct {
         const bool simd_quantize = simd_.quantize && quantize16_ok_[qtblno];
         auto* forward = method_ == DctMethod::IntSlow ? simd_.forward_islow : simd_.forward_ifast;
         if (simd_quantize && forward) {
-          for (unsigned bi = 0; bi < num_blocks; bi++, start_col += DCTSIZE)
+          unsigned bi = 0;
+          if (method_ == DctMethod::IntSlow && simd_.forward_islow2)
+            for (; bi + 2 <= num_blocks; bi += 2, start_col += 2 * DCTSIZE)
+              simd_.forward_islow2(sample_data, start_col, divisors16_[qtblno],
+                                   coef_blocks[bi].data());
+          for (; bi < num_blocks; bi++, start_col += DCTSIZE)
             forward(sample_data, start_col, divisors16_[qtblno], coef_blocks[bi].data());
           return;
         }
