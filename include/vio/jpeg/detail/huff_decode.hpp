@@ -17,6 +17,15 @@
 #include "decompress_state.hpp"
 #include "../simd/common.hpp"
 
+// x86 with GCC or Clang: hot entropy-decoding loops are also compiled for
+// BMI2 and chosen at run time.
+#if (defined(__x86_64__) || defined(__i386__)) && (defined(__GNUC__) || defined(__clang__)) && \
+    !defined(__BMI2__)
+#define VIO_HUFF_BMI2_CLONE 1
+#else
+#define VIO_HUFF_BMI2_CLONE 0
+#endif
+
 namespace vio::jpeg::detail {
 
 inline constexpr int HUFF_LOOKAHEAD = 8;
@@ -508,6 +517,9 @@ class HuffDecoder final : public EntropyDecoder {
   explicit HuffDecoder(DState& st) : st_(st), br_(st) {
     // Motion-JPEG frames often omit default tables.
     std_huff_tables(st.dc_huff_tbl_ptrs, st.ac_huff_tbl_ptrs, true);
+#if VIO_HUFF_BMI2_CLONE
+    bmi2_ = st.simd.has(::vio::jpeg::simd::kBMI2);
+#endif
   }
 
   void start_pass() override {
@@ -559,7 +571,7 @@ class HuffDecoder final : public EntropyDecoder {
         st_.unread_marker != 0)
       usefast = false;
     if (!insufficient_data) {
-      if (!usefast || !decode_mcu_fast(MCU_data)) decode_mcu_slow(MCU_data);
+      if (!usefast || !fast(MCU_data)) decode_mcu_slow(MCU_data);
     }
     if (st_.restart_interval) restarts_to_go_--;
     return true;
@@ -630,11 +642,29 @@ class HuffDecoder final : public EntropyDecoder {
     br_ = br;
   }
 
+  bool fast(Block** MCU_data) {
+#if VIO_HUFF_BMI2_CLONE
+    if (bmi2_) return decode_mcu_fast_bmi2(MCU_data);
+#endif
+    return decode_mcu_fast(MCU_data);
+  }
+  VIO_NO_STACK_CHECK bool decode_mcu_fast(Block** MCU_data) { return decode_mcu_fast_body(MCU_data); }
+#if VIO_HUFF_BMI2_CLONE
+  // The same code compiled for BMI2 (CPUs reporting it, unless a lower SIMD
+  // level is forced): variable shifts without the flags merges that cost
+  // Intel cores two extra micro-ops each.
+  __attribute__((target("bmi,bmi2,lzcnt"))) VIO_NO_STACK_CHECK bool decode_mcu_fast_bmi2(
+      Block** MCU_data) {
+    return decode_mcu_fast_body(MCU_data);
+  }
+  bool bmi2_ = false;
+#endif
+
   // Fast path: operates directly on the input buffer; bails out (returning
   // false, with all state untouched) if a marker is encountered.  The bit
   // buffer is kept left-aligned and refilled 8 bytes at a time until a 0xFF
   // byte is reached; ff_ caches the position of the next 0xFF byte.
-  VIO_NO_STACK_CHECK bool decode_mcu_fast(Block** MCU_data) {
+  VIO_INLINE bool decode_mcu_fast_body(Block** MCU_data) {
     if (br_.bits_left > 63) return false;
     std::uint64_t buf = br_.bits_left ? br_.get_buffer << (64 - br_.bits_left) : 0;
     int cnt = br_.bits_left;
