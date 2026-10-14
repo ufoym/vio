@@ -92,6 +92,51 @@ VIO_INLINE void emit16(std::uint8_t* out, std::ptrdiff_t lane_stride, V::T ye, V
   store_pixels<PS>(out, lane_stride, pe, po);
 }
 
+// Back ends with byte shuffles (see ccolor.inc) interleave the pixels from
+// one register per component, its even pixels in bytes 0-7 and odd ones in
+// 8-15 of each lane: each 16 output bytes gather from the three registers.
+template <class X, class = void>
+struct HasShuffle8 : std::false_type {};
+template <class X>
+struct HasShuffle8<X, std::void_t<decltype(X::kShuffle8)>> : std::true_type {};
+
+// Index of output chunk C's bytes taken from component S (by position in
+// the pixel), or -128.
+template <int PS, int C, int S>
+struct ChunkIndex {
+  static constexpr std::int8_t at(int j) {
+    const int byte = 16 * C + j, pixel = byte / PS, pos = byte % PS;
+    return pos == S ? static_cast<std::int8_t>((pixel & 1) * 8 + pixel / 2) : std::int8_t(-128);
+  }
+  alignas(16) static constexpr std::int8_t idx[16] = {at(0), at(1), at(2),  at(3),  at(4),  at(5),
+                                                      at(6), at(7), at(8),  at(9),  at(10), at(11),
+                                                      at(12), at(13), at(14), at(15)};
+};
+
+template <int PS, int C, class W>
+VIO_INLINE typename W::T chunk(const typename W::T comp[3]) {
+  using T = typename W::T;
+  T v = W::shuffle_8(comp[0], W::load_bcast16(opaque(ChunkIndex<PS, C, 0>::idx)));
+  v = W::or_(v, W::shuffle_8(comp[1], W::load_bcast16(opaque(ChunkIndex<PS, C, 1>::idx))));
+  v = W::or_(v, W::shuffle_8(comp[2], W::load_bcast16(opaque(ChunkIndex<PS, C, 2>::idx))));
+  if constexpr (PS == 4) {  // the fourth byte of each pixel: 0xFF
+    alignas(16) static constexpr std::int8_t alpha[16] = {0, 0, 0, -1, 0, 0, 0, -1,
+                                                          0, 0, 0, -1, 0, 0, 0, -1};
+    v = W::or_(v, W::load_bcast16(opaque(alpha)));
+  }
+  return v;
+}
+
+// comp[k]: the samples of the component at position k in the pixel.
+template <int PS, class W>
+VIO_INLINE void store_shuffled(std::uint8_t* out, std::ptrdiff_t lane_stride,
+                               const typename W::T comp[3]) {
+  W::storeu_lanes(out, lane_stride, chunk<PS, 0, W>(comp));
+  W::storeu_lanes(out + 16, lane_stride, chunk<PS, 1, W>(comp));
+  W::storeu_lanes(out + 32, lane_stride, chunk<PS, 2, W>(comp));
+  if constexpr (PS == 4) W::storeu_lanes(out + 48, lane_stride, chunk<PS, 3, W>(comp));
+}
+
 }  // namespace detail_dc
 
 template <int R, int G, int B, int PS>
@@ -112,7 +157,17 @@ void ycc_rgb_convert(unsigned output_width, std::uint8_t*** input_buf, unsigned 
       Chroma ce = chroma(V::add_16(V::even_u8(cb), m128), V::add_16(V::even_u8(cr), m128));
       Chroma co = chroma(V::add_16(V::odd_u8(cb), m128), V::add_16(V::odd_u8(cr), m128));
       std::uint8_t* dst = cols < N ? tmp : outptr;
-      emit16<R, G, B, PS>(dst, 16 * PS, V::even_u8(y), V::odd_u8(y), ce, co);
+      if constexpr (HasShuffle8<V>::value &&
+                    (PS == 3 || (R < 3 && G < 3 && B < 3))) {  // (alpha last)
+        const V::T ye = V::even_u8(y), yo = V::odd_u8(y);
+        V::T comp[3];
+        comp[R] = V::packus_16(V::add_16(ce.rmy, ye), V::add_16(co.rmy, yo));
+        comp[G] = V::packus_16(V::add_16(ce.gmy, ye), V::add_16(co.gmy, yo));
+        comp[B] = V::packus_16(V::add_16(ce.bmy, ye), V::add_16(co.bmy, yo));
+        store_shuffled<PS, V>(dst, 16 * PS, comp);
+      } else {
+        emit16<R, G, B, PS>(dst, 16 * PS, V::even_u8(y), V::odd_u8(y), ce, co);
+      }
       if (cols < N) std::memcpy(outptr, tmp, static_cast<std::size_t>(cols) * PS);
       inptr0 += N;
       inptr1 += N;
