@@ -209,7 +209,24 @@ class ColorDeconverter {
       const T* inptr2 = K == GrayRgb ? inptr0 : input_buf[2][input_row];
       input_row++;
       T* outptr = *output_buf++;
-      for (unsigned col = 0; col < num_cols; col++) {
+      unsigned col = 0;
+#if defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_X64)
+      if constexpr (K == GrayRgb && kBits<T> == 8) {
+        // On x86, where compilers leave this loop scalar, a 32-bit store
+        // per pixel instead of three or four byte stores (stores are what
+        // limits it; Arm compilers vectorize it).  With 3-byte pixels each
+        // store also writes the next pixel's first byte, which that pixel
+        // then overwrites: the last pixel is left to the loop below.
+        constexpr std::uint32_t alpha = A >= 0 ? std::uint32_t(0xFF) << (8 * A) : 0;
+        constexpr std::uint32_t mask = A >= 0 ? ~(std::uint32_t(0xFF) << (8 * A)) : ~0u;
+        for (const unsigned end = PS == 4 ? num_cols : num_cols - (num_cols > 0); col < end; col++) {
+          const std::uint32_t v = (inptr0[col] * 0x01010101u & mask) | alpha;
+          std::memcpy(outptr, &v, 4);
+          outptr += PS;
+        }
+      }
+#endif
+      for (; col < num_cols; col++) {
         if constexpr (K == YccRgb && kBits<T> <= 12 && kVectorizesWide) {
           // The table entries (YccRgbTables), computed directly in 32 bits
           // and clamped, so that the loop vectorizes.
