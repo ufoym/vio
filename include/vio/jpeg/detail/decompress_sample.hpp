@@ -28,6 +28,34 @@ class ColorQuantizer {
   bool noop = false;  // set while discarding scanlines
 };
 
+// Fancy upsampling of 8-bit samples four at a time in 16-bit lanes of a
+// 64-bit word, where per-sample loops are not vectorized (the lanes never
+// carry: sums stay below 4096).  Little-endian only: the even and odd
+// outputs of a lane are then adjacent bytes.
+namespace swar {
+template <class T>
+inline constexpr bool kFancy =
+    !kVectorizesWide && kBits<T> == 8 && std::endian::native == std::endian::little;
+inline constexpr std::uint64_t kLanes = 0x0001000100010001, kLow8 = 0x00FF00FF00FF00FF;
+
+// Samples p[0..3] in 16-bit lanes (the rows are padded: reading past the
+// end is safe).
+template <class T>
+VIO_INLINE std::uint64_t load4(const T* p) {
+  std::uint32_t x;
+  std::memcpy(&x, p, 4);
+  std::uint64_t y = x;
+  y = (y | y << 16) & 0x0000FFFF0000FFFF;
+  return (y | y << 8) & kLow8;
+}
+// Writes the low bytes of the lanes of even and odd interleaved.
+template <class T>
+VIO_INLINE void store8(T* p, std::uint64_t even, std::uint64_t odd) {
+  const std::uint64_t v = even | odd << 8;
+  std::memcpy(p, &v, 8);
+}
+}  // namespace swar
+
 // ---------------------------------------------------------------------------
 // Separate upsampling + color conversion
 template <class T>
@@ -235,6 +263,32 @@ class SepUpsampler final : public Upsampler<T> {
         out[2 * w - 2] = static_cast<T>((in[w - 1] * 3 + in[w - 2] + 1) >> 2);
         out[2 * w - 1] = in[w - 1];
       }
+    } else if constexpr (swar::kFancy<T>) {
+      using namespace swar;
+      T** output_data = output_data_ptr;
+      const unsigned w = c.downsampled_width;
+      for (int inrow = 0; inrow < st_.max_v_samp_factor; inrow++) {
+        const T* in = input_data[inrow];
+        T* out = output_data[inrow];
+        out[0] = in[0];
+        out[1] = static_cast<T>((in[0] * 3 + in[1] + 2) >> 2);
+        unsigned i = 1;
+        std::uint64_t prev = in[0], cur = load4(in + 1);  // in[i - 1], in[i..i + 3]
+        for (; i + 5 <= w; i += 4) {
+          const std::uint64_t next = load4(in + i + 4), t = cur * 3;
+          store8(out + 2 * i, ((t + (cur << 16 | prev) + kLanes) >> 2) & kLow8,
+                 ((t + (cur >> 16 | next << 48) + 2 * kLanes) >> 2) & kLow8);
+          prev = cur >> 48;
+          cur = next;
+        }
+        for (; i < w - 1; i++) {
+          const int v = in[i] * 3;
+          out[2 * i] = static_cast<T>((v + in[i - 1] + 1) >> 2);
+          out[2 * i + 1] = static_cast<T>((v + in[i + 1] + 2) >> 2);
+        }
+        out[2 * w - 2] = static_cast<T>((in[w - 1] * 3 + in[w - 2] + 1) >> 2);
+        out[2 * w - 1] = in[w - 1];
+      }
     } else {  // running sums
       T** output_data = output_data_ptr;
       for (int inrow = 0; inrow < st_.max_v_samp_factor; inrow++) {
@@ -295,6 +349,41 @@ class SepUpsampler final : public Upsampler<T> {
           out[0] = static_cast<T>((col(0) * 4 + 8) >> 4);
           out[1] = static_cast<T>((col(0) * 3 + col(1) + 7) >> 4);
           for (unsigned i = 1; i < w - 1; i++) {
+            const int t = col(i) * 3;
+            out[2 * i] = static_cast<T>((t + col(i - 1) + 8) >> 4);
+            out[2 * i + 1] = static_cast<T>((t + col(i + 1) + 7) >> 4);
+          }
+          out[2 * w - 2] = static_cast<T>((col(w - 1) * 3 + col(w - 2) + 8) >> 4);
+          out[2 * w - 1] = static_cast<T>((col(w - 1) * 4 + 7) >> 4);
+        }
+        inrow++;
+      }
+    } else if constexpr (swar::kFancy<T>) {
+      using namespace swar;
+      T** output_data = output_data_ptr;
+      const unsigned w = c.downsampled_width;
+      int inrow = 0, outrow = 0;
+      while (outrow < st_.max_v_samp_factor) {
+        for (int v = 0; v < 2; v++) {
+          const T* in0 = input_data[inrow];
+          const T* in1 = v == 0 ? input_data[inrow - 1] : input_data[inrow + 1];
+          T* out = output_data[outrow++];
+          // Column sums of the vertical pass.
+          auto col = [&](unsigned i) VIO_LAMBDA_INLINE { return in0[i] * 3 + in1[i]; };
+          out[0] = static_cast<T>((col(0) * 4 + 8) >> 4);
+          out[1] = static_cast<T>((col(0) * 3 + col(1) + 7) >> 4);
+          unsigned i = 1;
+          // col(i - 1), col(i..i + 3)
+          std::uint64_t prev = static_cast<unsigned>(col(0)),
+                        cur = load4(in0 + 1) * 3 + load4(in1 + 1);
+          for (; i + 5 <= w; i += 4) {
+            const std::uint64_t next = load4(in0 + i + 4) * 3 + load4(in1 + i + 4), t = cur * 3;
+            store8(out + 2 * i, ((t + (cur << 16 | prev) + 8 * kLanes) >> 4) & kLow8,
+                   ((t + (cur >> 16 | next << 48) + 7 * kLanes) >> 4) & kLow8);
+            prev = cur >> 48;
+            cur = next;
+          }
+          for (; i < w - 1; i++) {
             const int t = col(i) * 3;
             out[2 * i] = static_cast<T>((t + col(i - 1) + 8) >> 4);
             out[2 * i + 1] = static_cast<T>((t + col(i + 1) + 7) >> 4);
