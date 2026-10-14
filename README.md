@@ -227,6 +227,7 @@ Throughput gain of each change over the build before it (A/B on the same machine
 - Refinement non-zero masks computed one block ahead ([c7a099f](https://github.com/ufoym/vio/commit/c7a099f)): progressive decompression +2–5% (Arm).
 - Row-batched forward DCT, two interleaved blocks per Neon call ([5e4033e](https://github.com/ufoym/vio/commit/5e4033e)): compression +1–9%.
 - Byte-level transpose shared by both blocks of the Neon two-block forward DCT ([68f3a1d](https://github.com/ufoym/vio/commit/68f3a1d)): compression +0.3–2.5%.
+- Base-pointer table indexing in the Huffman encoder loops, sparing GCC per-coefficient address arithmetic ([62e36ff](https://github.com/ufoym/vio/commit/62e36ff)): compression +3–8% (GCC on Arm).
 
 ## Building and testing
 
