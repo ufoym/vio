@@ -232,6 +232,7 @@ Throughput gain of each change over the build before it (A/B on the same machine
 - New-coefficient bitmap from the refinement prepare kernels' vector compares, so correction bits are gathered only over previously non-zero coefficients ([f375a10](https://github.com/ufoym/vio/commit/f375a10)): progressive compression +11–24% (Arm), +19% (x86).
 - Grayscale-to-RGB output as one 32-bit store per pixel on x86, where the byte-store loop stays scalar ([3317d93](https://github.com/ufoym/vio/commit/3317d93)): grayscale decompression +2–23% (x86).
 - Sequential Huffman decoding fast path compiled a second time for BMI2 (shlx/shrx in place of shifts by cl) and chosen at run time ([680f0d8](https://github.com/ufoym/vio/commit/680f0d8)): decompression +3–6% (Intel Xeon, AVX2).
+- 128-bit accurate IDCT kept in named vectors instead of an array MSVC left in memory ([1f83f2d](https://github.com/ufoym/vio/commit/1f83f2d)): SSE2 decompression +2% (MSVC).
 
 ## Building and testing
 
