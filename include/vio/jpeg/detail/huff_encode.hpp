@@ -53,7 +53,6 @@ VIO_INLINE int nbits_nonzero(unsigned x) { return 32 - __builtin_clz(x); }
 VIO_INLINE int ctz64(std::uint64_t x) { return __builtin_ctzll(x); }  // x != 0
 #endif
 VIO_INLINE int nbits(unsigned x) { return x ? nbits_nonzero(x) : 0; }
-VIO_INLINE int popcount64(std::uint64_t x) { return std::popcount(x); }
 
 struct CDerivedTable {
   unsigned ehufco[256];

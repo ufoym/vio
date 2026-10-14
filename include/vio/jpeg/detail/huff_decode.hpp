@@ -1181,7 +1181,7 @@ class PhuffDecoder final : public EntropyDecoder {
         } else {
           branch_barrier();
           target = Se + 1;
-          n = std::popcount(nz & (~std::uint64_t(0) << k));
+          n = popcount64(nz & (~std::uint64_t(0) << k));
           late = v;
           v = 0;
         }
@@ -1196,7 +1196,7 @@ class PhuffDecoder final : public EntropyDecoder {
       }
     }
     if (EOBRUN > 0) {
-      const int n = std::popcount(nz & (~std::uint64_t(0) << k));
+      const int n = popcount64(nz & (~std::uint64_t(0) << k));
       acc = acc << n | take(b, n);
       b.single_bits(n);
       EOBRUN--;

@@ -2,6 +2,7 @@
 #pragma once
 
 #include <algorithm>
+#include <bit>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -38,6 +39,19 @@ template <class T>
 inline constexpr int kCenterSample = 1 << (kBits<T> - 1);
 
 using JLong = long long;  // 64-bit intermediate arithmetic
+
+// Population count.  The x86-64 baseline has no POPCNT instruction, and
+// GCC then calls a library routine: the bit-parallel count is inline.
+VIO_INLINE int popcount64(std::uint64_t x) {
+#if (defined(__x86_64__) || defined(__i386__)) && !defined(__POPCNT__)
+  x -= (x >> 1) & 0x5555555555555555ULL;
+  x = (x & 0x3333333333333333ULL) + ((x >> 2) & 0x3333333333333333ULL);
+  x = (x + (x >> 4)) & 0x0F0F0F0F0F0F0F0FULL;
+  return static_cast<int>((x * 0x0101010101010101ULL) >> 56);
+#else
+  return std::popcount(x);
+#endif
+}
 
 // Whether the compiler vectorizes per-sample loops written as independent
 // arithmetic (MSVC does not: table lookups and running sums are faster
