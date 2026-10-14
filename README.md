@@ -210,6 +210,25 @@ decompression ranges from 7% slower (Zen 3) to 20% faster.  Shared CI
 runners are noisy (the macOS x86-64 runner most of all), so differences of a
 few percent are within run-to-run variation.
 
+### Optimization log
+
+Throughput gain of each change over the build before it (A/B on the same machine).
+
+- Marker-free 64-bit bit reader for progressive scans, bitmap-driven refinement, two-symbol AC lookup ([3e78226](https://github.com/ufoym/vio/commit/3e78226)): progressive decompression +42% (Cortex-X925), arithmetic decoding +30–34%, sequential decoding +7–9%.
+- Batched progressive AC encoding with word-packed correction bits; branch-free lossless and arithmetic encoders ([545fc4b](https://github.com/ufoym/vio/commit/545fc4b)): progressive compression +30–60%, arithmetic compression +17–33%.
+- Per-sample decompression color conversion and upsampling only with 32-bit vector multiplies ([8a012f5](https://github.com/ufoym/vio/commit/8a012f5)): scalar decompression +7–9% (x86-64 baseline).
+- SIMD non-zero masks for refinement decoding ([3b14b7b](https://github.com/ufoym/vio/commit/3b14b7b)): progressive decompression +5% (Zen 3, AVX2).
+- Register-resident Huffman bit writer under MSVC ([4dd1653](https://github.com/ufoym/vio/commit/4dd1653)): compression +5% (AVX2), +3% (SSE2).
+- calloc-backed zeroed buffers ([3193dec](https://github.com/ufoym/vio/commit/3193dec)): progressive decompression +1.5–2% (Windows).
+- Low-to-high correction-bit application, removing an lzcnt dependency chain ([bd858b0](https://github.com/ufoym/vio/commit/bd858b0)): progressive decompression +4–14%.
+- SWAR fancy upsampling (four 16-bit lanes per 64-bit word) ([c1674e9](https://github.com/ufoym/vio/commit/c1674e9), [0504ca5](https://github.com/ufoym/vio/commit/0504ca5)): scalar decompression +2.5–5%.
+- 16-byte SWAR scan for byte stuffing ([76d0383](https://github.com/ufoym/vio/commit/76d0383)): compression +0.8% (Apple M4).
+- Packed 64-bit YCbCr→RGB tables for scalar 8-bit decoding ([4e2bea0](https://github.com/ufoym/vio/commit/4e2bea0)): scalar decompression +3–4% (MSVC).
+- Huffman encoding software-pipelined across blocks over 32-block MCU runs ([692e995](https://github.com/ufoym/vio/commit/692e995)): compression +4–26%.
+- Software-pipelined progressive AC encoding ([3e6f49f](https://github.com/ufoym/vio/commit/3e6f49f)): progressive compression +5–19%.
+- Refinement non-zero masks computed one block ahead ([c7a099f](https://github.com/ufoym/vio/commit/c7a099f)): progressive decompression +2–5% (Arm).
+- Row-batched forward DCT, two interleaved blocks per Neon call ([5e4033e](https://github.com/ufoym/vio/commit/5e4033e)): compression +1–9%.
+
 ## Building and testing
 
 The test programs and images come from a submodule:
