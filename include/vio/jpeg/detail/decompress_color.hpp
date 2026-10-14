@@ -217,8 +217,9 @@ class ColorDeconverter {
         // limits it; Arm compilers vectorize it).  With 3-byte pixels each
         // store also writes the next pixel's first byte, which that pixel
         // then overwrites: the last pixel is left to the loop below.
-        constexpr std::uint32_t alpha = A >= 0 ? std::uint32_t(0xFF) << (8 * A) : 0;
-        constexpr std::uint32_t mask = A >= 0 ? ~(std::uint32_t(0xFF) << (8 * A)) : ~0u;
+        constexpr int a8 = 8 * (A >= 0 ? A : 0);
+        constexpr std::uint32_t alpha = A >= 0 ? std::uint32_t(0xFF) << a8 : 0;
+        constexpr std::uint32_t mask = A >= 0 ? ~(std::uint32_t(0xFF) << a8) : ~0u;
         for (const unsigned end = PS == 4 ? num_cols : num_cols - (num_cols > 0); col < end; col++) {
           const std::uint32_t v = (inptr0[col] * 0x01010101u & mask) | alpha;
           std::memcpy(outptr, &v, 4);
