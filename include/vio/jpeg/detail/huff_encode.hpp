@@ -283,6 +283,25 @@ class HuffEncoder final : public EntropyEncoder {
     const std::uint8_t* const end = raw_next_;
     cs_.dest.ensure(2 * static_cast<std::size_t>(end - p));
     std::uint8_t* out = cs_.dest.next;
+    // 16 bytes at a time while they hold no 0xFF (most of the time: the
+    // calls below cost more than the copying between rare 0xFF bytes).
+    constexpr std::uint64_t ones = 0x0101010101010101, highs = ones << 7;
+    while (end - p >= 16) {
+      std::uint64_t a, b;
+      std::memcpy(&a, p, 8);
+      std::memcpy(&b, p + 8, 8);
+      // A zero byte of ~a: an 0xFF byte of a (exactly, with the borrows).
+      const std::uint64_t na = ~a, nb = ~b;
+      if (((na - ones) & ~na & highs) | ((nb - ones) & ~nb & highs)) {
+        for (int i = 0; i < 16; i++)
+          if ((*out++ = p[i]) == 0xFF) *out++ = 0;
+      } else {
+        std::memcpy(out, &a, 8);
+        std::memcpy(out + 8, &b, 8);
+        out += 16;
+      }
+      p += 16;
+    }
     while (p < end) {
       const void* ff = std::memchr(p, 0xFF, static_cast<std::size_t>(end - p));
       const std::uint8_t* stop = ff ? static_cast<const std::uint8_t*>(ff) + 1 : end;
