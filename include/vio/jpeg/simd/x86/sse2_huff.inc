@@ -315,22 +315,34 @@ VIO_INLINE void gather_band(const std::int16_t* block, const int* order, int Sl,
   for (; k < Sl; k++) out[k] = block[order[k]];
   for (; k < 64; k++) out[k] = 0;
 }
+
+// The band of Sl coefficients from order[0] in z[] (8 per vector).  Bands
+// starting at zig-zag position 1 or 6 (natural index 1 or 3, those of the
+// usual scripts) come from registers, with lanes past the band to be
+// ignored (returns true); others are gathered, zero past the band.
+VIO_INLINE bool load_band(const std::int16_t* block, const int* order, int Sl, T z[8]) {
+  if (order[0] == 1) {
+    load_zigzag(block, z);
+    return true;
+  }
+  if (order[0] == 3) {
+    load_zigzag(block, z);  // positions 1..63: position 6 is lane 5
+    for (int i = 0; i < 7; i++) z[i] = _mm_or_si128(_mm_srli_si128(z[i], 10), _mm_slli_si128(z[i + 1], 6));
+    z[7] = _mm_srli_si128(z[7], 10);
+    return true;
+  }
+  alignas(16) std::int16_t c[64];
+  gather_band(block, order, Sl, c);
+  for (int i = 0; i < 8; i++) z[i] = _mm_load_si128(reinterpret_cast<const T*>(c + i * 8));
+  return false;
+}
 }  // namespace detail_huff
 
 inline VIO_NO_STACK_CHECK std::uint64_t ac_first_prepare(const std::int16_t* block, const int* order, int Sl, int Al,
                                       std::uint16_t* values) {
   using namespace detail_huff;
-  // Bands starting at coefficient 1 (the usual case) are loaded in
-  // registers; lanes past the band only need their bitmap bits cleared.
-  const bool from1 = order[0] == 1;
-  alignas(16) std::int16_t c[64];
   T z[8];
-  if (from1) {
-    load_zigzag(block, z);
-  } else {
-    gather_band(block, order, Sl, c);
-    for (int i = 0; i < 8; i++) z[i] = _mm_load_si128(reinterpret_cast<const T*>(c + i * 8));
-  }
+  const bool in_regs = load_band(block, order, Sl, z);
   const T zero = _mm_setzero_si128();
   const T shift = _mm_cvtsi32_si128(Al);
   T eq[8];
@@ -343,7 +355,7 @@ inline VIO_NO_STACK_CHECK std::uint64_t ac_first_prepare(const std::int16_t* blo
     eq[i] = _mm_cmpeq_epi16(a, zero);
   }
   std::uint64_t bits = ~movemask64(eq);
-  if (from1) bits &= (std::uint64_t(1) << Sl) - 1;  // Sl <= 63
+  if (in_regs) bits &= (std::uint64_t(1) << Sl) - 1;  // Sl <= 63
   return bits;
 }
 
@@ -351,15 +363,8 @@ inline VIO_NO_STACK_CHECK int ac_refine_prepare(const std::int16_t* block, const
                              std::uint16_t* absvalues, std::uint64_t* zerobits,
                              std::uint64_t* signbits) {
   using namespace detail_huff;
-  const bool from1 = order[0] == 1;  // see ac_first_prepare()
-  alignas(16) std::int16_t c[64];
   T z[8];
-  if (from1) {
-    load_zigzag(block, z);
-  } else {
-    gather_band(block, order, Sl, c);
-    for (int i = 0; i < 8; i++) z[i] = _mm_load_si128(reinterpret_cast<const T*>(c + i * 8));
-  }
+  const bool in_regs = load_band(block, order, Sl, z);
   const T zero = _mm_setzero_si128(), one = _mm_set1_epi16(1);
   const T shift = _mm_cvtsi32_si128(Al);
   T eq0[8], neg[8], eq1[8];
@@ -373,7 +378,7 @@ inline VIO_NO_STACK_CHECK int ac_refine_prepare(const std::int16_t* block, const
     eq1[i] = _mm_cmpeq_epi16(a, one);
   }
   // Lanes past the band count as zero coefficients.
-  const std::uint64_t band = from1 ? (std::uint64_t(1) << Sl) - 1 : ~std::uint64_t(0);
+  const std::uint64_t band = in_regs ? (std::uint64_t(1) << Sl) - 1 : ~std::uint64_t(0);
   *zerobits = ~movemask64(eq0) & band;
   *signbits = ~(movemask64(neg) & band);
   std::uint64_t eob = movemask64(eq1) & band;
