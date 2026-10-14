@@ -246,6 +246,7 @@ class BitReader {
 // total length then in bits 0-3) for AC, in bits 8-11 for DC.
 inline constexpr int DC_FAST_BITS = 9;
 inline constexpr int AC_FAST_BITS = 11;
+inline constexpr int LL_FAST_BITS = 12;  // lossless differences: longer codes and values
 template <int B>
 using FastTable = std::array<std::int32_t, 1 << B>;
 
@@ -371,7 +372,7 @@ struct MarkerFreeBits {
   // A Huffman code of length l, decoded with an 8-bit lookahead and then (for
   // longer codes) 9 bits and one more at a time.
   VIO_INLINE void code(int l) {
-    if (VIO_LIKELY(l <= 10)) {
+    if (VIO_LIKELY(l <= 16)) {
       code_bits(l, l);
     } else {
       branch_barrier();
@@ -454,10 +455,11 @@ struct MarkerFreeBits {
     if (VIO_UNLIKELY(c >> 8 > 16)) bad_code(st);
     return static_cast<int>(c & 0xFF);
   }
-  // A code of length l (<= 10) and value bits making t bits in all, from a
+  // A code of length l (<= 16) and value bits making t bits in all, from a
   // table entry.  At most one fill: at the code (fewer than h bits: 8 for
-  // the lookahead, 9 for a longer code) or past it (fewer than t), adding
-  // the whole bytes up to 57 bits or more.  Without branches (masks): the
+  // the lookahead, 9 for a longer code, whose bits past 9 come one at a time
+  // and so fill only from 0 bits) or past it (fewer than t), adding the
+  // whole bytes up to 57 bits or more.  Without branches (masks): the
   // fills come at irregular intervals.
   VIO_INLINE void code_bits(int l, int t) {
     const int h = HUFF_LOOKAHEAD + (l > HUFF_LOOKAHEAD);
@@ -1317,7 +1319,7 @@ class LhuffDecoder final : public EntropyDecoder {
       if (dctbl < 0 || dctbl >= NUM_HUFF_TBLS || !st_.dc_huff_tbl_ptrs[dctbl])
         VIO_FAIL("Huffman table 0x%02x was not defined", dctbl);
       make_d_derived_tbl(st_, true, dctbl, derived_[dctbl]);
-      make_fast_table<DC_FAST_BITS>(derived_[dctbl], true, fast_[dctbl], 16, true);
+      make_fast_table<LL_FAST_BITS>(derived_[dctbl], true, fast_[dctbl], 16, true);
     }
     int ptrn = 0;
     for (int sampn = 0; sampn < st_.blocks_in_MCU;) {
@@ -1376,7 +1378,7 @@ class LhuffDecoder final : public EntropyDecoder {
         }
         const std::ptrdiff_t margin = 8 * blocks + 32;
         if (mk_ - p >= margin) {
-          const FastTable<DC_FAST_BITS>* fast[D_MAX_BLOCKS_IN_MCU];
+          const FastTable<LL_FAST_BITS>* fast[D_MAX_BLOCKS_IN_MCU];
           for (int sampn = 0; sampn < blocks; sampn++) fast[sampn] = cur_fast_[sampn];
           MarkerFreeBits b;
           b.cnt = br.bits_left;
@@ -1389,7 +1391,7 @@ class LhuffDecoder final : public EntropyDecoder {
           b.refill();
           do {
             for (int sampn = 0; sampn < blocks; sampn++) {
-              std::int32_t e = (*fast[sampn])[b.peek(DC_FAST_BITS)];
+              std::int32_t e = (*fast[sampn])[b.peek(LL_FAST_BITS)];
               b.refill();
               int s;
               if (VIO_LIKELY(e & 0x8000)) {
@@ -1397,7 +1399,7 @@ class LhuffDecoder final : public EntropyDecoder {
                 b.code_bits((e >> 8) & 15, e & 0xFF);
                 s = e >> 16;
               } else {
-                s = b.symbol(e, *tbls[sampn], DC_FAST_BITS, st_);
+                s = b.symbol(e, *tbls[sampn], LL_FAST_BITS, st_);
                 if (s && s != 16) b.bits(s);
                 if (s) s = s == 16 ? 32768 : huff_extend(b.get(s), s);
               }
@@ -1448,8 +1450,8 @@ class LhuffDecoder final : public EntropyDecoder {
   BitReader br_;
   DerivedTable derived_[NUM_HUFF_TBLS];
   const DerivedTable* cur_tbls_[D_MAX_BLOCKS_IN_MCU]{};
-  FastTable<DC_FAST_BITS> fast_[NUM_HUFF_TBLS];
-  const FastTable<DC_FAST_BITS>* cur_fast_[D_MAX_BLOCKS_IN_MCU]{};
+  FastTable<LL_FAST_BITS> fast_[NUM_HUFF_TBLS];
+  const FastTable<LL_FAST_BITS>* cur_fast_[D_MAX_BLOCKS_IN_MCU]{};
   const std::uint8_t* ff_ = nullptr;      // next 0xFF byte at or after the input position
   const std::uint8_t* mk_ = nullptr;      // next marker at or after the input position
   const std::uint8_t* mk_end_ = nullptr;  // end of the buffer ff_ and mk_ were found in
