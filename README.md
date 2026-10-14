@@ -230,7 +230,7 @@ Throughput gain of each change over the build before it (A/B on the same machine
 - Base-pointer table indexing in the Huffman encoder loops, sparing GCC per-coefficient address arithmetic ([62e36ff](https://github.com/ufoym/vio/commit/62e36ff)): compression +3–8% (GCC on Arm).
 - Progressive AC bands from zig-zag position 1 or 6 built in registers by table lookups and lane extracts instead of per-coefficient gathers ([571291d](https://github.com/ufoym/vio/commit/571291d)): progressive compression +7–10% (Arm), +6% (x86).
 - New-coefficient bitmap from the refinement prepare kernels' vector compares, so correction bits are gathered only over previously non-zero coefficients ([f375a10](https://github.com/ufoym/vio/commit/f375a10)): progressive compression +11–24% (Arm), +19% (x86).
-- Grayscale-to-RGB output as one 32-bit store per pixel on x86, where the byte-store loop stays scalar ([3317d93](https://github.com/ufoym/vio/commit/3317d93)): grayscale decompression +2–8% (Zen 3).
+- Grayscale-to-RGB output as one 32-bit store per pixel on x86, where the byte-store loop stays scalar ([3317d93](https://github.com/ufoym/vio/commit/3317d93)): grayscale decompression +2–23% (x86).
 
 ## Building and testing
 
