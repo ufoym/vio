@@ -108,6 +108,10 @@ VIO_INLINE void huff_encode_prepared(const detail_huff::Prepared& p, const Table
   unsigned i = 1;
   const unsigned code_0xf0 = actbl.ehufco[0xf0];
   const int size_0xf0 = actbl.ehufsi[0xf0];
+  // Base pointers in registers: one indexed load each per coefficient.
+  const std::uint16_t* const diff = p.diff;
+  const std::uint8_t* const nbits = p.nbits;
+  const std::uint64_t* const emit = actbl.emit;
   // next() appends a coefficient (at most 31 bits); the output is written
   // after every second one, or after one when another might not fit.
   auto next = [&]() VIO_LAMBDA_INLINE {
@@ -119,8 +123,8 @@ VIO_INLINE void huff_encode_prepared(const detail_huff::Prepared& p, const Table
       w.put_bits(code_0xf0, size_0xf0);
       r -= 16;
     }
-    const std::uint64_t e = actbl.emit[(r << 4) + p.nbits[k]];
-    w.append(static_cast<std::uint32_t>(e) | p.diff[k], static_cast<int>(e >> 32));
+    const std::uint64_t e = emit[(r << 4) + nbits[k]];
+    w.append(static_cast<std::uint32_t>(e) | diff[k], static_cast<int>(e >> 32));
   };
   while (bitmap != 0) {
     next();

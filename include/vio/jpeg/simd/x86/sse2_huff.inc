@@ -213,7 +213,7 @@ VIO_INLINE void load_zigzag(const std::int16_t* block, T z[8]) {
 // lambda: MSVC keeps whatever a closure refers to in memory.
 template <class Table>
 VIO_INLINE void encode_next(detail_huff::BitWriter& w, std::uint64_t& index, unsigned& k,
-                            const std::int16_t* t, const Table& actbl) {
+                            const std::int16_t* t, const Table& actbl, const std::uint64_t* emit) {
   using namespace detail_huff;
   const unsigned pos = ctz64(index);  // coefficient pos + 1
   index = clear_lowest(index);
@@ -225,7 +225,7 @@ VIO_INLINE void encode_next(detail_huff::BitWriter& w, std::uint64_t& index, uns
   }
   const int code = t[pos];
   const int nbits = ac_bit_length(static_cast<unsigned>(code ^ (code >> 31)));
-  const std::uint64_t e = actbl.emit[(run << 4) + static_cast<unsigned>(nbits)];
+  const std::uint64_t e = emit[(run << 4) + static_cast<unsigned>(nbits)];
   w.append(static_cast<std::uint32_t>(e) | low_bits(static_cast<unsigned>(code), nbits),
            static_cast<int>(e >> 32));
 }
@@ -269,13 +269,16 @@ VIO_INLINE void encode_block(detail_huff::BitWriter& w, const detail_huff::Prepa
 
   std::uint64_t index = p.index;
   unsigned k = 0;  // zig-zag position of the last coefficient coded
+  // Base pointers in registers: one indexed load each per coefficient.
+  const std::int16_t* const t = p.t;
+  const std::uint64_t* const emit = actbl.emit;
   // The output is written after every second coefficient, or after one
   // when (rarely) another one might not fit.
   while (index) {
-    encode_next(w, index, k, p.t, actbl);
+    encode_next(w, index, k, t, actbl, emit);
     if (VIO_UNLIKELY(w.count > 32)) w.flush();
     if (!index) break;
-    encode_next(w, index, k, p.t, actbl);
+    encode_next(w, index, k, t, actbl, emit);
     w.flush();
   }
   if (k != 63) w.append(actbl.ehufco[0], actbl.ehufsi[0]);
