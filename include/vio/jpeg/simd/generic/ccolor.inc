@@ -98,6 +98,61 @@ VIO_INLINE V::T interleave_bytes(V::T even, V::T odd) {
   return V::interleave_u8(even, odd);
 }
 
+// Back ends with byte shuffles take (R, G) and (B, G) pairs of 4 pixels
+// straight from the pixel bytes, ready for pmaddwd.
+template <class X, class = void>
+struct HasShuffle8 : std::false_type {};
+template <class X>
+struct HasShuffle8<X, std::void_t<decltype(X::kShuffle8)>> : std::true_type {};
+
+// Windows of 4 pixels (pixel k at byte PS * k) of the 16 pixels per lane.
+// (W is V; a template parameter so that back ends without these operations
+// never compile them.)
+template <int PS, class W>
+VIO_INLINE void windows(const std::uint8_t* p, typename W::T w[4]) {
+  if constexpr (PS == 3) {
+    const auto a = W::loadu_lanes(p, 48), f = W::loadu_lanes(p + 16, 48),
+               b = W::loadu_lanes(p + 32, 48);
+    w[0] = a;                                // bytes 0-15
+    w[1] = W::template alignr<12>(f, a);     // 12-27
+    w[2] = W::template alignr<8>(b, f);      // 24-39
+    w[3] = W::template bsrli<4>(b);          // 36-47
+  } else {
+    for (int i = 0; i < 4; i++) w[i] = W::loadu_lanes(p + 16 * i, 64);
+  }
+}
+
+template <class W>
+VIO_INLINE typename W::T shuffle8(typename W::T a, typename W::T idx) {
+  return W::shuffle_8(a, idx);
+}
+
+// Shuffle index: 16-bit (x, y) pairs of the 4 pixels, zero-extended.
+template <int X, int Y, int PS, class W>
+VIO_INLINE typename W::T pair_index() {
+  alignas(16) static constexpr std::int8_t idx[16] = {
+      X,          -128, Y,          -128, PS + X,     -128, PS + Y,     -128,
+      2 * PS + X, -128, 2 * PS + Y, -128, 3 * PS + X, -128, 3 * PS + Y, -128};
+  return W::load_bcast16(opaque(idx));
+}
+
+// Y of 4 pixels (32-bit) from their (R, G) and (B, G) pairs.
+VIO_INLINE V::T luma4(V::T rg, V::T bg) {
+  const V::T k_rg = V::set2_16(F_0_299, F_0_337), k_bg = V::set2_16(F_0_114, F_0_250);
+  return V::srli_32<16>(
+      V::add_32(V::add_32(V::madd_16(rg, k_rg), V::madd_16(bg, k_bg)), V::set1_32(ONE_HALF)));
+}
+// Cb from (x, y) = (R, G) and z = B, or Cr from (B, G) and z = R (z in the
+// low half of the other pair).
+VIO_INLINE V::T chroma4(V::T xy, V::T zpair, V::T k) {
+  const V::T z15 = V::slli_32<15>(V::and_(zpair, V::set1_32(0xFFFF)));
+  return V::srli_32<16>(
+      V::add_32(V::add_32(V::madd_16(xy, k), z15), V::set1_32(ONEHALFM1_CJ)));
+}
+VIO_INLINE V::T pack4x4(V::T a, V::T b, V::T c, V::T d) {
+  return V::packus_16(V::packs_32(a, b), V::packs_32(c, d));
+}
+
 }  // namespace detail_cc
 
 template <int R, int G, int B, int PS>
@@ -119,13 +174,28 @@ void rgb_ycc_convert(unsigned image_width, std::uint8_t** input_buf, std::uint8_
         std::memcpy(tmp, inptr, static_cast<std::size_t>(cols) * PS);
         src = tmp;
       }
-      V::T e[4], o[4];
-      deinterleave<PS>(src, e, o);
-      V::storeu(outptr0, interleave_bytes(luma(e[R], e[G], e[B]), luma(o[R], o[G], o[B])));
-      V::storeu(outptr1, interleave_bytes(chroma(e[R], e[G], e[B], k_cb),
-                                          chroma(o[R], o[G], o[B], k_cb)));
-      V::storeu(outptr2, interleave_bytes(chroma(e[B], e[G], e[R], k_cr),
-                                          chroma(o[B], o[G], o[R], k_cr)));
+      if constexpr (HasShuffle8<V>::value) {
+        V::T w[4], y[4], cb[4], cr[4];
+        windows<PS, V>(src, w);
+        const V::T irg = pair_index<R, G, PS, V>(), ibg = pair_index<B, G, PS, V>();
+        for (int i = 0; i < 4; i++) {
+          const V::T rg = shuffle8<V>(w[i], irg), bg = shuffle8<V>(w[i], ibg);
+          y[i] = luma4(rg, bg);
+          cb[i] = chroma4(rg, bg, k_cb);
+          cr[i] = chroma4(bg, rg, k_cr);
+        }
+        V::storeu(outptr0, pack4x4(y[0], y[1], y[2], y[3]));
+        V::storeu(outptr1, pack4x4(cb[0], cb[1], cb[2], cb[3]));
+        V::storeu(outptr2, pack4x4(cr[0], cr[1], cr[2], cr[3]));
+      } else {
+        V::T e[4], o[4];
+        deinterleave<PS>(src, e, o);
+        V::storeu(outptr0, interleave_bytes(luma(e[R], e[G], e[B]), luma(o[R], o[G], o[B])));
+        V::storeu(outptr1, interleave_bytes(chroma(e[R], e[G], e[B], k_cb),
+                                            chroma(o[R], o[G], o[B], k_cb)));
+        V::storeu(outptr2, interleave_bytes(chroma(e[B], e[G], e[R], k_cr),
+                                            chroma(o[B], o[G], o[R], k_cr)));
+      }
       inptr += N * PS;
       outptr0 += N;
       outptr1 += N;
@@ -149,9 +219,17 @@ void rgb_gray_convert(unsigned image_width, std::uint8_t** input_buf, std::uint8
         std::memcpy(tmp, inptr, static_cast<std::size_t>(cols) * PS);
         src = tmp;
       }
-      V::T e[4], o[4];
-      deinterleave<PS>(src, e, o);
-      V::storeu(outptr, interleave_bytes(luma(e[R], e[G], e[B]), luma(o[R], o[G], o[B])));
+      if constexpr (HasShuffle8<V>::value) {
+        V::T w[4], y[4];
+        windows<PS, V>(src, w);
+        const V::T irg = pair_index<R, G, PS, V>(), ibg = pair_index<B, G, PS, V>();
+        for (int i = 0; i < 4; i++) y[i] = luma4(shuffle8<V>(w[i], irg), shuffle8<V>(w[i], ibg));
+        V::storeu(outptr, pack4x4(y[0], y[1], y[2], y[3]));
+      } else {
+        V::T e[4], o[4];
+        deinterleave<PS>(src, e, o);
+        V::storeu(outptr, interleave_bytes(luma(e[R], e[G], e[B]), luma(o[R], o[G], o[B])));
+      }
       inptr += N * PS;
       outptr += N;
     }

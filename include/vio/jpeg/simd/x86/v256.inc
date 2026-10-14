@@ -65,6 +65,13 @@ struct V {
   static VIO_INLINE T packs_16(T a, T b) { return _mm256_packs_epi16(a, b); }
   static VIO_INLINE T packus_16(T a, T b) { return _mm256_packus_epi16(a, b); }
 
+  // Byte shuffles within each 128-bit lane (index bit 7: zero).
+  static constexpr bool kShuffle8 = true;
+  static VIO_INLINE T shuffle_8(T a, T idx) { return _mm256_shuffle_epi8(a, idx); }
+  static VIO_INLINE T load_bcast16(const void* p) {  // the same 16 bytes in each lane
+    return _mm256_broadcastsi128_si256(_mm_loadu_si128(static_cast<const __m128i*>(p)));
+  }
+  template <int N> static VIO_INLINE T alignr(T hi, T lo) { return _mm256_alignr_epi8(hi, lo, N); }
   static VIO_INLINE T and_(T a, T b) { return _mm256_and_si256(a, b); }
   static VIO_INLINE T or_(T a, T b) { return _mm256_or_si256(a, b); }
   static VIO_INLINE T xor_(T a, T b) { return _mm256_xor_si256(a, b); }
