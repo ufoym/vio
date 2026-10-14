@@ -88,18 +88,30 @@ VIO_INLINE constexpr I lshift(I x, int n) {
 // Aligned heap storage.
 inline constexpr std::size_t kAlign = 64;
 
+// The block from calloc() is stored just before the aligned pointer.
 struct AlignedFree {
-  void operator()(void* p) const noexcept { ::operator delete(p, std::align_val_t(kAlign)); }
+  void operator()(void* p) const noexcept {
+    if (p) std::free(static_cast<void**>(p)[-1]);
+  }
 };
 
 template <class T>
 using AlignedPtr = std::unique_ptr<T[], AlignedFree>;
 
+// calloc() rather than new + memset: large blocks then come straight from
+// the system, already zeroed, without a pass over the memory (whole-image
+// coefficient buffers, for instance).
 template <class T>
 AlignedPtr<T> aligned_alloc_zeroed(std::size_t n) {
-  void* p = ::operator new(std::max<std::size_t>(n, 1) * sizeof(T), std::align_val_t(kAlign));
-  std::memset(p, 0, std::max<std::size_t>(n, 1) * sizeof(T));
-  return AlignedPtr<T>(static_cast<T*>(p));
+  constexpr std::size_t extra = kAlign + sizeof(void*);
+  n = std::max<std::size_t>(n, 1);
+  if (n > (static_cast<std::size_t>(-1) - extra) / sizeof(T)) throw std::bad_alloc();
+  void* raw = std::calloc(n * sizeof(T) + extra, 1);
+  if (!raw) throw std::bad_alloc();
+  const std::uintptr_t a =
+      (reinterpret_cast<std::uintptr_t>(raw) + extra) & ~static_cast<std::uintptr_t>(kAlign - 1);
+  reinterpret_cast<void**>(a)[-1] = raw;
+  return AlignedPtr<T>(reinterpret_cast<T*>(a));
 }
 
 // A 2-D array of samples addressed through a row pointer table.  Rows are
