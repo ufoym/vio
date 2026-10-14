@@ -56,15 +56,14 @@ VIO_INLINE int popcount64(std::uint64_t x) {
 // Whether the compiler vectorizes per-sample loops written as independent
 // arithmetic (MSVC does not: table lookups and running sums are faster
 // there).  The decompression side's forms (32-bit products, and sums the
-// compiler keeps in 32 bits) pay only with fast 32-bit vector multiplies:
-// Arm NEON (not x86, where pmulld from SSE4.1 is slow on Intel cores and
-// the x86-64 baseline has none).
+// compiler keeps in 32 bits) pay only with 32-bit vector multiplies: Arm
+// NEON, or x86 from SSE4.1 (not the x86-64 baseline).
 #if defined(_MSC_VER) && !defined(__clang__)
 inline constexpr bool kVectorizes = false;
 inline constexpr bool kVectorizesWide = false;
 #else
 inline constexpr bool kVectorizes = true;
-#if defined(__ARM_NEON) || defined(__aarch64__)
+#if defined(__ARM_NEON) || defined(__aarch64__) || defined(__SSE4_1__)
 inline constexpr bool kVectorizesWide = true;
 #else
 inline constexpr bool kVectorizesWide = false;
