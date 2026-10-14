@@ -263,7 +263,8 @@ class SepUpsampler final : public Upsampler<T> {
         out[2 * w - 2] = static_cast<T>((in[w - 1] * 3 + in[w - 2] + 1) >> 2);
         out[2 * w - 1] = in[w - 1];
       }
-    } else if constexpr (swar::kFancy<T>) {
+    } else if constexpr (swar::kFancy<T> && !kVectorizes) {
+      // (GCC and Clang do better with the running sums below.)
       using namespace swar;
       T** output_data = output_data_ptr;
       const unsigned w = c.downsampled_width;
