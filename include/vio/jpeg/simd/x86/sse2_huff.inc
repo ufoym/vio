@@ -75,12 +75,12 @@ VIO_INLINE int bit_length(unsigned v) {  // number of bits in v (0 for 0)
 
 // Bit k set when mask lane k (0..63, 16-bit lanes in r[0..7]) is all ones.
 VIO_INLINE std::uint64_t movemask64(const T* r) {
-  std::uint64_t m = 0;
-  for (int i = 0; i < 4; i++)
-    m |= static_cast<std::uint64_t>(
-             static_cast<unsigned>(_mm_movemask_epi8(_mm_packs_epi16(r[2 * i], r[2 * i + 1]))))
-         << (16 * i);
-  return m;
+  // Spelled out: MSVC keeps the loop (and r in memory).
+  auto m = [&](int i) VIO_LAMBDA_INLINE {
+    return static_cast<std::uint64_t>(
+        static_cast<unsigned>(_mm_movemask_epi8(_mm_packs_epi16(r[2 * i], r[2 * i + 1]))));
+  };
+  return m(0) | m(1) << 16 | m(2) << 32 | m(3) << 48;
 }
 
 }  // namespace detail_huff
@@ -132,10 +132,10 @@ struct BitWriter {
     append(code, size);
     flush();
   }
-  static BitWriter from(const HuffBitState& st, std::uint8_t* buffer) {
+  VIO_INLINE static BitWriter from(const HuffBitState& st, std::uint8_t* buffer) {
     return {st.bits, static_cast<unsigned>(st.count), buffer};
   }
-  void to(HuffBitState& st) const {
+  VIO_INLINE void to(HuffBitState& st) const {
     // Member-wise: a 16-byte copy would read back two narrower stores.
     st.bits = bits;
     st.count = static_cast<int>(count);
@@ -174,11 +174,11 @@ struct BitWriter {
     append(code, size);
     flush();
   }
-  static BitWriter from(const HuffBitState& st, std::uint8_t* buffer) {
+  VIO_INLINE static BitWriter from(const HuffBitState& st, std::uint8_t* buffer) {
     const unsigned n = static_cast<unsigned>(st.count);
     return {n ? st.bits << (64 - n) : 0, n, buffer};
   }
-  void to(HuffBitState& st) const {
+  VIO_INLINE void to(HuffBitState& st) const {
     st.bits = count ? acc >> (64 - count) : 0;
     st.count = static_cast<int>(count);
   }
@@ -257,6 +257,31 @@ VIO_INLINE void load_zigzag(const std::int16_t* block, T z[8]) {
 
 }  // namespace detail_huff
 
+// Appends the coefficient at the lowest bit of the bitmap `index` (at most
+// 31 bits), with any runs of 16 zeros before it.  Each non-zero coefficient
+// is found from the bitmap with its lowest bit cleared, so the only
+// dependency between iterations is that one operation (shifting the bitmap
+// by the run would chain tzcnt and shifts).  A function rather than a
+// lambda: MSVC keeps whatever a closure refers to in memory.
+template <class Table>
+VIO_INLINE void encode_next(detail_huff::BitWriter& w, std::uint64_t& index, unsigned& k,
+                            const std::int16_t* t, const Table& actbl) {
+  using namespace detail_huff;
+  const unsigned pos = ctz64(index);  // coefficient pos + 1
+  index = clear_lowest(index);
+  unsigned run = pos - k;
+  k = pos + 1;
+  while (VIO_UNLIKELY(run > 15)) {
+    w.put_bits(actbl.ehufco[0xf0], actbl.ehufsi[0xf0]);
+    run -= 16;
+  }
+  const int code = t[pos];
+  const int nbits = ac_bit_length(static_cast<unsigned>(code ^ (code >> 31)));
+  const std::uint64_t e = actbl.emit[(run << 4) + static_cast<unsigned>(nbits)];
+  w.append(static_cast<std::uint32_t>(e) | low_bits(static_cast<unsigned>(code), nbits),
+           static_cast<int>(e >> 32));
+}
+
 // Encodes one block with the bit writer w.
 template <class Table>
 VIO_INLINE void encode_block(detail_huff::BitWriter& w, const std::int16_t* block, int last_dc_val,
@@ -284,32 +309,14 @@ VIO_INLINE void encode_block(detail_huff::BitWriter& w, const std::int16_t* bloc
                  low_bits(static_cast<unsigned>(temp + sign), nbits),
              static_cast<int>(dctbl.emit[nbits] >> 32));
 
-  // Each non-zero coefficient is found from the bitmap with its lowest bit
-  // cleared, so the only dependency between iterations is that one
-  // operation (shifting the bitmap by the run would chain tzcnt and shifts).
   unsigned k = 0;  // zig-zag position of the last coefficient coded
-  auto next = [&]() VIO_LAMBDA_INLINE {  // appends the next coefficient (at most 31 bits)
-    const unsigned pos = ctz64(index);  // coefficient pos + 1
-    index = clear_lowest(index);
-    unsigned run = pos - k;
-    k = pos + 1;
-    while (VIO_UNLIKELY(run > 15)) {
-      w.put_bits(actbl.ehufco[0xf0], actbl.ehufsi[0xf0]);
-      run -= 16;
-    }
-    const int code = t[pos];
-    nbits = ac_bit_length(static_cast<unsigned>(code ^ (code >> 31)));
-    const std::uint64_t e = actbl.emit[(run << 4) + static_cast<unsigned>(nbits)];
-    w.append(static_cast<std::uint32_t>(e) | low_bits(static_cast<unsigned>(code), nbits),
-             static_cast<int>(e >> 32));
-  };
   // The output is written after every second coefficient, or after one
   // when (rarely) another one might not fit.
   while (index) {
-    next();
+    encode_next(w, index, k, t, actbl);
     if (VIO_UNLIKELY(w.count > 32)) w.flush();
     if (!index) break;
-    next();
+    encode_next(w, index, k, t, actbl);
     w.flush();
   }
   if (k != 63) w.append(actbl.ehufco[0], actbl.ehufsi[0]);
