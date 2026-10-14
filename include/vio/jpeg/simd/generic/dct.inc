@@ -31,6 +31,26 @@ VIO_INLINE void transpose8(T* r) {
   r[7] = V::unpackhi_64(b3, b7);
 }
 
+// transpose8() on named vectors (MSVC keeps arrays of vectors in memory).
+VIO_INLINE void transpose8(T& r0, T& r1, T& r2, T& r3, T& r4, T& r5, T& r6, T& r7) {
+  T a0 = V::unpacklo_16(r0, r1), a1 = V::unpackhi_16(r0, r1);
+  T a2 = V::unpacklo_16(r2, r3), a3 = V::unpackhi_16(r2, r3);
+  T a4 = V::unpacklo_16(r4, r5), a5 = V::unpackhi_16(r4, r5);
+  T a6 = V::unpacklo_16(r6, r7), a7 = V::unpackhi_16(r6, r7);
+  T b0 = V::unpacklo_32(a0, a2), b1 = V::unpackhi_32(a0, a2);
+  T b2 = V::unpacklo_32(a1, a3), b3 = V::unpackhi_32(a1, a3);
+  T b4 = V::unpacklo_32(a4, a6), b5 = V::unpackhi_32(a4, a6);
+  T b6 = V::unpacklo_32(a5, a7), b7 = V::unpackhi_32(a5, a7);
+  r0 = V::unpacklo_64(b0, b4);
+  r1 = V::unpackhi_64(b0, b4);
+  r2 = V::unpacklo_64(b1, b5);
+  r3 = V::unpackhi_64(b1, b5);
+  r4 = V::unpacklo_64(b2, b6);
+  r5 = V::unpackhi_64(b2, b6);
+  r6 = V::unpacklo_64(b3, b7);
+  r7 = V::unpackhi_64(b3, b7);
+}
+
 // 32-bit (lo, hi) halves of x * kx + y * ky for 16-bit x, y.
 struct D {
   T lo, hi;
@@ -143,6 +163,33 @@ VIO_INLINE void idct_islow_pass(T* in) {
   in[5] = descale<DS>(sub(tmp12, o1));
   in[3] = descale<DS>(add(tmp13, o0));
   in[4] = descale<DS>(sub(tmp13, o0));
+}
+
+// idct_islow_pass() on named vectors.
+template <bool kPass1>
+VIO_INLINE void idct_islow_pass(T& i0, T& i1, T& i2, T& i3, T& i4, T& i5, T& i6, T& i7) {
+  constexpr int DS = kPass1 ? CONST_BITS - PASS1_BITS : CONST_BITS + PASS1_BITS + 3;
+  D tmp3 = madd(i2, i6, pair(F_0_541 + F_0_765, F_0_541));
+  D tmp2 = madd(i2, i6, pair(F_0_541, F_0_541 - F_1_847));
+  D tmp0 = widen_shl<CONST_BITS>(V::add_16(i0, i4));
+  D tmp1 = widen_shl<CONST_BITS>(V::sub_16(i0, i4));
+  D tmp10 = add(tmp0, tmp3), tmp13 = sub(tmp0, tmp3);
+  D tmp11 = add(tmp1, tmp2), tmp12 = sub(tmp1, tmp2);
+  T z3 = V::add_16(i3, i7), z4 = V::add_16(i1, i5);
+  D z3m = madd(z3, z4, pair(F_1_175 - F_1_961, F_1_175));
+  D z4m = madd(z3, z4, pair(F_1_175, F_1_175 - F_0_390));
+  D o0 = add(madd(i7, i1, pair(F_0_298 - F_0_899, -F_0_899)), z3m);
+  D o3 = add(madd(i7, i1, pair(-F_0_899, F_1_501 - F_0_899)), z4m);
+  D o1 = add(madd(i5, i3, pair(F_2_053 - F_2_562, -F_2_562)), z4m);
+  D o2 = add(madd(i5, i3, pair(-F_2_562, F_3_072 - F_2_562)), z3m);
+  i0 = descale<DS>(add(tmp10, o3));
+  i7 = descale<DS>(sub(tmp10, o3));
+  i1 = descale<DS>(add(tmp11, o2));
+  i6 = descale<DS>(sub(tmp11, o2));
+  i2 = descale<DS>(add(tmp12, o1));
+  i5 = descale<DS>(sub(tmp12, o1));
+  i3 = descale<DS>(add(tmp13, o0));
+  i4 = descale<DS>(sub(tmp13, o0));
 }
 
 // Fast (AAN) integer IDCT pass, in 16 bits.
@@ -284,22 +331,43 @@ inline void quantize(std::int16_t* coef_block, const std::uint16_t* divisors,
   }
 }
 
+// The block in named vectors throughout (MSVC keeps arrays of vectors in
+// memory).
 inline void idct_islow(const std::int16_t* quantptr, const std::int16_t* coef_block,
                        std::uint8_t** output_buf, unsigned output_col) {
   using namespace detail_dct;
-  T r[8];
-  if (load_dequantize(coef_block, quantptr, r)) {
+  auto c = [&](int i) VIO_LAMBDA_INLINE { return load(coef_block + i * 8); };
+  auto q = [&](int i) VIO_LAMBDA_INLINE { return load(quantptr + i * 8); };
+  T c1 = c(1), c2 = c(2), c3 = c(3), c4 = c(4), c5 = c(5), c6 = c(6), c7 = c(7);
+  T r0 = V::mullo_16(c(0), q(0));
+  T r1, r2, r3, r4, r5, r6, r7;
+  const T ac = V::or_(V::or_(V::or_(c1, c2), V::or_(c3, c4)), V::or_(V::or_(c5, c6), c7));
+  if (V::all_zero(ac)) {
     // DC-only block: every pass-1 output equals DC << PASS1_BITS.
-    T dc = V::slli_16<PASS1_BITS>(r[0]);
-    for (int i = 1; i < 8; i++) r[i] = dc;
-    r[0] = dc;
+    r0 = r1 = r2 = r3 = r4 = r5 = r6 = r7 = V::slli_16<PASS1_BITS>(r0);
   } else {
-    idct_islow_pass<true>(r);
+    r1 = V::mullo_16(c1, q(1));
+    r2 = V::mullo_16(c2, q(2));
+    r3 = V::mullo_16(c3, q(3));
+    r4 = V::mullo_16(c4, q(4));
+    r5 = V::mullo_16(c5, q(5));
+    r6 = V::mullo_16(c6, q(6));
+    r7 = V::mullo_16(c7, q(7));
+    idct_islow_pass<true>(r0, r1, r2, r3, r4, r5, r6, r7);
   }
-  transpose8(r);
-  idct_islow_pass<false>(r);
-  transpose8(r);
-  store_rows(r, output_buf, output_col);
+  transpose8(r0, r1, r2, r3, r4, r5, r6, r7);
+  idct_islow_pass<false>(r0, r1, r2, r3, r4, r5, r6, r7);
+  transpose8(r0, r1, r2, r3, r4, r5, r6, r7);
+  const T center = V::set1_8(-128);
+  auto rows = [&](int i, T a, T b) VIO_LAMBDA_INLINE {
+    T v = V::add_8(V::packs_16(a, b), center);
+    V::storel_64(output_buf[i] + output_col, v);
+    V::storel_64(output_buf[i + 1] + output_col, V::bsrli<8>(v));
+  };
+  rows(0, r0, r1);
+  rows(2, r2, r3);
+  rows(4, r4, r5);
+  rows(6, r6, r7);
 }
 
 inline void idct_ifast(const std::int16_t* quantptr, const std::int16_t* coef_block,
