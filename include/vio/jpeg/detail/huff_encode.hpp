@@ -788,9 +788,15 @@ class PhuffEncoder final : public EntropyEncoder {
       }
       WordBitWriter bw = bw_;
       unsigned EOBRUN = EOBRUN_, BE = BE_;
-      for (const unsigned end = i + m; i < end; i++) {
-        if constexpr (Refine) ac_refine_block<Gather>(blocks[i].data(), bw, EOBRUN, BE);
-        else ac_first_block<Gather>(blocks[i].data(), bw, EOBRUN, BE);
+      // Each block is prepared before the previous one is coded, so that
+      // the (vector) preparation overlaps the coding instead of starting
+      // over after the mispredicted branch that ends each block.
+      AcPrepared p[2];
+      prepare<Refine>(blocks[i].data(), p[0]);
+      for (unsigned j = 0, end = i + m; i < end; i++, j ^= 1) {
+        if (i + 1 < end) prepare<Refine>(blocks[i + 1].data(), p[j ^ 1]);
+        if constexpr (Refine) ac_refine_block<Gather>(p[j], bw, EOBRUN, BE);
+        else ac_first_block<Gather>(p[j], bw, EOBRUN, BE);
       }
       bw_ = bw;
       EOBRUN_ = EOBRUN;
@@ -811,13 +817,24 @@ class PhuffEncoder final : public EntropyEncoder {
     }
   }
 
-  template <bool Gather>
-  VIO_INLINE void ac_first_block(const Coef* block, WordBitWriter& bw, unsigned& EOBRUN,
-                                 unsigned& BE) {
+  // A block's band ready for coding: first scans, the magnitudes (>> Al)
+  // and in values[64..] the bits to send; refinement scans, the magnitudes;
+  // zerobits: the non-zero ones; signbits (refinement): the positive ones.
+  struct AcPrepared {
+    alignas(16) std::uint16_t values[2 * DCTSIZE2];
+    std::uint64_t zerobits, signbits;
+  };
+
+  template <bool Refine>
+  VIO_INLINE void prepare(const Coef* block, AcPrepared& p) {
+    if constexpr (Refine) prepare_refine(block, p);
+    else prepare_first(block, p);
+  }
+
+  VIO_INLINE void prepare_first(const Coef* block, AcPrepared& p) {
     const int Sl = cs_.Se - cs_.Ss + 1;
     const int Al = cs_.Al;
-    const int max_coef_bits = cs_.data_precision + 2;
-    alignas(16) std::uint16_t values[2 * DCTSIZE2];
+    std::uint16_t* values = p.values;
     std::uint64_t zerobits = 0;
     const int* order = natural_order + cs_.Ss;
     if (simd_.ac_first_prepare) {
@@ -837,6 +854,16 @@ class PhuffEncoder final : public EntropyEncoder {
         zerobits |= std::uint64_t(1) << k;
       }
     }
+    p.zerobits = zerobits;
+  }
+
+  template <bool Gather>
+  VIO_INLINE void ac_first_block(const AcPrepared& p, WordBitWriter& bw, unsigned& EOBRUN,
+                                 unsigned& BE) {
+    const int Sl = cs_.Se - cs_.Ss + 1;
+    const int max_coef_bits = cs_.data_precision + 2;
+    const std::uint16_t* values = p.values;
+    std::uint64_t zerobits = p.zerobits;
     if (zerobits) flush_eobrun<Gather>(bw, EOBRUN, BE);
     int last = -1;  // the last coefficient coded
     while (zerobits) {
@@ -861,12 +888,10 @@ class PhuffEncoder final : public EntropyEncoder {
   // at bit Al) as symbols, with the zero coefficients before them as runs;
   // the coefficients already non-zero get one correction bit each, sent
   // after the next symbol (or after the end-of-band run they fall in).
-  template <bool Gather>
-  VIO_INLINE void ac_refine_block(const Coef* block, WordBitWriter& bw, unsigned& EOBRUN,
-                                  unsigned& BE) {
+  VIO_INLINE void prepare_refine(const Coef* block, AcPrepared& p) {
     const int Sl = cs_.Se - cs_.Ss + 1;
     const int Al = cs_.Al;
-    alignas(16) std::uint16_t absvalues[DCTSIZE2];
+    std::uint16_t* absvalues = p.values;
     std::uint64_t zerobits = 0, signbits = 0;
     const int* order = natural_order + cs_.Ss;
     if (simd_.ac_refine_prepare) {
@@ -885,6 +910,16 @@ class PhuffEncoder final : public EntropyEncoder {
         absvalues[k] = static_cast<std::uint16_t>(temp);
       }
     }
+    p.zerobits = zerobits;
+    p.signbits = signbits;
+  }
+
+  template <bool Gather>
+  VIO_INLINE void ac_refine_block(const AcPrepared& p, WordBitWriter& bw, unsigned& EOBRUN,
+                                  unsigned& BE) {
+    const int Sl = cs_.Se - cs_.Ss + 1;
+    const std::uint16_t* absvalues = p.values;
+    const std::uint64_t zerobits = p.zerobits, signbits = p.signbits;
     // New coefficients, and the correction bits of the others in order.
     std::uint64_t newbits = 0, corr = 0;
     int ncorr = 0;
