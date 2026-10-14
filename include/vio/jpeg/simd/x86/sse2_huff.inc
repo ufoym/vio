@@ -230,48 +230,62 @@ VIO_INLINE void encode_next(detail_huff::BitWriter& w, std::uint64_t& index, uns
            static_cast<int>(e >> 32));
 }
 
-// Encodes one block with the bit writer w.
-template <class Table>
-VIO_INLINE void encode_block(detail_huff::BitWriter& w, const std::int16_t* block, int last_dc_val,
-                             const Table& dctbl, const Table& actbl) {
-  using namespace detail_huff;
-  // t[i]: zig-zag coefficient i+1, negative values minus one (the bits to
-  // emit); `index` bit i is set when it is non-zero.
+namespace detail_huff {
+// A block ready for the bit writer.  t[i]: zig-zag coefficient i+1,
+// negative values minus one (the bits to emit); `index` bit i is set when
+// it is non-zero; dc: the DC difference (32-bit, as in the scalar encoder).
+struct Prepared {
   alignas(16) std::int16_t t[64];
+  std::uint64_t index;
+  int dc;
+};
+
+VIO_INLINE void prepare(const std::int16_t* block, int last_dc_val, Prepared& p) {
   T z[8];
   load_zigzag(block, z);
   const T zero = _mm_setzero_si128();
   T eq[8];
   for (int i = 0; i < 8; i++) {
     T v = _mm_add_epi16(z[i], _mm_cmpgt_epi16(zero, z[i]));
-    _mm_store_si128(reinterpret_cast<T*>(t + 8 * i), v);
+    _mm_store_si128(reinterpret_cast<T*>(p.t + 8 * i), v);
     eq[i] = _mm_cmpeq_epi16(v, zero);
   }
-  std::uint64_t index = ~movemask64(eq);
+  p.index = ~movemask64(eq);
+  p.dc = block[0] - last_dc_val;
+}
+}  // namespace detail_huff
 
-  // DC difference (32-bit, as in the scalar encoder).
-  int temp = block[0] - last_dc_val;
+// Encodes a prepared block with the bit writer w.
+template <class Table>
+VIO_INLINE void encode_block(detail_huff::BitWriter& w, const detail_huff::Prepared& p,
+                             const Table& dctbl, const Table& actbl) {
+  using namespace detail_huff;
+  int temp = p.dc;
   int sign = temp >> 31;
   int nbits = bit_length(static_cast<unsigned>(temp ^ sign) - static_cast<unsigned>(sign));
   w.put_bits(static_cast<std::uint32_t>(dctbl.emit[nbits]) |
                  low_bits(static_cast<unsigned>(temp + sign), nbits),
              static_cast<int>(dctbl.emit[nbits] >> 32));
 
+  std::uint64_t index = p.index;
   unsigned k = 0;  // zig-zag position of the last coefficient coded
   // The output is written after every second coefficient, or after one
   // when (rarely) another one might not fit.
   while (index) {
-    encode_next(w, index, k, t, actbl);
+    encode_next(w, index, k, p.t, actbl);
     if (VIO_UNLIKELY(w.count > 32)) w.flush();
     if (!index) break;
-    encode_next(w, index, k, t, actbl);
+    encode_next(w, index, k, p.t, actbl);
     w.flush();
   }
   if (k != 63) w.append(actbl.ehufco[0], actbl.ehufsi[0]);
   w.flush();
 }
 
-// HuffEncodeFn: encodes the blocks of an MCU.
+// HuffEncodeFn: encodes a run of blocks.  Each block is prepared before the
+// previous one is written out, so that the vector work overlaps the bit
+// writing (and is not lost when the branch at the end of a block's
+// coefficients is mispredicted).
 template <class Table>
 inline VIO_NO_STACK_CHECK std::uint8_t* encode_blocks(HuffBitState& st, std::uint8_t* buffer,
                                                       const std::int16_t* const* blocks,
@@ -279,7 +293,12 @@ inline VIO_NO_STACK_CHECK std::uint8_t* encode_blocks(HuffBitState& st, std::uin
                                                       const Table* const* dctbl,
                                                       const Table* const* actbl, int n) {
   detail_huff::BitWriter w{st.bits, static_cast<unsigned>(st.count), buffer};
-  for (int i = 0; i < n; i++) encode_block(w, blocks[i], last_dc[i], *dctbl[i], *actbl[i]);
+  detail_huff::Prepared p[2];
+  detail_huff::prepare(blocks[0], last_dc[0], p[0]);
+  for (int i = 0; i < n; i++) {
+    if (i + 1 < n) detail_huff::prepare(blocks[i + 1], last_dc[i + 1], p[(i + 1) & 1]);
+    encode_block(w, p[i & 1], *dctbl[i], *actbl[i]);
+  }
   // Member-wise: a 16-byte copy would read back two narrower stores.
   st.bits = w.bits;
   st.count = static_cast<int>(w.count);

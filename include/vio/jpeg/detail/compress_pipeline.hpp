@@ -715,8 +715,8 @@ class CoefControllerC final : public CCoefController<T> {
             static_cast<std::size_t>(round_up(c.height_in_blocks, c.v_samp_factor)));
       }
     } else {
-      mcu_blocks_ = aligned_alloc_zeroed<Block>(C_MAX_BLOCKS_IN_MCU);
-      for (int i = 0; i < C_MAX_BLOCKS_IN_MCU; i++) MCU_buffer_[i] = &mcu_blocks_[i];
+      mcu_blocks_ = aligned_alloc_zeroed<Block>(kRunBlocks);
+      for (int i = 0; i < kRunBlocks; i++) MCU_buffer_[i] = &mcu_blocks_[i];
     }
   }
 
@@ -753,11 +753,17 @@ class CoefControllerC final : public CCoefController<T> {
     MCU_vert_offset_ = 0;
   }
 
+  // MCUs go to the entropy encoder in runs of up to kRunBlocks blocks.
+  unsigned run_length() const { return std::max(1, kRunBlocks / cs_.blocks_in_MCU); }
+
   bool compress_onepass(T*** input_buf) {
     unsigned last_MCU_col = cs_.MCUs_per_row - 1;
     unsigned last_iMCU_row = cs_.total_iMCU_rows - 1;
+    const unsigned run = run_length();
     for (int yoffset = MCU_vert_offset_; yoffset < MCU_rows_per_iMCU_row_; yoffset++) {
+      unsigned in_run = 0;
       for (unsigned MCU_col_num = mcu_ctr_; MCU_col_num <= last_MCU_col; MCU_col_num++) {
+        Block** MCU_buffer = MCU_buffer_ + in_run * cs_.blocks_in_MCU;
         int blkn = 0;
         for (int ci = 0; ci < cs_.comps_in_scan; ci++) {
           ComponentInfo* c = cs_.cur_comp_info[ci];
@@ -767,24 +773,28 @@ class CoefControllerC final : public CCoefController<T> {
           for (int yindex = 0; yindex < c->MCU_height; yindex++) {
             if (iMCU_row_num_ < last_iMCU_row || yoffset + yindex < c->last_row_height) {
               fdct_->forward_dct(c->quant_tbl_no, input_buf[c->component_index],
-                                 MCU_buffer_[blkn], ypos, xpos, static_cast<unsigned>(blockcnt));
+                                 MCU_buffer[blkn], ypos, xpos, static_cast<unsigned>(blockcnt));
               if (blockcnt < c->MCU_width) {
-                std::memset(MCU_buffer_[blkn + blockcnt], 0,
+                std::memset(MCU_buffer[blkn + blockcnt], 0,
                             (c->MCU_width - blockcnt) * sizeof(Block));
                 for (int bi = blockcnt; bi < c->MCU_width; bi++)
-                  (*MCU_buffer_[blkn + bi])[0] = (*MCU_buffer_[blkn + bi - 1])[0];
+                  (*MCU_buffer[blkn + bi])[0] = (*MCU_buffer[blkn + bi - 1])[0];
               }
             } else {
-              std::memset(MCU_buffer_[blkn], 0, c->MCU_width * sizeof(Block));
+              std::memset(MCU_buffer[blkn], 0, c->MCU_width * sizeof(Block));
               for (int bi = 0; bi < c->MCU_width; bi++)
-                (*MCU_buffer_[blkn + bi])[0] = (*MCU_buffer_[blkn - 1])[0];
+                (*MCU_buffer[blkn + bi])[0] = (*MCU_buffer[blkn - 1])[0];
             }
             blkn += c->MCU_width;
             ypos += DCTSIZE;
           }
         }
-        (*entropy_)->encode_mcu(MCU_buffer_);
+        if (++in_run == run) {
+          (*entropy_)->encode_mcu_run(MCU_buffer_, cs_.blocks_in_MCU, in_run);
+          in_run = 0;
+        }
       }
+      if (in_run) (*entropy_)->encode_mcu_run(MCU_buffer_, cs_.blocks_in_MCU, in_run);
       mcu_ctr_ = 0;
     }
     iMCU_row_num_++;
@@ -851,7 +861,10 @@ class CoefControllerC final : public CCoefController<T> {
           continue;
         }
       }
+      const unsigned run = run_length();
+      unsigned in_run = 0;
       for (unsigned MCU_col_num = mcu_ctr_; MCU_col_num < cs_.MCUs_per_row; MCU_col_num++) {
+        Block** MCU_buffer = MCU_buffer_ + in_run * cs_.blocks_in_MCU;
         int blkn = 0;
         for (int ci = 0; ci < cs_.comps_in_scan; ci++) {
           ComponentInfo* c = cs_.cur_comp_info[ci];
@@ -863,11 +876,15 @@ class CoefControllerC final : public CCoefController<T> {
                           yoffset) +
                 start_col;
             for (int xindex = 0; xindex < c->MCU_width; xindex++)
-              MCU_buffer_[blkn++] = buffer_ptr++;
+              MCU_buffer[blkn++] = buffer_ptr++;
           }
         }
-        (*entropy_)->encode_mcu(MCU_buffer_);
+        if (++in_run == run) {
+          (*entropy_)->encode_mcu_run(MCU_buffer_, cs_.blocks_in_MCU, in_run);
+          in_run = 0;
+        }
       }
+      if (in_run) (*entropy_)->encode_mcu_run(MCU_buffer_, cs_.blocks_in_MCU, in_run);
       mcu_ctr_ = 0;
     }
     iMCU_row_num_++;
@@ -881,7 +898,8 @@ class CoefControllerC final : public CCoefController<T> {
   Mode mode_ = Mode::PassThru;
   unsigned iMCU_row_num_ = 0, mcu_ctr_ = 0;
   int MCU_vert_offset_ = 0, MCU_rows_per_iMCU_row_ = 0;
-  Block* MCU_buffer_[C_MAX_BLOCKS_IN_MCU]{};
+  static constexpr int kRunBlocks = 32;  // >= C_MAX_BLOCKS_IN_MCU
+  Block* MCU_buffer_[kRunBlocks]{};
   AlignedPtr<Block> mcu_blocks_;
   std::vector<BlockArray> whole_image_;
 };

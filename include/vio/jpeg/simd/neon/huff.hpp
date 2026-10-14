@@ -26,12 +26,17 @@ alignas(16) inline constexpr std::uint8_t zigzag_idx[128] = {
     26,  27,  40,  41,  42,  43,  28,  29,  14,  15,  30,  31,  44,  45,  46,  47};
 }  // namespace detail_huff
 
-// Encodes one block with the bit writer w (HuffBitWriter).
-template <class Table, class W>
-VIO_INLINE void huff_encode_one_block(const std::int16_t* block, int last_dc_val,
-                                      const Table& dctbl, const Table& actbl, W& w) {
-  using namespace detail_huff;
-  alignas(16) std::uint16_t block_diff[64];
+namespace detail_huff {
+// A block ready for the bit writer: the magnitude category and the bits of
+// each coefficient in zig-zag order (the DC difference first), and the
+// bitmap of the non-zero AC coefficients.
+struct Prepared {
+  alignas(16) std::uint16_t diff[64];
+  alignas(16) std::uint8_t nbits[64];
+  std::uint64_t bitmap;
+};
+
+VIO_INLINE void prepare(const std::int16_t* block, int last_dc_val, Prepared& p) {
   const uint8x16x4_t idx_0123 = {{vld1q_u8(zigzag_idx + 0), vld1q_u8(zigzag_idx + 16),
                                   vld1q_u8(zigzag_idx + 32), vld1q_u8(zigzag_idx + 48)}};
   const uint8x16x4_t idx_4567 = {{vld1q_u8(zigzag_idx + 64), vld1q_u8(zigzag_idx + 80),
@@ -77,92 +82,52 @@ VIO_INLINE void huff_encode_one_block(const std::int16_t* block, int last_dc_val
   // non-zero: walking it from the lowest bit keeps the loop-carried
   // dependency to clearing that bit.
   bitmap_all = vrev64_u8(vrbit_u8(bitmap_all));
-  std::uint64_t bitmap = vget_lane_u64(vreinterpret_u64_u8(bitmap_all), 0) & ~std::uint64_t(1);
-  unsigned non_zero = static_cast<unsigned>(__builtin_popcountll(bitmap));
+  p.bitmap = vget_lane_u64(vreinterpret_u64_u8(bitmap_all), 0) & ~std::uint64_t(1);
 
-  // DC coefficient
-  int16x8_t abs_row0 = vabsq_s16(row0);
-  int16x8_t row0_lz = vclzq_s16(abs_row0);
-  uint16x8_t row0_mask = vshlq_u16(vcltzq_s16(row0), vnegq_s16(row0_lz));
-  uint16x8_t row0_diff = veorq_u16(vreinterpretq_u16_s16(abs_row0), row0_mask);
-  unsigned lz = vgetq_lane_u16(vreinterpretq_u16_s16(row0_lz), 0);
-  unsigned nbits = 16 - lz;
-  unsigned diff = vgetq_lane_u16(row0_diff, 0);
-  w.put_bits(static_cast<std::uint32_t>(dctbl.emit[nbits]) | diff,
-             static_cast<int>(dctbl.emit[nbits] >> 32));
+  int16x8_t lz_rows[8];
+  for (int k = 0; k < 8; k++) {
+    const int16x8_t a = vabsq_s16(rows[k]);
+    lz_rows[k] = vclzq_s16(a);
+    const uint16x8_t m = vshlq_u16(vcltzq_s16(rows[k]), vnegq_s16(lz_rows[k]));
+    vst1q_u16(p.diff + k * 8, veorq_u16(vreinterpretq_u16_s16(a), m));
+  }
+  for (int k = 0; k < 8; k += 2) {
+    uint8x16_t lz8 = vuzp1q_u8(vreinterpretq_u8_s16(lz_rows[k]), vreinterpretq_u8_s16(lz_rows[k + 1]));
+    vst1q_u8(p.nbits + k * 8, vsubq_u8(vdupq_n_u8(16), lz8));
+  }
+}
+}  // namespace detail_huff
 
-  unsigned r = 0, i = 1;
+// Encodes a prepared block with the bit writer w (HuffBitWriter).
+template <class Table, class W>
+VIO_INLINE void huff_encode_prepared(const detail_huff::Prepared& p, const Table& dctbl,
+                                     const Table& actbl, W& w) {
+  w.put_bits(static_cast<std::uint32_t>(dctbl.emit[p.nbits[0]]) | p.diff[0],
+             static_cast<int>(dctbl.emit[p.nbits[0]] >> 32));
+  std::uint64_t bitmap = p.bitmap;
+  unsigned i = 1;
   const unsigned code_0xf0 = actbl.ehufco[0xf0];
   const int size_0xf0 = actbl.ehufsi[0xf0];
   // next() appends a coefficient (at most 31 bits); the output is written
   // after every second one, or after one when another might not fit.
-  auto pairs = [&](auto&& next) VIO_LAMBDA_INLINE {
-    while (bitmap != 0) {
-      next();
-      if (VIO_UNLIKELY(w.count > 32)) w.flush();
-      if (bitmap == 0) break;
-      next();
-      w.flush();
+  auto next = [&]() VIO_LAMBDA_INLINE {
+    const unsigned k = static_cast<unsigned>(__builtin_ctzll(bitmap));
+    bitmap &= bitmap - 1;
+    unsigned r = k - i;
+    i = k + 1;
+    while (r > 15) {
+      w.put_bits(code_0xf0, size_0xf0);
+      r -= 16;
     }
+    const std::uint64_t e = actbl.emit[(r << 4) + p.nbits[k]];
+    w.append(static_cast<std::uint32_t>(e) | p.diff[k], static_cast<int>(e >> 32));
   };
-  if (non_zero > 8) {
-    alignas(16) std::uint8_t block_nbits[64];
-    int16x8_t lz_rows[8], abs_rows[8];
-    abs_rows[0] = abs_row0;
-    lz_rows[0] = row0_lz;
-    for (int k = 1; k < 8; k++) {
-      abs_rows[k] = vabsq_s16(rows[k]);
-      lz_rows[k] = vclzq_s16(abs_rows[k]);
-    }
-    for (int k = 0; k < 8; k += 2) {
-      uint8x16_t lz8 = vuzp1q_u8(vreinterpretq_u8_s16(lz_rows[k]), vreinterpretq_u8_s16(lz_rows[k + 1]));
-      vst1q_u8(block_nbits + k * 8, vsubq_u8(vdupq_n_u8(16), lz8));
-    }
-    vst1q_u16(block_diff, row0_diff);
-    for (int k = 1; k < 8; k++) {
-      uint16x8_t m = vshlq_u16(vcltzq_s16(rows[k]), vnegq_s16(lz_rows[k]));
-      vst1q_u16(block_diff + k * 8, veorq_u16(vreinterpretq_u16_s16(abs_rows[k]), m));
-    }
-    auto next = [&]() VIO_LAMBDA_INLINE {
-      const unsigned k = static_cast<unsigned>(__builtin_ctzll(bitmap));
-      bitmap &= bitmap - 1;
-      r = k - i;
-      i = k + 1;
-      nbits = block_nbits[k];
-      diff = block_diff[k];
-      while (r > 15) {
-        w.put_bits(code_0xf0, size_0xf0);
-        r -= 16;
-      }
-      const std::uint64_t e = actbl.emit[(r << 4) + nbits];
-      w.append(static_cast<std::uint32_t>(e) | diff, static_cast<int>(e >> 32));
-    };
-    pairs(next);
-  } else if (bitmap != 0) {
-    alignas(16) std::uint16_t block_abs[64];
-    vst1q_u16(block_abs, vreinterpretq_u16_s16(abs_row0));
-    vst1q_u16(block_diff, row0_diff);
-    for (int k = 1; k < 8; k++) {
-      int16x8_t a = vabsq_s16(rows[k]);
-      vst1q_u16(block_abs + k * 8, vreinterpretq_u16_s16(a));
-      vst1q_u16(block_diff + k * 8, veorq_u16(vreinterpretq_u16_s16(a), vcltzq_s16(rows[k])));
-    }
-    auto next = [&]() VIO_LAMBDA_INLINE {
-      const unsigned k = static_cast<unsigned>(__builtin_ctzll(bitmap));
-      bitmap &= bitmap - 1;
-      r = k - i;
-      i = k + 1;
-      lz = static_cast<unsigned>(__builtin_clz(block_abs[k]));
-      nbits = 32 - lz;
-      diff = (static_cast<unsigned>(block_diff[k]) << lz) >> lz;
-      while (r > 15) {
-        w.put_bits(code_0xf0, size_0xf0);
-        r -= 16;
-      }
-      const std::uint64_t e = actbl.emit[(r << 4) + nbits];
-      w.append(static_cast<std::uint32_t>(e) | diff, static_cast<int>(e >> 32));
-    };
-    pairs(next);
+  while (bitmap != 0) {
+    next();
+    if (VIO_UNLIKELY(w.count > 32)) w.flush();
+    if (bitmap == 0) break;
+    next();
+    w.flush();
   }
   if (i != 64) w.append(actbl.ehufco[0], actbl.ehufsi[0]);
   w.flush();
@@ -246,7 +211,19 @@ inline VIO_NO_STACK_CHECK std::uint8_t* encode_blocks(HuffBitState& st, std::uin
                                                       const Table* const* dctbl,
                                                       const Table* const* actbl, int n) {
   HuffBitWriter w(st, buffer);
+#if VIO_SIMD_NEON_A64
+  // Each block is prepared before the previous one is written out, so that
+  // the vector work overlaps the bit writing (and is not lost when the
+  // branch at the end of a block's coefficients is mispredicted).
+  detail_huff::Prepared p[2];
+  detail_huff::prepare(blocks[0], last_dc[0], p[0]);
+  for (int i = 0; i < n; i++) {
+    if (i + 1 < n) detail_huff::prepare(blocks[i + 1], last_dc[i + 1], p[(i + 1) & 1]);
+    huff_encode_prepared(p[i & 1], *dctbl[i], *actbl[i], w);
+  }
+#else
   for (int i = 0; i < n; i++) huff_encode_one_block(blocks[i], last_dc[i], *dctbl[i], *actbl[i], w);
+#endif
   st = w.state();
   return w.buffer;
 }

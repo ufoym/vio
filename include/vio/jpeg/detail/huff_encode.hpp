@@ -19,6 +19,10 @@ class EntropyEncoder {
   virtual ~EntropyEncoder() = default;
   virtual void start_pass(bool gather_statistics) = 0;
   virtual void encode_mcu(Block** MCU_data) { (void)MCU_data; }
+  // n consecutive MCUs of blocks_per_mcu blocks each.
+  virtual void encode_mcu_run(Block** MCU_data, int blocks_per_mcu, unsigned n) {
+    for (unsigned i = 0; i < n; i++) encode_mcu(MCU_data + i * static_cast<unsigned>(blocks_per_mcu));
+  }
   // Single-component scans: encode n MCUs (one block each) from consecutive
   // blocks; returns false if the encoder has no such path.
   virtual bool encode_blocks(const Block* /*blocks*/, unsigned /*n*/) { return false; }
@@ -254,6 +258,40 @@ class HuffEncoder final : public EntropyEncoder {
         next_restart_num_ = (next_restart_num_ + 1) & 7;
       }
       restarts_to_go_--;
+    }
+  }
+
+  // Runs of MCUs go to the SIMD kernel in one call (which may then overlap
+  // the work on consecutive blocks).
+  void encode_mcu_run(Block** MCU_data, int blocks_per_mcu, unsigned n) override {
+    if (gather_ || !simd_huff_ || cs_.restart_interval) {
+      EntropyEncoder::encode_mcu_run(MCU_data, blocks_per_mcu, n);
+      return;
+    }
+    constexpr unsigned kMaxBlocks = 32;
+    const unsigned bim = static_cast<unsigned>(blocks_per_mcu);
+    const unsigned per_call = std::max(1u, kMaxBlocks / bim);
+    while (n > 0) {
+      const unsigned m = std::min(n, per_call), nb = m * bim;
+      if (raw_.get() + RAW_SIZE - raw_next_ < static_cast<std::ptrdiff_t>(nb) * (BUFSIZE + 16))
+        flush_raw();
+      const std::int16_t* blocks[kMaxBlocks + C_MAX_BLOCKS_IN_MCU];
+      int last_dc[kMaxBlocks + C_MAX_BLOCKS_IN_MCU];
+      const CDerivedTable* dc[kMaxBlocks + C_MAX_BLOCKS_IN_MCU];
+      const CDerivedTable* ac[kMaxBlocks + C_MAX_BLOCKS_IN_MCU];
+      for (unsigned j = 0, i = 0; i < m; i++) {
+        for (unsigned blkn = 0; blkn < bim; blkn++, j++) {
+          const int ci = cs_.MCU_membership[blkn];
+          blocks[j] = MCU_data[j]->data();
+          last_dc[j] = last_dc_val_[ci];
+          last_dc_val_[ci] = blocks[j][0];
+          dc[j] = dc_cur_[blkn];
+          ac[j] = ac_cur_[blkn];
+        }
+      }
+      raw_next_ = simd_huff_(bits_, raw_next_, blocks, last_dc, dc, ac, static_cast<int>(nb));
+      MCU_data += nb;
+      n -= m;
     }
   }
 
