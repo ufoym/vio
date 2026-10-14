@@ -904,6 +904,9 @@ class PhuffDecoder final : public EntropyDecoder {
 #elif VIO_HUFF_NEON
     vector_mask_ = st.simd.has(::vio::jpeg::simd::kNEON);
 #endif
+#if VIO_HUFF_BMI2_CLONE
+    bmi2_ = st.simd.has(::vio::jpeg::simd::kBMI2);
+#endif
   }
 
   void start_pass() override {
@@ -956,9 +959,17 @@ class PhuffDecoder final : public EntropyDecoder {
   }
 
   bool decode_blocks(Block* blocks, unsigned n) override {
-    if (mode_ == AC_FIRST) decode_ac_blocks<false>(blocks, n);
-    else if (mode_ == AC_REFINE) decode_ac_blocks<true>(blocks, n);
-    else return false;
+    if (mode_ != AC_FIRST && mode_ != AC_REFINE) return false;
+    const bool refine = mode_ == AC_REFINE;
+#if VIO_HUFF_BMI2_CLONE
+    if (bmi2_) {
+      if (refine) decode_ac_blocks_bmi2<true>(blocks, n);
+      else decode_ac_blocks_bmi2<false>(blocks, n);
+      return true;
+    }
+#endif
+    if (refine) decode_ac_blocks<true>(blocks, n);
+    else decode_ac_blocks<false>(blocks, n);
     return true;
   }
 
@@ -1091,6 +1102,19 @@ class PhuffDecoder final : public EntropyDecoder {
   // block to block while no marker is within reach.
   template <bool Refine>
   VIO_NO_STACK_CHECK void decode_ac_blocks(Block* blocks, unsigned n) {
+    decode_ac_blocks_body<Refine>(blocks, n);
+  }
+#if VIO_HUFF_BMI2_CLONE
+  // The same code compiled for BMI2 (see HuffDecoder::decode_mcu_fast_bmi2).
+  template <bool Refine>
+  __attribute__((target("bmi,bmi2,lzcnt"))) VIO_NO_STACK_CHECK void decode_ac_blocks_bmi2(
+      Block* blocks, unsigned n) {
+    decode_ac_blocks_body<Refine>(blocks, n);
+  }
+  bool bmi2_ = false;
+#endif
+  template <bool Refine>
+  VIO_INLINE void decode_ac_blocks_body(Block* blocks, unsigned n) {
     for (unsigned i = 0; i < n;) {
       if (st_.restart_interval && restarts_to_go_ == 0) process_restart();
       if (!fast_ok()) {
