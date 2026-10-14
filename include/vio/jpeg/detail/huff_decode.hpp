@@ -4,6 +4,16 @@
 #include <bit>
 #include <utility>
 
+// Vector forms of a few entropy-decoding helpers (used when the SIMD level
+// in use allows).
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#include <emmintrin.h>
+#define VIO_HUFF_SSE2 1
+#elif defined(__aarch64__) && defined(__ARM_NEON)
+#include <arm_neon.h>
+#define VIO_HUFF_NEON 1
+#endif
+
 #include "decompress_state.hpp"
 #include "../simd/common.hpp"
 
@@ -840,11 +850,31 @@ inline void update_progression(DState& st, bool warn_ac_without_dc) {
   }
 }
 
+// For nibble i of a natural-order coefficient mask, the corresponding
+// zig-zag-order bits.
+struct ZigzagNibbleTable {
+  std::uint64_t v[16][16];
+  constexpr ZigzagNibbleTable() : v() {
+    for (int i = 0; i < 16; i++)
+      for (int x = 0; x < 16; x++)
+        for (int b = 0; b < 4; b++)
+          if (x >> b & 1) v[i][x] |= std::uint64_t(1) << zigzag_order[4 * i + b];
+  }
+};
+alignas(64) inline constexpr ZigzagNibbleTable kZigzagNibble{};
+
 // ===========================================================================
 // Progressive Huffman decoder
 class PhuffDecoder final : public EntropyDecoder {
  public:
-  explicit PhuffDecoder(DState& st) : st_(st), br_(st) { init_coef_bits(st); }
+  explicit PhuffDecoder(DState& st) : st_(st), br_(st) {
+    init_coef_bits(st);
+#if VIO_HUFF_SSE2
+    vector_mask_ = st.simd.has(::vio::jpeg::simd::kSSE2);
+#elif VIO_HUFF_NEON
+    vector_mask_ = st.simd.has(::vio::jpeg::simd::kNEON);
+#endif
+  }
 
   void start_pass() override {
     bool is_DC_band = st_.Ss == 0;
@@ -1122,6 +1152,48 @@ class PhuffDecoder final : public EntropyDecoder {
   static VIO_INLINE std::uint64_t nonzero_mask(const Coef* block) {
     return nonzero_mask(block, std::make_integer_sequence<int, DCTSIZE2>());
   }
+#if VIO_HUFF_SSE2
+  // The natural-order mask from 16-bit compares, then its bits moved to
+  // zig-zag positions a nibble at a time.
+  static VIO_INLINE std::uint64_t nonzero_mask_vector(const Coef* block) {
+    const __m128i zero = _mm_setzero_si128();
+    std::uint64_t nat = 0;
+    for (int i = 0; i < 4; i++) {
+      const __m128i a = _mm_loadu_si128(reinterpret_cast<const __m128i*>(block + 16 * i));
+      const __m128i b = _mm_loadu_si128(reinterpret_cast<const __m128i*>(block + 16 * i + 8));
+      const __m128i z = _mm_packs_epi16(_mm_cmpeq_epi16(a, zero), _mm_cmpeq_epi16(b, zero));
+      nat |= static_cast<std::uint64_t>(_mm_movemask_epi8(z) ^ 0xFFFF) << (16 * i);
+    }
+    std::uint64_t m = 0;
+    for (int i = 0; i < 16; i++) m |= kZigzagNibble.v[i][(nat >> (4 * i)) & 15];
+    return m;
+  }
+#elif VIO_HUFF_NEON
+  // Non-zero flags as bytes, put in zig-zag order by table lookups, then
+  // gathered into bits.
+  static VIO_INLINE std::uint64_t nonzero_mask_vector(const Coef* block) {
+    uint8x16x4_t nz;
+    for (int i = 0; i < 4; i++) {
+      const int16x8_t a = vld1q_s16(block + 16 * i), b = vld1q_s16(block + 16 * i + 8);
+      nz.val[i] = vcombine_u8(vmovn_u16(vtstq_s16(a, a)), vmovn_u16(vtstq_s16(b, b)));
+    }
+    alignas(16) static constexpr std::uint8_t weights[16] = {1, 2, 4, 8, 16, 32, 64, 128,
+                                                             1, 2, 4, 8, 16, 32, 64, 128};
+    const uint8x16_t w = vld1q_u8(opaque(weights));
+    uint8x16_t t[4];
+    for (int i = 0; i < 4; i++) {
+      alignas(16) static constexpr std::uint8_t order[64] = {
+          0,  1,  8,  16, 9,  2,  3,  10, 17, 24, 32, 25, 18, 11, 4,  5,
+          12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6,  7,  14, 21, 28,
+          35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51,
+          58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63};
+      t[i] = vandq_u8(vqtbl4q_u8(nz, vld1q_u8(opaque(order) + 16 * i)), w);
+    }
+    uint8x16_t sum = vpaddq_u8(vpaddq_u8(t[0], t[1]), vpaddq_u8(t[2], t[3]));
+    sum = vpaddq_u8(sum, sum);
+    return vgetq_lane_u64(vreinterpretq_u64_u8(sum), 0);
+  }
+#endif
 
   // Every non-zero coefficient of the band gets one correction bit, in
   // zig-zag order, interleaved in the stream with the symbols that place
@@ -1134,7 +1206,12 @@ class PhuffDecoder final : public EntropyDecoder {
     const int m1 = static_cast<int>(~0u << Al);
     int k = st_.Ss;
     const std::uint64_t band = (~std::uint64_t(0) << k) & (~std::uint64_t(0) >> (63 - Se));
+#if VIO_HUFF_SSE2 || VIO_HUFF_NEON
+    const std::uint64_t nz =
+        (vector_mask_ ? nonzero_mask_vector(block) : nonzero_mask(block)) & band;
+#else
     const std::uint64_t nz = nonzero_mask(block) & band;
+#endif
     std::uint64_t acc = 0;  // correction bits read so far
     int late = 0;           // a coefficient placed past the band (corrupt data)
     if (EOBRUN == 0) {
@@ -1301,6 +1378,7 @@ class PhuffDecoder final : public EntropyDecoder {
   DerivedTable derived_[NUM_HUFF_TBLS];
   const DerivedTable* ac_tbl_ = nullptr;
   FastTable<AC_FAST_BITS> ac_fast_;
+  bool vector_mask_ = false;  // nonzero_mask_vector() allowed by the SIMD level in use
   const std::uint8_t* ff_ = nullptr;      // next 0xFF byte at or after the input position
   const std::uint8_t* mk_ = nullptr;      // next marker at or after the input position
   const std::uint8_t* mk_end_ = nullptr;  // end of the buffer ff_ and mk_ were found in
