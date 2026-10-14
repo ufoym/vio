@@ -359,9 +359,10 @@ inline VIO_NO_STACK_CHECK std::uint64_t ac_first_prepare(const std::int16_t* blo
   return bits;
 }
 
-inline VIO_NO_STACK_CHECK int ac_refine_prepare(const std::int16_t* block, const int* order, int Sl, int Al,
-                             std::uint16_t* absvalues, std::uint64_t* zerobits,
-                             std::uint64_t* signbits) {
+inline VIO_NO_STACK_CHECK std::uint64_t ac_refine_prepare(const std::int16_t* block, const int* order,
+                                                          int Sl, int Al, std::uint16_t* absvalues,
+                                                          std::uint64_t* zerobits,
+                                                          std::uint64_t* signbits) {
   using namespace detail_huff;
   T z[8];
   const bool in_regs = load_band(block, order, Sl, z);
@@ -381,6 +382,5 @@ inline VIO_NO_STACK_CHECK int ac_refine_prepare(const std::int16_t* block, const
   const std::uint64_t band = in_regs ? (std::uint64_t(1) << Sl) - 1 : ~std::uint64_t(0);
   *zerobits = ~movemask64(eq0) & band;
   *signbits = ~(movemask64(neg) & band);
-  std::uint64_t eob = movemask64(eq1) & band;
-  return eob ? 63 - clz64(eob) : 0;
+  return movemask64(eq1) & band;  // magnitudes equal to 1
 }

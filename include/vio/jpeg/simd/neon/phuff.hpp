@@ -122,11 +122,12 @@ inline VIO_NO_STACK_CHECK std::uint64_t ac_first_prepare(const std::int16_t* blo
 }
 
 // AC refinement pass: absvalues[k] = |coef_k| >> Al; *zerobits = non-zero
-// bitmap, *signbits = bitmap of non-negative coefficients.  Returns the index
-// of the last coefficient whose magnitude is 1 (0 if none).
-inline VIO_NO_STACK_CHECK int ac_refine_prepare(const std::int16_t* block, const int* order, int Sl, int Al,
-                             std::uint16_t* absvalues, std::uint64_t* zerobits,
-                             std::uint64_t* signbits) {
+// bitmap, *signbits = bitmap of non-negative coefficients.  Returns the
+// bitmap of the magnitudes equal to 1 (the coefficients new in this scan).
+inline VIO_NO_STACK_CHECK std::uint64_t ac_refine_prepare(const std::int16_t* block, const int* order,
+                                                          int Sl, int Al, std::uint16_t* absvalues,
+                                                          std::uint64_t* zerobits,
+                                                          std::uint64_t* signbits) {
   using namespace detail_phuff;
   const int16x8_t shift = vdupq_n_s16(static_cast<std::int16_t>(-Al));
   uint8x8_t nz[8], neg[8], eq1[8];
@@ -139,8 +140,7 @@ inline VIO_NO_STACK_CHECK int ac_refine_prepare(const std::int16_t* block, const
   });
   *zerobits = pack_bits(nz);
   *signbits = ~pack_bits(neg);
-  std::uint64_t eob = pack_bits(eq1);
-  return eob == 0 ? 0 : 63 - __builtin_clzll(eob);
+  return pack_bits(eq1);
 }
 
 }  // namespace vio::jpeg::simd::neon

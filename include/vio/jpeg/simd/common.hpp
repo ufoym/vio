@@ -97,9 +97,9 @@ struct FdctKernels {
 struct PhuffKernels {
   std::uint64_t (*ac_first_prepare)(const std::int16_t* block, const int* order, int Sl, int Al,
                                     std::uint16_t* values) = nullptr;
-  int (*ac_refine_prepare)(const std::int16_t* block, const int* order, int Sl, int Al,
-                           std::uint16_t* absvalues, std::uint64_t* zerobits,
-                           std::uint64_t* signbits) = nullptr;
+  std::uint64_t (*ac_refine_prepare)(const std::int16_t* block, const int* order, int Sl, int Al,
+                                     std::uint16_t* absvalues, std::uint64_t* zerobits,
+                                     std::uint64_t* signbits) = nullptr;
 };
 
 // Sequential Huffman encoding of the n blocks of an MCU: block i with the

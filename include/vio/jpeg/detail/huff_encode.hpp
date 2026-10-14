@@ -823,6 +823,7 @@ class PhuffEncoder final : public EntropyEncoder {
   struct AcPrepared {
     alignas(16) std::uint16_t values[2 * DCTSIZE2];
     std::uint64_t zerobits, signbits;
+    std::uint64_t newbits;  // refinement: magnitudes equal to 1 (new coefficients)
   };
 
   template <bool Refine>
@@ -892,10 +893,10 @@ class PhuffEncoder final : public EntropyEncoder {
     const int Sl = cs_.Se - cs_.Ss + 1;
     const int Al = cs_.Al;
     std::uint16_t* absvalues = p.values;
-    std::uint64_t zerobits = 0, signbits = 0;
+    std::uint64_t zerobits = 0, signbits = 0, newbits = 0;
     const int* order = natural_order + cs_.Ss;
     if (simd_.ac_refine_prepare) {
-      simd_.ac_refine_prepare(block, order, Sl, Al, absvalues, &zerobits, &signbits);
+      newbits = simd_.ac_refine_prepare(block, order, Sl, Al, absvalues, &zerobits, &signbits);
     } else {
       for (int k = 0; k < Sl; k++) {
         int temp = block[order[k]];
@@ -907,11 +908,13 @@ class PhuffEncoder final : public EntropyEncoder {
           zerobits |= std::uint64_t(1) << k;
           signbits |= static_cast<std::uint64_t>(temp2 + 1) << k;
         }
+        newbits |= static_cast<std::uint64_t>(temp == 1) << k;
         absvalues[k] = static_cast<std::uint16_t>(temp);
       }
     }
     p.zerobits = zerobits;
     p.signbits = signbits;
+    p.newbits = newbits;
   }
 
   template <bool Gather>
@@ -919,19 +922,13 @@ class PhuffEncoder final : public EntropyEncoder {
                                   unsigned& BE) {
     const int Sl = cs_.Se - cs_.Ss + 1;
     const std::uint16_t* absvalues = p.values;
-    const std::uint64_t zerobits = p.zerobits, signbits = p.signbits;
-    // New coefficients, and the correction bits of the others in order.
-    std::uint64_t newbits = 0, corr = 0;
-    int ncorr = 0;
-    for (std::uint64_t z = zerobits; z; z &= z - 1) {
-      const int k = ctz64(z);
-      const unsigned a = absvalues[k];
-      const bool is_new = a == 1;
-      newbits |= static_cast<std::uint64_t>(is_new) << k;
-      corr = is_new ? corr : corr << 1 | (a & 1);
-      ncorr += !is_new;
-    }
+    const std::uint64_t zerobits = p.zerobits, signbits = p.signbits, newbits = p.newbits;
+    // The correction bits of the coefficients already non-zero, in order.
     const std::uint64_t corrbits = zerobits & ~newbits;
+    std::uint64_t corr = 0;
+    int ncorr = 0;
+    for (std::uint64_t z = corrbits; z; z &= z - 1, ncorr++)
+      corr = corr << 1 | (absvalues[ctz64(z)] & 1u);
     corr = ncorr ? corr << (64 - ncorr) : 0;  // left-aligned: next bit first
     int start = 0;  // the first position after the last symbol
     for (std::uint64_t nw = newbits; nw; nw &= nw - 1) {
