@@ -17,6 +17,12 @@ struct YccRgbTables {
   // Green terms: 32 bits hold them (and their sum) up to 12-bit samples.
   using G = std::conditional_t<kBits<T> <= 12, int, JLong>;
   std::vector<G> Cr_g, Cb_g;
+  // 8-bit samples: the terms of Cr and of Cb packed in one word each, so
+  // that one addition gives all three: green sum + 2^30 in bits 0-31 (the
+  // halves biased by 2^29 never carry), red + 512 in bits 32-47 and blue +
+  // 512 in bits 48-63.
+  std::vector<std::uint64_t> Cr_pack, Cb_pack;
+  static constexpr int kPackBias = 512, kPackGreenBias = 1 << 14;  // (2^30 >> 16)
   void build() {
     constexpr int N = kMaxSample<T> + 1;
     Cr_r.resize(N);
@@ -29,6 +35,16 @@ struct YccRgbTables {
       Cb_b[i] = static_cast<int>((fix16(1.77200) * x + ONE_HALF) >> SCALEBITS);
       Cr_g[i] = static_cast<G>((-fix16(0.71414)) * x);
       Cb_g[i] = static_cast<G>((-fix16(0.34414)) * x + ONE_HALF);
+    }
+    if constexpr (kBits<T> == 8) {
+      Cr_pack.resize(N);
+      Cb_pack.resize(N);
+      for (int i = 0; i < N; i++) {
+        Cr_pack[i] = static_cast<std::uint64_t>(Cr_g[i] + (1 << 29)) |
+                     static_cast<std::uint64_t>(Cr_r[i] + kPackBias) << 32;
+        Cb_pack[i] = static_cast<std::uint64_t>(Cb_g[i] + (1 << 29)) |
+                     static_cast<std::uint64_t>(Cb_b[i] + kPackBias) << 48;
+      }
     }
   }
 };
@@ -185,6 +201,8 @@ class ColorDeconverter {
     [[maybe_unused]] const int* Cbbtab = tables_.Cb_b.data();
     [[maybe_unused]] const auto* Crgtab = tables_.Cr_g.data();
     [[maybe_unused]] const auto* Cbgtab = tables_.Cb_g.data();
+    [[maybe_unused]] const std::uint64_t* Crpack = tables_.Cr_pack.data();
+    [[maybe_unused]] const std::uint64_t* Cbpack = tables_.Cb_pack.data();
     while (--num_rows >= 0) {
       const T* inptr0 = input_buf[0][input_row];
       const T* inptr1 = K == GrayRgb ? inptr0 : input_buf[1][input_row];
@@ -204,6 +222,14 @@ class ColorDeconverter {
           outptr[R] = clamp(y + ((91881 * cr + half) >> SCALEBITS));
           outptr[G] = clamp(y + ((-22554 * cb - 46802 * cr + half) >> SCALEBITS));
           outptr[B] = clamp(y + ((116130 * cb + half) >> SCALEBITS));
+        } else if constexpr (K == YccRgb && kBits<T> == 8) {
+          using Tables = YccRgbTables<T>;
+          const int y = inptr0[col];
+          const std::uint64_t s = Crpack[inptr2[col]] + Cbpack[inptr1[col]];
+          outptr[R] = range_limit[y + static_cast<int>(s >> 32 & 0xFFFF) - Tables::kPackBias];
+          outptr[G] = range_limit[y + static_cast<int>(static_cast<std::uint32_t>(s) >> 16) -
+                                  Tables::kPackGreenBias];
+          outptr[B] = range_limit[y + static_cast<int>(s >> 48) - Tables::kPackBias];
         } else if constexpr (K == YccRgb) {
           int y = inptr0[col], cb = inptr1[col], cr = inptr2[col];
           outptr[R] = range_limit[y + Crrtab[cr]];
