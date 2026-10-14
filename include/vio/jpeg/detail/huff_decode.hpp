@@ -1075,10 +1075,17 @@ class PhuffDecoder final : public EntropyDecoder {
       MarkerFreeBits b = bits_in();
       unsigned EOBRUN = EOBRUN_;
       const unsigned first = i;
+      // Refinement: the non-zero mask of each block (from the earlier
+      // scans) is taken before the previous block is decoded, so that it
+      // is ready after the mispredicted branch that ends that block.
+      [[maybe_unused]] std::uint64_t nz_next = 0;
+      if constexpr (Refine) nz_next = refine_nonzero(blocks[i].data());
       do {
         Coef* block = blocks[i++].data();
         if constexpr (Refine) {
-          ac_refine_block(b, block, EOBRUN);
+          const std::uint64_t nz = nz_next;
+          if (i < n) nz_next = refine_nonzero(blocks[i].data());
+          ac_refine_block(b, block, EOBRUN, nz);
         } else {
           if (EOBRUN > 0) EOBRUN--;
           else ac_first_block(b, block, EOBRUN);
@@ -1199,19 +1206,26 @@ class PhuffDecoder final : public EntropyDecoder {
   // zig-zag order, interleaved in the stream with the symbols that place
   // new coefficients (at positions that were zero).  The bits are gathered
   // in acc as they come and applied at the end of the block.
-  VIO_INLINE void ac_refine_block(MarkerFreeBits& b, Coef* block, unsigned& EOBRUN) {
+  // The non-zero coefficients of a block in the band, by zig-zag position.
+  VIO_INLINE std::uint64_t refine_nonzero(const Coef* block) const {
+    const std::uint64_t band =
+        (~std::uint64_t(0) << st_.Ss) & (~std::uint64_t(0) >> (63 - st_.Se));
+#if VIO_HUFF_SSE2 || VIO_HUFF_NEON
+    return (vector_mask_ ? nonzero_mask_vector(block) : nonzero_mask(block)) & band;
+#else
+    return nonzero_mask(block) & band;
+#endif
+  }
+
+  // nz: refine_nonzero(block).
+  VIO_INLINE void ac_refine_block(MarkerFreeBits& b, Coef* block, unsigned& EOBRUN,
+                                  const std::uint64_t nz) {
     const FastTable<AC_FAST_BITS>& t = ac_fast_;
     const int Se = st_.Se, Al = st_.Al;
     const int p1 = 1 << Al;
     const int m1 = static_cast<int>(~0u << Al);
     int k = st_.Ss;
     const std::uint64_t band = (~std::uint64_t(0) << k) & (~std::uint64_t(0) >> (63 - Se));
-#if VIO_HUFF_SSE2 || VIO_HUFF_NEON
-    const std::uint64_t nz =
-        (vector_mask_ ? nonzero_mask_vector(block) : nonzero_mask(block)) & band;
-#else
-    const std::uint64_t nz = nonzero_mask(block) & band;
-#endif
     std::uint64_t acc = 0;  // correction bits read so far
     int nacc = 0;           // their number
     int late = 0;           // a coefficient placed past the band (corrupt data)
