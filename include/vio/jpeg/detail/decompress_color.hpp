@@ -192,7 +192,7 @@ class ColorDeconverter {
       input_row++;
       T* outptr = *output_buf++;
       for (unsigned col = 0; col < num_cols; col++) {
-        if constexpr (K == YccRgb && kBits<T> <= 12 && kVectorizes) {
+        if constexpr (K == YccRgb && kBits<T> <= 12 && kVectorizesWide) {
           // The table entries (YccRgbTables), computed directly in 32 bits
           // and clamped, so that the loop vectorizes.
           const int y = inptr0[col], cb = inptr1[col] - kCenterSample<T>,

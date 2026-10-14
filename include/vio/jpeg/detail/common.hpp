@@ -41,11 +41,19 @@ using JLong = long long;  // 64-bit intermediate arithmetic
 
 // Whether the compiler vectorizes per-sample loops written as independent
 // arithmetic (MSVC does not: table lookups and running sums are faster
-// there).
+// there).  The decompression side's forms (32-bit products, and sums the
+// compiler keeps in 32 bits) pay only with 32-bit vector multiplies: Arm
+// NEON, or x86 from SSE4.1 (not the x86-64 baseline).
 #if defined(_MSC_VER) && !defined(__clang__)
 inline constexpr bool kVectorizes = false;
+inline constexpr bool kVectorizesWide = false;
 #else
 inline constexpr bool kVectorizes = true;
+#if defined(__ARM_NEON) || defined(__aarch64__) || defined(__SSE4_1__)
+inline constexpr bool kVectorizesWide = true;
+#else
+inline constexpr bool kVectorizesWide = false;
+#endif
 #endif
 
 inline constexpr long div_round_up(long a, long b) { return (a + b - 1) / b; }

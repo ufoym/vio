@@ -217,9 +217,9 @@ class SepUpsampler final : public Upsampler<T> {
   }
 
   // Fancy upsampling.  Each output sample is computed on its own where the
-  // compiler vectorizes the loops; running sums do less work otherwise.
+  // compiler vectorizes the loops well; running sums do less work otherwise.
   void h2v1_fancy_upsample(const ComponentInfo& c, T** input_data, T**& output_data_ptr) {
-    if constexpr (kVectorizes) {
+    if constexpr (kVectorizesWide) {
       T** output_data = output_data_ptr;
       const unsigned w = c.downsampled_width;
       for (int inrow = 0; inrow < st_.max_v_samp_factor; inrow++) {
@@ -281,7 +281,7 @@ class SepUpsampler final : public Upsampler<T> {
   }
 
   void h2v2_fancy_upsample(const ComponentInfo& c, T** input_data, T**& output_data_ptr) {
-    if constexpr (kVectorizes) {
+    if constexpr (kVectorizesWide) {
       T** output_data = output_data_ptr;
       const unsigned w = c.downsampled_width;
       int inrow = 0, outrow = 0;
