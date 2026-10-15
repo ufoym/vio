@@ -4,6 +4,10 @@
 //   png/decoder.hpp   png::Decoder: all standard PNG variants (bit depths,
 //                     color types, Adam7 interlacing) in the PNG's native
 //                     sample layout
+//   png/transform.hpp png::Transforms / WriteTransforms: sample conversions
+//   png/stream.hpp    png::StreamDecoder: progressive (push) decoding
+//   png/simple.hpp    png::FormatReader / FormatWriter: images in a chosen
+//                     8-bit sRGB, 16-bit linear or colormapped format
 //   png/inflate.hpp, png/deflate.hpp, png/checksum.hpp
 //                     the zlib functionality PNG needs (vio::png::zlib)
 //
@@ -12,6 +16,7 @@
 
 #include "png/decoder.hpp"
 #include "png/encoder.hpp"
+#include "png/simple.hpp"
 #include "png/stream.hpp"
 
 namespace vio::png {

@@ -80,6 +80,9 @@ struct Transforms {
   // Gamma correction: the display's exponent and the file's encoding
   // exponent (overriding gAMA/sRGB).  0 = not set.
   double screen_gamma = 0, file_gamma = 0;
+  // The file's gamma when it has no gAMA or sRGB chunk (0: from the alpha
+  // mode's output gamma, else none).
+  double default_file_gamma = 0;
   struct Alpha {
     AlphaMode mode = AlphaMode::kPng;
     double output_gamma = kGammaSrgb;
@@ -256,6 +259,13 @@ class TransformPlan {
     const int n = color_type_ == kIndexed ? file_palette_size_ : num_palette_;
     return std::vector<PaletteEntry>(palette_.begin(), palette_.begin() + n);
   }
+  // Rows are composited (alpha mode or background) row by row.
+  bool composing() const { return has(kCompose); }
+  // Partially transparent pixels are left linear (optimized alpha mode).
+  bool optimize_alpha() const { return optimize_alpha_; }
+  // The gamma values in use (x 100000) once set up.
+  std::int32_t file_gamma() const { return file_gamma_; }
+  std::int32_t screen_gamma() const { return screen_gamma_; }
   // An RGB-to-gray conversion met a pixel that was not gray.
   bool rgb_to_gray_found_color() const { return rgb_error_seen_; }
   // Room needed for a transformed row (it may grow before it shrinks).
@@ -386,6 +396,7 @@ class TransformPlan {
         if (sg > 0) screen_gamma_ = sg;
       }
     }
+    if (t.default_file_gamma != 0) default_gamma_ = translate_gamma(convert_gamma(t.default_file_gamma), false);
     if (t.alpha_mode) {
       std::int32_t og = translate_gamma(convert_gamma(t.alpha_mode->output_gamma), true);
       if (og < 1000 || og > 10000000) fail("gamma out of supported range");

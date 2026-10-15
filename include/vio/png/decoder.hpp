@@ -146,9 +146,11 @@ inline std::int32_t read_i32(const std::uint8_t* p) {
 }  // namespace detail
 
 class StreamDecoder;
+class FormatReader;
 
 class Decoder {
   friend class StreamDecoder;
+  friend class FormatReader;
 
  public:
   ReadOptions options;
