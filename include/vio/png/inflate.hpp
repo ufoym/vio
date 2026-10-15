@@ -316,6 +316,16 @@ class Inflater {
   explicit Inflater(bool raw = false, bool verify_adler = true)
       : raw_(raw), verify_adler_(verify_adler) {}
 
+  // An inflater kept per thread (its tables are large to allocate for
+  // every small image), set up for a new stream.
+  static Inflater& per_thread(bool raw = false, bool verify_adler = true) {
+    thread_local std::unique_ptr<Inflater> inf;
+    if (!inf) inf = std::make_unique<Inflater>();
+    inf->raw_ = raw;
+    inf->verify_adler_ = verify_adler;
+    return *inf;
+  }
+
   // Decompresses `src` into out[0..out_size).  Stops at the end of the
   // stream or when the output is full, whichever comes first, and returns
   // the number of bytes written; stream_end() tells which.  Throws vio::Error

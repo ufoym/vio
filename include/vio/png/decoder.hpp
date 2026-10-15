@@ -942,7 +942,7 @@ class Decoder {
 
   // Inflates exactly `size` bytes of filtered image data into `out`.
   void inflate(std::span<const std::uint8_t> idat, std::uint8_t* out, std::size_t size) {
-    auto inf = std::make_unique<zlib::Inflater>(false, options.verify_adler);
+    zlib::Inflater* inf = &zlib::Inflater::per_thread(false, options.verify_adler);
     std::size_t n = 0;
     try {
       n = inf->decompress(idat, out, size);
