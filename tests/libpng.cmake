@@ -1,16 +1,20 @@
-# libpng's tests (tests/libpng/CMakeLists.txt, tests/pngtest-all), adapted to
-# vio: the same test names and images, run by png-test (tools/png_test.cpp)
-# instead of libpng's programs.  Decoded images are compared with
-# libpng-expected.txt, the samples libpng 1.6.59 decodes.
+# libpng's tests (tests/libpng/tests, libpng18 branch), adapted to vio: the
+# same test names and images, run by png-test (tools/png_test.cpp) instead
+# of libpng's programs.  Results are compared with libpng-expected.txt, what
+# libpng produces for the same cases (written by tools/png_golden.cpp; build
+# it with -DVIO_PNG_GOLDEN=ON).
 #
-#   pngtest, pngtest-png-3   decode and re-encode pngtest.png / png-3 images
-#   pngtest-crashers         the corrupt and odd files of pngtest-all
-#   pngvalid-*               generated images of every format, written with
-#                            random filters, interlaced or not
-#   pngstest-*               contrib/testpngs by gamma and alpha type
-#   pngunknown-discard       unknown chunks
-#   pngimage-quick/-full     PngSuite (-full: also the interlaced set and
-#                            re-encoding)
+#   pngtest-all              decode and re-encode pngtest.png, the png-3 and
+#                            corrupt images (pngtest)
+#   pnggetset                every chunk value written and read back
+#   pngimage-quick/-full     read transformations on PngSuite (and
+#                            contrib/testpngs), reversible ones written back
+#   pngstest-*               the format-conversion API on contrib/testpngs
+#                            by gamma and alpha, with large/negative strides
+#   pngunknown-*             unknown chunk rules on pngtest.png
+#   pngvalid-*               generated images: every format, size and
+#                            interlacing, progressive reading, read
+#                            transformations and gamma processing
 
 set(LIBPNG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libpng)
 set(LIBPNG_EXPECTED ${CMAKE_CURRENT_SOURCE_DIR}/libpng-expected.txt)
@@ -26,18 +30,26 @@ foreach(list PNGSUITE_PNGS PNGSUITE_INTERLACED_PNGS TEST_PNGS TEST_PNG3_PNGS CRA
   list(SORT ${list})
 endforeach()
 
+set(STRIDE_PNGS
+  contrib/testpngs/gray-1.png contrib/testpngs/gray-16-linear.png
+  contrib/testpngs/rgb-8-linear.png contrib/testpngs/rgb-16-linear.png
+  contrib/testpngs/palette-8-tRNS.png contrib/testpngs/gray-alpha-8-linear.png
+  contrib/testpngs/gray-alpha-16-linear.png contrib/testpngs/rgb-alpha-8-1.8.png
+  contrib/testpngs/rgb-alpha-8-sRGB.png contrib/testpngs/rgb-alpha-16-linear.png)
+
 foreach(variant ${VIO_VARIANTS})
   set(sfx ${VIO_SUFFIX_${variant}})
-  set(png_test $<TARGET_FILE:png-test${sfx}>)
-  set(check ${png_test} check --roundtrip ${LIBPNG_EXPECTED} ${LIBPNG_DIR})
+  set(t $<TARGET_FILE:png-test${sfx}>)
+  set(e ${LIBPNG_EXPECTED})
 
-  add_test(NAME pngtest${sfx} COMMAND ${check} pngtest.png)
-  add_test(NAME pngtest-png-3${sfx} COMMAND ${check} ${TEST_PNG3_PNGS})
-  add_test(NAME pngtest-crashers${sfx} COMMAND ${check} ${CRASHER_PNGS})
-
-  add_test(NAME pngvalid-standard${sfx} COMMAND ${png_test} valid standard)
-  add_test(NAME pngvalid-interlace-standard${sfx} COMMAND ${png_test} valid interlace)
-  add_test(NAME pngvalid-size${sfx} COMMAND ${png_test} valid size)
+  add_test(NAME pngtest-all${sfx}
+    COMMAND ${t} check --roundtrip ${e} ${LIBPNG_DIR} pngtest.png ${TEST_PNG3_PNGS} ${CRASHER_PNGS})
+  add_test(NAME pnggetset${sfx} COMMAND ${t} getset)
+  add_test(NAME pngimage-quick${sfx} COMMAND ${t} xform ${e} ${LIBPNG_DIR} ${PNGSUITE_PNGS})
+  add_test(NAME pngimage-full${sfx}
+    COMMAND ${t} xform ${e} ${LIBPNG_DIR} ${PNGSUITE_PNGS} ${TEST_PNGS})
+  add_test(NAME pngimage-interlaced${sfx}
+    COMMAND ${t} check --roundtrip ${e} ${LIBPNG_DIR} ${PNGSUITE_PNGS} ${PNGSUITE_INTERLACED_PNGS})
 
   foreach(gamma_type 1.8 linear none sRGB)
     foreach(alpha_type none alpha)
@@ -65,15 +77,50 @@ foreach(variant ${VIO_VARIANTS})
           list(APPEND files ${f})
         endif()
       endforeach()
-      add_test(NAME pngstest-${gamma_type}-${alpha_type}${sfx} COMMAND ${check} ${files})
+      if(alpha_type STREQUAL "alpha")
+        set(name pngstest-${gamma_type}-alpha)
+      else()
+        set(name pngstest-${gamma_type})
+      endif()
+      add_test(NAME ${name}${sfx} COMMAND ${t} format ${e} ${LIBPNG_DIR} ${files})
     endforeach()
   endforeach()
+  add_test(NAME pngstest-large-stride${sfx}
+    COMMAND ${t} format ${e} ${LIBPNG_DIR} --stride-extra 33000 contrib/testpngs/rgb-alpha-16-linear.png)
+  add_test(NAME pngstest-negative-stride${sfx}
+    COMMAND ${t} format ${e} ${LIBPNG_DIR} --negative-stride ${STRIDE_PNGS})
+  add_test(NAME pngstest-negative-stride-extra${sfx}
+    COMMAND ${t} format ${e} ${LIBPNG_DIR} --negative-stride --stride-extra 7 ${STRIDE_PNGS})
 
-  add_test(NAME pngunknown-discard${sfx}
-    COMMAND ${png_test} unknown ${LIBPNG_DIR}/pngtest.png)
+  foreach(rule IDAT discard if-safe sAPI sTER save vpAg)
+    add_test(NAME pngunknown-${rule}${sfx} COMMAND ${t} unknown ${e} ${LIBPNG_DIR}/pngtest.png ${rule})
+  endforeach()
 
-  add_test(NAME pngimage-quick${sfx}
-    COMMAND ${png_test} check ${LIBPNG_EXPECTED} ${LIBPNG_DIR} ${PNGSUITE_PNGS})
-  add_test(NAME pngimage-full${sfx}
-    COMMAND ${check} ${PNGSUITE_PNGS} ${PNGSUITE_INTERLACED_PNGS})
+  add_test(NAME pngvalid-standard${sfx} COMMAND ${t} valid ${e} standard)
+  add_test(NAME pngvalid-interlace-standard${sfx} COMMAND ${t} valid ${e} interlace)
+  add_test(NAME pngvalid-size${sfx} COMMAND ${t} valid ${e} size)
+  add_test(NAME pngvalid-progressive-standard${sfx} COMMAND ${t} valid ${e} standard --progressive)
+  add_test(NAME pngvalid-progressive-interlace-standard${sfx}
+    COMMAND ${t} valid ${e} interlace --progressive)
+  add_test(NAME pngvalid-progressive-size${sfx} COMMAND ${t} valid ${e} size --progressive)
+  add_test(NAME pngvalid-transform${sfx} COMMAND ${t} vxform ${e} transform)
+  foreach(kind threshold transform sbit 16-to-8 background alpha-mode)
+    add_test(NAME pngvalid-gamma-${kind}${sfx} COMMAND ${t} vxform ${e} gamma-${kind})
+  endforeach()
+  foreach(kind alpha-mode background transform)
+    add_test(NAME pngvalid-gamma-expand16-${kind}${sfx} COMMAND ${t} vxform ${e} gamma-${kind}-expand16)
+  endforeach()
 endforeach()
+
+# png-golden: regenerates libpng-expected.txt from the libpng submodule.
+option(VIO_PNG_GOLDEN "Build png-golden (needs zlib) to regenerate libpng-expected.txt" OFF)
+if(VIO_PNG_GOLDEN)
+  find_package(ZLIB REQUIRED)
+  set(PNG_SHARED OFF CACHE BOOL "" FORCE)
+  set(PNG_TESTS OFF CACHE BOOL "" FORCE)
+  set(PNG_TOOLS OFF CACHE BOOL "" FORCE)
+  add_subdirectory(${LIBPNG_DIR} ${CMAKE_CURRENT_BINARY_DIR}/libpng EXCLUDE_FROM_ALL)
+  add_executable(png-golden tools/png_golden.cpp)
+  target_include_directories(png-golden PRIVATE tools ${LIBPNG_DIR} ${CMAKE_CURRENT_BINARY_DIR}/libpng)
+  target_link_libraries(png-golden PRIVATE vio png_static ZLIB::ZLIB)
+endif()

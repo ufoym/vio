@@ -194,6 +194,7 @@ struct Info {
   bool default_image_is_frame = false;
 
   bool has_trns() const { return !trans_alpha.empty() || trans_color.has_value(); }
+  bool operator==(const Info&) const = default;
 };
 
 }  // namespace vio::png

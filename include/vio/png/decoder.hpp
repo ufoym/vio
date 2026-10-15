@@ -1006,23 +1006,71 @@ class Decoder {
     img.palette = plan.palette();
     img.row_bytes = (static_cast<std::size_t>(width) * img.format.channels * img.format.bit_depth + 7) / 8;
     img.pixels.resize(img.row_bytes * height + plan.max_row_bytes(width));
-    std::vector<std::uint8_t> in(rb), out(plan.max_row_bytes(width));
-    for (std::uint32_t y = 0; y < height; y++) {
-      const std::uint8_t* src = pixels + y * rb;
-      if (header.bit_depth == 16) {
-        // stored in host order; the transforms take PNG (big-endian) order
-        for (std::size_t i = 0; i + 1 < rb; i += 2) {
-          std::uint16_t v;
-          std::memcpy(&v, src + i, 2);
-          in[i] = static_cast<std::uint8_t>(v >> 8), in[i + 1] = static_cast<std::uint8_t>(v);
-        }
-        src = in.data();
-      }
-      plan.run(src, width, out.data());
-      std::memcpy(img.pixels.data() + y * img.row_bytes, out.data(), img.row_bytes);
-    }
+    transform_image(plan, width, height, pixels, rb, img.pixels.data(), img.row_bytes);
     img.pixels.resize(img.row_bytes * height);
     return img;
+  }
+
+  // Runs `plan` on a decoded image (native layout) into rows of `orb`
+  // bytes.  Interlaced images are transformed pass row by pass row, as the
+  // rows come in the file, then combined.
+  void transform_image(detail::TransformPlan& plan, std::uint32_t width, std::uint32_t height,
+                       const std::uint8_t* pixels, std::size_t rb, std::uint8_t* out, std::size_t orb) {
+    using namespace detail;
+    const unsigned bits = static_cast<unsigned>(num_channels(header.color_type) * header.bit_depth);
+    std::vector<std::uint8_t> in(rb + 8), row(plan.max_row_bytes(width));
+    // Copies `n` pixels of `bits` bits from src (pixel sx0, step sdx) to dst
+    // (pixel dx0, step ddx).
+    auto move_pixels = [](const std::uint8_t* src, std::size_t sx0, std::size_t sdx, std::uint8_t* dst,
+                          std::size_t dx0, std::size_t ddx, std::size_t n, unsigned b, bool lsb_first) {
+      for (std::size_t i = 0; i < n; i++) {
+        const std::size_t sx = sx0 + i * sdx, dx = dx0 + i * ddx;
+        if (b >= 8) {
+          std::memcpy(dst + dx * (b / 8), src + sx * (b / 8), b / 8);
+        } else {
+          const unsigned mask = (1u << b) - 1;
+          const unsigned spos = static_cast<unsigned>((sx * b) % 8), dpos = static_cast<unsigned>((dx * b) % 8);
+          const unsigned v = (src[sx * b / 8] >> (lsb_first ? spos : 8 - b - spos)) & mask;
+          const unsigned sh = lsb_first ? dpos : 8 - b - dpos;
+          std::uint8_t& o = dst[dx * b / 8];
+          o = static_cast<std::uint8_t>((o & ~(mask << sh)) | v << sh);
+        }
+      }
+    };
+    auto to_png_order = [&](const std::uint8_t* src, std::size_t n) {
+      if (header.bit_depth != 16) return src;
+      for (std::size_t i = 0; i + 1 < n; i += 2) {
+        std::uint16_t v;
+        std::memcpy(&v, src + i, 2);
+        in[i] = static_cast<std::uint8_t>(v >> 8), in[i + 1] = static_cast<std::uint8_t>(v);
+      }
+      return static_cast<const std::uint8_t*>(in.data());
+    };
+    if (!header.interlace) {
+      for (std::uint32_t y = 0; y < height; y++) {
+        plan.run(to_png_order(pixels + y * rb, rb), width, row.data());
+        std::memcpy(out + y * orb, row.data(), orb);
+      }
+      return;
+    }
+    const RowInfo& o = plan.output();
+    const unsigned obits = static_cast<unsigned>(o.channels * o.bit_depth);
+    std::vector<std::uint8_t> pass_row(rb + 8);
+    std::memset(out, 0, orb * height);
+    for (int p = 0; p < 7; p++) {
+      if (width <= static_cast<std::uint32_t>(adam7_x_start[p]) ||
+          height <= static_cast<std::uint32_t>(adam7_y_start[p]))
+        continue;
+      const std::uint32_t pw = (width - adam7_x_start[p] + adam7_x_delta[p] - 1) / adam7_x_delta[p];
+      const std::size_t prb = (static_cast<std::size_t>(pw) * bits + 7) / 8;
+      for (std::uint32_t y = adam7_y_start[p]; y < height; y += adam7_y_delta[p]) {
+        std::memset(pass_row.data(), 0, prb);
+        move_pixels(pixels + y * rb, adam7_x_start[p], adam7_x_delta[p], pass_row.data(), 0, 1, pw, bits, false);
+        plan.run(to_png_order(pass_row.data(), prb), pw, row.data());
+        move_pixels(row.data(), 0, 1, out + y * orb, adam7_x_start[p], adam7_x_delta[p], pw, obits,
+                    plan.packswapped());
+      }
+    }
   }
 
   std::span<const std::uint8_t> file_;

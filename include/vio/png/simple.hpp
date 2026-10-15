@@ -284,22 +284,11 @@ class FormatReader {
   void init_plan(const Transforms& t) { plan_.init(d_.info, t, [this](const std::string& m) { d_.warn(m); }); }
   template <typename F>
   void run_rows(F f) {
-    const Header& h = d_.info.header;
-    const std::size_t rb = d_.row_bytes();
-    std::vector<std::uint8_t> in(rb + 8), out(plan_.max_row_bytes(width));
-    for (std::uint32_t y = 0; y < height; y++) {
-      const std::uint8_t* src = d_.row(y);
-      if (h.bit_depth == 16) {
-        for (std::size_t i = 0; i + 1 < rb; i += 2) {
-          std::uint16_t v;
-          std::memcpy(&v, src + i, 2);
-          in[i] = static_cast<std::uint8_t>(v >> 8), in[i + 1] = static_cast<std::uint8_t>(v);
-        }
-        src = in.data();
-      }
-      plan_.run(src, width, out.data());
-      f(y, out.data());
-    }
+    const RowInfo& o = plan_.output();
+    const std::size_t orb = (static_cast<std::size_t>(width) * o.channels * o.bit_depth + 7) / 8;
+    std::vector<std::uint8_t> img(orb * height + plan_.max_row_bytes(width));
+    d_.transform_image(plan_, width, height, d_.row(0), d_.row_bytes(), img.data(), orb);
+    for (std::uint32_t y = 0; y < height; y++) f(y, img.data() + y * orb);
   }
   std::uint8_t* row_ptr(std::uint32_t y) const { return first_ + static_cast<std::ptrdiff_t>(y) * step_; }
 

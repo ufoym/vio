@@ -1,203 +1,535 @@
-# Decoded samples of the libpng test images: FNV-1a (64-bit) of the image in
-# the PNG's own sample layout (16-bit samples big-endian, no padding bits),
-# as libpng decodes them, or "error" where libpng rejects the file.
-contrib/pngsuite/basn0g01.png 5538fafc596569d5
-contrib/pngsuite/basn0g02.png 19c1cc5902943025
-contrib/pngsuite/basn0g04.png 38255662302bbea5
-contrib/pngsuite/basn0g08.png 41d4d925c29e1249
-contrib/pngsuite/basn0g16.png ad62077141c2ed59
-contrib/pngsuite/basn2c08.png 20362d9a3ff2e125
-contrib/pngsuite/basn2c16.png 417fa6cab8b110ed
-contrib/pngsuite/basn3p01.png e651b17029174f65
-contrib/pngsuite/basn3p02.png ae93628c3569cde5
-contrib/pngsuite/basn3p04.png e28016aff6a29025
-contrib/pngsuite/basn3p08.png 3e419f4841af0785
-contrib/pngsuite/basn4a08.png cec2261b629bf585
-contrib/pngsuite/basn4a16.png 4f24c5e2c631b805
-contrib/pngsuite/basn6a08.png f9ed41b6375b125d
-contrib/pngsuite/basn6a16.png 6e6641b6e5c72dcd
-contrib/pngsuite/ftbbn0g01.png cd4d25c324b5a41f
-contrib/pngsuite/ftbbn0g02.png 664f74864e34b797
-contrib/pngsuite/ftbbn0g04.png c6c6259fe78c8006
-contrib/pngsuite/ftbbn2c16.png 540cfe32f413f2d9
-contrib/pngsuite/ftbbn3p08.png 6a06b93c4b829ff1
-contrib/pngsuite/ftbgn2c16.png 540cfe32f413f2d9
-contrib/pngsuite/ftbgn3p08.png 6a06b93c4b829ff1
-contrib/pngsuite/ftbrn2c08.png 4c1736df857f8937
-contrib/pngsuite/ftbwn0g16.png 15f2dd013b98ed8c
-contrib/pngsuite/ftbwn3p08.png 6a06b93c4b829ff1
-contrib/pngsuite/ftbyn3p08.png 6a06b93c4b829ff1
-contrib/pngsuite/ftp0n0g08.png b8415f3c474a13ec
-contrib/pngsuite/ftp0n2c08.png a64ba09becb56ab7
-contrib/pngsuite/ftp0n3p08.png f18412ebabe17212
-contrib/pngsuite/ftp1n3p08.png 6a06b93c4b829ff1
-contrib/pngsuite/ibasn0g08.png 41d4d925c29e1249
-contrib/pngsuite/ibasn0g16.png ad62077141c2ed59
-contrib/pngsuite/ibasn2c08.png 20362d9a3ff2e125
-contrib/pngsuite/ibasn2c16.png 417fa6cab8b110ed
-contrib/pngsuite/ibasn3p08.png 2a4934183164c725
-contrib/pngsuite/ibasn4a08.png cec2261b629bf585
-contrib/pngsuite/ibasn4a16.png 4f24c5e2c631b805
-contrib/pngsuite/ibasn6a08.png f9ed41b6375b125d
-contrib/pngsuite/ibasn6a16.png 6e6641b6e5c72dcd
-contrib/pngsuite/iftbbn2c16.png 540cfe32f413f2d9
-contrib/pngsuite/iftbbn3p08.png bb5c10e64b48c3cd
-contrib/pngsuite/iftbgn2c16.png 540cfe32f413f2d9
-contrib/pngsuite/iftbgn3p08.png bb5c10e64b48c3cd
-contrib/pngsuite/iftbrn2c08.png 4c1736df857f8937
-contrib/pngsuite/iftbwn0g16.png 15f2dd013b98ed8c
-contrib/pngsuite/iftbwn3p08.png bb5c10e64b48c3cd
-contrib/pngsuite/iftbyn3p08.png bb5c10e64b48c3cd
-contrib/pngsuite/iftp0n0g08.png b8415f3c474a13ec
-contrib/pngsuite/iftp0n2c08.png a64ba09becb56ab7
-contrib/pngsuite/iftp0n3p08.png f7fe9b9fbe533e6d
-contrib/pngsuite/iftp1n3p08.png bb5c10e64b48c3cd
-contrib/pngsuite/interlaced/ibasn0g01.png 5538fafc596569d5
-contrib/pngsuite/interlaced/ibasn0g02.png 19c1cc5902943025
-contrib/pngsuite/interlaced/ibasn0g04.png 38255662302bbea5
-contrib/pngsuite/interlaced/ibasn3p01.png e651b17029174f65
-contrib/pngsuite/interlaced/ibasn3p02.png 4f4f2cbb8c142025
-contrib/pngsuite/interlaced/ibasn3p04.png 38255662302bbea5
-contrib/pngsuite/interlaced/iftbbn0g01.png cd4d25c324b5a41f
-contrib/pngsuite/interlaced/iftbbn0g02.png 664f74864e34b797
-contrib/pngsuite/interlaced/iftbbn0g04.png c6c6259fe78c8006
-contrib/testpngs/badpal/regression-palette-8.png 4242dc5249c33625
-contrib/testpngs/badpal/small-palette-1.png af63fd4c8602249f
-contrib/testpngs/badpal/small-palette-2.png af63d64c8601e25a
-contrib/testpngs/badpal/small-palette-4.png 9ed00e1af2c13f65
-contrib/testpngs/badpal/small-palette-8.png 1c2c16fae3c06725
-contrib/testpngs/badpal/test-palette-1.png 264e59cbb0e9993d
-contrib/testpngs/badpal/test-palette-2.png a08d4108f8f105cd
-contrib/testpngs/badpal/test-palette-4.png 722d53d88ff3830d
-contrib/testpngs/badpal/test-palette-8.png b3ca73907d0e3125
-contrib/testpngs/ch1n3p04.png e28016aff6a29025
-contrib/testpngs/ch2n3p08.png 3e419f4841af0785
-contrib/testpngs/crashers/bad_iCCP.png error
-contrib/testpngs/crashers/badadler.png error
-contrib/testpngs/crashers/badcrc.png error
-contrib/testpngs/crashers/empty_ancillary_chunks.png af63bd4c8601b7df
-contrib/testpngs/crashers/huge_IDAT.png error
-contrib/testpngs/crashers/huge_bKGD_chunk.png error
-contrib/testpngs/crashers/huge_cHRM_chunk.png error
-contrib/testpngs/crashers/huge_eXIf_chunk.png error
-contrib/testpngs/crashers/huge_gAMA_chunk.png error
-contrib/testpngs/crashers/huge_hIST_chunk.png error
-contrib/testpngs/crashers/huge_iCCP_chunk.png error
-contrib/testpngs/crashers/huge_iTXt_chunk.png error
-contrib/testpngs/crashers/huge_juNK_unsafe_to_copy.png error
-contrib/testpngs/crashers/huge_juNk_safe_to_copy.png error
-contrib/testpngs/crashers/huge_pCAL_chunk.png error
-contrib/testpngs/crashers/huge_pHYs_chunk.png error
-contrib/testpngs/crashers/huge_sCAL_chunk.png error
-contrib/testpngs/crashers/huge_sPLT_chunk.png error
-contrib/testpngs/crashers/huge_sRGB_chunk.png error
-contrib/testpngs/crashers/huge_sTER_chunk.png error
-contrib/testpngs/crashers/huge_tEXt_chunk.png error
-contrib/testpngs/crashers/huge_tIME_chunk.png error
-contrib/testpngs/crashers/huge_zTXt_chunk.png error
-contrib/testpngs/gray-1-1.8-tRNS.png af63fd4c8602249f
-contrib/testpngs/gray-1-1.8.png af63fd4c8602249f
-contrib/testpngs/gray-1-linear-tRNS.png af63fd4c8602249f
-contrib/testpngs/gray-1-linear.png af63fd4c8602249f
-contrib/testpngs/gray-1-sRGB-tRNS.png af63fd4c8602249f
-contrib/testpngs/gray-1-sRGB.png af63fd4c8602249f
-contrib/testpngs/gray-1-tRNS.png af63fd4c8602249f
-contrib/testpngs/gray-1.png af63fd4c8602249f
-contrib/testpngs/gray-16-1.8-tRNS.png 33f4a190d31f3325
-contrib/testpngs/gray-16-1.8.png 33f4a190d31f3325
-contrib/testpngs/gray-16-linear-tRNS.png 33f4a190d31f3325
-contrib/testpngs/gray-16-linear.png 33f4a190d31f3325
-contrib/testpngs/gray-16-sRGB-tRNS.png 33f4a190d31f3325
-contrib/testpngs/gray-16-sRGB.png 33f4a190d31f3325
-contrib/testpngs/gray-16-tRNS.png 33f4a190d31f3325
-contrib/testpngs/gray-16.png 33f4a190d31f3325
-contrib/testpngs/gray-2-1.8-tRNS.png af63d64c8601e25a
-contrib/testpngs/gray-2-1.8.png af63d64c8601e25a
-contrib/testpngs/gray-2-linear-tRNS.png af63d64c8601e25a
-contrib/testpngs/gray-2-linear.png af63d64c8601e25a
-contrib/testpngs/gray-2-sRGB-tRNS.png af63d64c8601e25a
-contrib/testpngs/gray-2-sRGB.png af63d64c8601e25a
-contrib/testpngs/gray-2-tRNS.png af63d64c8601e25a
-contrib/testpngs/gray-2.png af63d64c8601e25a
-contrib/testpngs/gray-4-1.8-tRNS.png 9ed00e1af2c13f65
-contrib/testpngs/gray-4-1.8.png 9ed00e1af2c13f65
-contrib/testpngs/gray-4-linear-tRNS.png 9ed00e1af2c13f65
-contrib/testpngs/gray-4-linear.png 9ed00e1af2c13f65
-contrib/testpngs/gray-4-sRGB-tRNS.png 9ed00e1af2c13f65
-contrib/testpngs/gray-4-sRGB.png 9ed00e1af2c13f65
-contrib/testpngs/gray-4-tRNS.png 9ed00e1af2c13f65
-contrib/testpngs/gray-4.png 9ed00e1af2c13f65
-contrib/testpngs/gray-8-1.8-tRNS.png 1c2c16fae3c06725
-contrib/testpngs/gray-8-1.8.png 1c2c16fae3c06725
-contrib/testpngs/gray-8-linear-tRNS.png 1c2c16fae3c06725
-contrib/testpngs/gray-8-linear.png 1c2c16fae3c06725
-contrib/testpngs/gray-8-sRGB-tRNS.png 1c2c16fae3c06725
-contrib/testpngs/gray-8-sRGB.png 1c2c16fae3c06725
-contrib/testpngs/gray-8-tRNS.png 1c2c16fae3c06725
-contrib/testpngs/gray-8.png 1c2c16fae3c06725
-contrib/testpngs/gray-alpha-16-1.8.png 5d480c30abd24525
-contrib/testpngs/gray-alpha-16-linear.png 5d480c30abd24525
-contrib/testpngs/gray-alpha-16-sRGB.png 5d480c30abd24525
-contrib/testpngs/gray-alpha-16.png 5d480c30abd24525
-contrib/testpngs/gray-alpha-8-1.8.png 33f4a190d31f3325
-contrib/testpngs/gray-alpha-8-linear.png 33f4a190d31f3325
-contrib/testpngs/gray-alpha-8-sRGB.png 33f4a190d31f3325
-contrib/testpngs/gray-alpha-8.png 33f4a190d31f3325
-contrib/testpngs/palette-1-1.8-tRNS.png af63fd4c8602249f
-contrib/testpngs/palette-1-1.8.png af63fd4c8602249f
-contrib/testpngs/palette-1-linear-tRNS.png af63fd4c8602249f
-contrib/testpngs/palette-1-linear.png af63fd4c8602249f
-contrib/testpngs/palette-1-sRGB-tRNS.png af63fd4c8602249f
-contrib/testpngs/palette-1-sRGB.png af63fd4c8602249f
-contrib/testpngs/palette-1-tRNS.png af63fd4c8602249f
-contrib/testpngs/palette-1.png af63fd4c8602249f
-contrib/testpngs/palette-2-1.8-tRNS.png af63d64c8601e25a
-contrib/testpngs/palette-2-1.8.png af63d64c8601e25a
-contrib/testpngs/palette-2-linear-tRNS.png af63d64c8601e25a
-contrib/testpngs/palette-2-linear.png af63d64c8601e25a
-contrib/testpngs/palette-2-sRGB-tRNS.png af63d64c8601e25a
-contrib/testpngs/palette-2-sRGB.png af63d64c8601e25a
-contrib/testpngs/palette-2-tRNS.png af63d64c8601e25a
-contrib/testpngs/palette-2.png af63d64c8601e25a
-contrib/testpngs/palette-4-1.8-tRNS.png 9ed00e1af2c13f65
-contrib/testpngs/palette-4-1.8.png 9ed00e1af2c13f65
-contrib/testpngs/palette-4-linear-tRNS.png 9ed00e1af2c13f65
-contrib/testpngs/palette-4-linear.png 9ed00e1af2c13f65
-contrib/testpngs/palette-4-sRGB-tRNS.png 9ed00e1af2c13f65
-contrib/testpngs/palette-4-sRGB.png 9ed00e1af2c13f65
-contrib/testpngs/palette-4-tRNS.png 9ed00e1af2c13f65
-contrib/testpngs/palette-4.png 9ed00e1af2c13f65
-contrib/testpngs/palette-8-1.8-tRNS.png 1c2c16fae3c06725
-contrib/testpngs/palette-8-1.8.png 1c2c16fae3c06725
-contrib/testpngs/palette-8-linear-tRNS.png 1c2c16fae3c06725
-contrib/testpngs/palette-8-linear.png 1c2c16fae3c06725
-contrib/testpngs/palette-8-sRGB-tRNS.png 1c2c16fae3c06725
-contrib/testpngs/palette-8-sRGB.png 1c2c16fae3c06725
-contrib/testpngs/palette-8-tRNS.png 1c2c16fae3c06725
-contrib/testpngs/palette-8.png 1c2c16fae3c06725
-contrib/testpngs/png-3/cicp-display-p3_reencoded.png 0821af6ec63ff525
-contrib/testpngs/rgb-16-1.8-tRNS.png 9c30112a8224c925
-contrib/testpngs/rgb-16-1.8.png 9c30112a8224c925
-contrib/testpngs/rgb-16-linear-tRNS.png 9c30112a8224c925
-contrib/testpngs/rgb-16-linear.png 9c30112a8224c925
-contrib/testpngs/rgb-16-sRGB-tRNS.png 9c30112a8224c925
-contrib/testpngs/rgb-16-sRGB.png 9c30112a8224c925
-contrib/testpngs/rgb-16-tRNS.png 9c30112a8224c925
-contrib/testpngs/rgb-16.png 9c30112a8224c925
-contrib/testpngs/rgb-8-1.8-tRNS.png 91e4d9d0dc7f0025
-contrib/testpngs/rgb-8-1.8.png 91e4d9d0dc7f0025
-contrib/testpngs/rgb-8-linear-tRNS.png 91e4d9d0dc7f0025
-contrib/testpngs/rgb-8-linear.png 91e4d9d0dc7f0025
-contrib/testpngs/rgb-8-sRGB-tRNS.png 91e4d9d0dc7f0025
-contrib/testpngs/rgb-8-sRGB.png 91e4d9d0dc7f0025
-contrib/testpngs/rgb-8-tRNS.png 91e4d9d0dc7f0025
-contrib/testpngs/rgb-8.png 91e4d9d0dc7f0025
-contrib/testpngs/rgb-alpha-16-1.8.png f90db3fa403a4325
-contrib/testpngs/rgb-alpha-16-linear.png f90db3fa403a4325
-contrib/testpngs/rgb-alpha-16-sRGB.png f90db3fa403a4325
-contrib/testpngs/rgb-alpha-16.png f90db3fa403a4325
-contrib/testpngs/rgb-alpha-8-1.8.png 5d480c30abd24525
-contrib/testpngs/rgb-alpha-8-linear.png 5d480c30abd24525
-contrib/testpngs/rgb-alpha-8-sRGB.png 5d480c30abd24525
-contrib/testpngs/rgb-alpha-8.png 5d480c30abd24525
-pngtest.png f8be1096b4f7d466
+# What libpng 1.8.0.git produces for the cases of tools/png_cases.hpp
+# (written by tools/png_golden.cpp; see there for the format).
+decode pngtest.png f8be1096b4f7d466
+decode contrib/pngsuite/basn0g01.png 5538fafc596569d5
+decode contrib/pngsuite/basn0g02.png 19c1cc5902943025
+decode contrib/pngsuite/basn0g04.png 38255662302bbea5
+decode contrib/pngsuite/basn0g08.png 41d4d925c29e1249
+decode contrib/pngsuite/basn0g16.png ad62077141c2ed59
+decode contrib/pngsuite/basn2c08.png 20362d9a3ff2e125
+decode contrib/pngsuite/basn2c16.png 417fa6cab8b110ed
+decode contrib/pngsuite/basn3p01.png e651b17029174f65
+decode contrib/pngsuite/basn3p02.png ae93628c3569cde5
+decode contrib/pngsuite/basn3p04.png e28016aff6a29025
+decode contrib/pngsuite/basn3p08.png 3e419f4841af0785
+decode contrib/pngsuite/basn4a08.png cec2261b629bf585
+decode contrib/pngsuite/basn4a16.png 4f24c5e2c631b805
+decode contrib/pngsuite/basn6a08.png f9ed41b6375b125d
+decode contrib/pngsuite/basn6a16.png 6e6641b6e5c72dcd
+decode contrib/pngsuite/ftbbn0g01.png cd4d25c324b5a41f
+decode contrib/pngsuite/ftbbn0g02.png 664f74864e34b797
+decode contrib/pngsuite/ftbbn0g04.png c6c6259fe78c8006
+decode contrib/pngsuite/ftbbn2c16.png 540cfe32f413f2d9
+decode contrib/pngsuite/ftbbn3p08.png 6a06b93c4b829ff1
+decode contrib/pngsuite/ftbgn2c16.png 540cfe32f413f2d9
+decode contrib/pngsuite/ftbgn3p08.png 6a06b93c4b829ff1
+decode contrib/pngsuite/ftbrn2c08.png 4c1736df857f8937
+decode contrib/pngsuite/ftbwn0g16.png 15f2dd013b98ed8c
+decode contrib/pngsuite/ftbwn3p08.png 6a06b93c4b829ff1
+decode contrib/pngsuite/ftbyn3p08.png 6a06b93c4b829ff1
+decode contrib/pngsuite/ftp0n0g08.png b8415f3c474a13ec
+decode contrib/pngsuite/ftp0n2c08.png a64ba09becb56ab7
+decode contrib/pngsuite/ftp0n3p08.png f18412ebabe17212
+decode contrib/pngsuite/ftp1n3p08.png 6a06b93c4b829ff1
+decode contrib/pngsuite/ibasn0g08.png 41d4d925c29e1249
+decode contrib/pngsuite/ibasn0g16.png ad62077141c2ed59
+decode contrib/pngsuite/ibasn2c08.png 20362d9a3ff2e125
+decode contrib/pngsuite/ibasn2c16.png 417fa6cab8b110ed
+decode contrib/pngsuite/ibasn3p08.png 2a4934183164c725
+decode contrib/pngsuite/ibasn4a08.png cec2261b629bf585
+decode contrib/pngsuite/ibasn4a16.png 4f24c5e2c631b805
+decode contrib/pngsuite/ibasn6a08.png f9ed41b6375b125d
+decode contrib/pngsuite/ibasn6a16.png 6e6641b6e5c72dcd
+decode contrib/pngsuite/iftbbn2c16.png 540cfe32f413f2d9
+decode contrib/pngsuite/iftbbn3p08.png bb5c10e64b48c3cd
+decode contrib/pngsuite/iftbgn2c16.png 540cfe32f413f2d9
+decode contrib/pngsuite/iftbgn3p08.png bb5c10e64b48c3cd
+decode contrib/pngsuite/iftbrn2c08.png 4c1736df857f8937
+decode contrib/pngsuite/iftbwn0g16.png 15f2dd013b98ed8c
+decode contrib/pngsuite/iftbwn3p08.png bb5c10e64b48c3cd
+decode contrib/pngsuite/iftbyn3p08.png bb5c10e64b48c3cd
+decode contrib/pngsuite/iftp0n0g08.png b8415f3c474a13ec
+decode contrib/pngsuite/iftp0n2c08.png a64ba09becb56ab7
+decode contrib/pngsuite/iftp0n3p08.png f7fe9b9fbe533e6d
+decode contrib/pngsuite/iftp1n3p08.png bb5c10e64b48c3cd
+decode contrib/pngsuite/interlaced/ibasn0g01.png 5538fafc596569d5
+decode contrib/pngsuite/interlaced/ibasn0g02.png 19c1cc5902943025
+decode contrib/pngsuite/interlaced/ibasn0g04.png 38255662302bbea5
+decode contrib/pngsuite/interlaced/ibasn3p01.png e651b17029174f65
+decode contrib/pngsuite/interlaced/ibasn3p02.png 4f4f2cbb8c142025
+decode contrib/pngsuite/interlaced/ibasn3p04.png 38255662302bbea5
+decode contrib/pngsuite/interlaced/iftbbn0g01.png cd4d25c324b5a41f
+decode contrib/pngsuite/interlaced/iftbbn0g02.png 664f74864e34b797
+decode contrib/pngsuite/interlaced/iftbbn0g04.png c6c6259fe78c8006
+decode contrib/testpngs/ch1n3p04.png e28016aff6a29025
+decode contrib/testpngs/ch2n3p08.png 3e419f4841af0785
+decode contrib/testpngs/gray-1-1.8-tRNS.png af63fd4c8602249f
+decode contrib/testpngs/gray-1-1.8.png af63fd4c8602249f
+decode contrib/testpngs/gray-1-linear-tRNS.png af63fd4c8602249f
+decode contrib/testpngs/gray-1-linear.png af63fd4c8602249f
+decode contrib/testpngs/gray-1-sRGB-tRNS.png af63fd4c8602249f
+decode contrib/testpngs/gray-1-sRGB.png af63fd4c8602249f
+decode contrib/testpngs/gray-1-tRNS.png af63fd4c8602249f
+decode contrib/testpngs/gray-1.png af63fd4c8602249f
+decode contrib/testpngs/gray-16-1.8-tRNS.png 33f4a190d31f3325
+decode contrib/testpngs/gray-16-1.8.png 33f4a190d31f3325
+decode contrib/testpngs/gray-16-linear-tRNS.png 33f4a190d31f3325
+decode contrib/testpngs/gray-16-linear.png 33f4a190d31f3325
+decode contrib/testpngs/gray-16-sRGB-tRNS.png 33f4a190d31f3325
+decode contrib/testpngs/gray-16-sRGB.png 33f4a190d31f3325
+decode contrib/testpngs/gray-16-tRNS.png 33f4a190d31f3325
+decode contrib/testpngs/gray-16.png 33f4a190d31f3325
+decode contrib/testpngs/gray-2-1.8-tRNS.png af63d64c8601e25a
+decode contrib/testpngs/gray-2-1.8.png af63d64c8601e25a
+decode contrib/testpngs/gray-2-linear-tRNS.png af63d64c8601e25a
+decode contrib/testpngs/gray-2-linear.png af63d64c8601e25a
+decode contrib/testpngs/gray-2-sRGB-tRNS.png af63d64c8601e25a
+decode contrib/testpngs/gray-2-sRGB.png af63d64c8601e25a
+decode contrib/testpngs/gray-2-tRNS.png af63d64c8601e25a
+decode contrib/testpngs/gray-2.png af63d64c8601e25a
+decode contrib/testpngs/gray-4-1.8-tRNS.png 9ed00e1af2c13f65
+decode contrib/testpngs/gray-4-1.8.png 9ed00e1af2c13f65
+decode contrib/testpngs/gray-4-linear-tRNS.png 9ed00e1af2c13f65
+decode contrib/testpngs/gray-4-linear.png 9ed00e1af2c13f65
+decode contrib/testpngs/gray-4-sRGB-tRNS.png 9ed00e1af2c13f65
+decode contrib/testpngs/gray-4-sRGB.png 9ed00e1af2c13f65
+decode contrib/testpngs/gray-4-tRNS.png 9ed00e1af2c13f65
+decode contrib/testpngs/gray-4.png 9ed00e1af2c13f65
+decode contrib/testpngs/gray-8-1.8-tRNS.png 1c2c16fae3c06725
+decode contrib/testpngs/gray-8-1.8.png 1c2c16fae3c06725
+decode contrib/testpngs/gray-8-linear-tRNS.png 1c2c16fae3c06725
+decode contrib/testpngs/gray-8-linear.png 1c2c16fae3c06725
+decode contrib/testpngs/gray-8-sRGB-tRNS.png 1c2c16fae3c06725
+decode contrib/testpngs/gray-8-sRGB.png 1c2c16fae3c06725
+decode contrib/testpngs/gray-8-tRNS.png 1c2c16fae3c06725
+decode contrib/testpngs/gray-8.png 1c2c16fae3c06725
+decode contrib/testpngs/gray-alpha-16-1.8.png 5d480c30abd24525
+decode contrib/testpngs/gray-alpha-16-linear.png 5d480c30abd24525
+decode contrib/testpngs/gray-alpha-16-sRGB.png 5d480c30abd24525
+decode contrib/testpngs/gray-alpha-16.png 5d480c30abd24525
+decode contrib/testpngs/gray-alpha-8-1.8.png 33f4a190d31f3325
+decode contrib/testpngs/gray-alpha-8-linear.png 33f4a190d31f3325
+decode contrib/testpngs/gray-alpha-8-sRGB.png 33f4a190d31f3325
+decode contrib/testpngs/gray-alpha-8.png 33f4a190d31f3325
+decode contrib/testpngs/palette-1-1.8-tRNS.png af63fd4c8602249f
+decode contrib/testpngs/palette-1-1.8.png af63fd4c8602249f
+decode contrib/testpngs/palette-1-linear-tRNS.png af63fd4c8602249f
+decode contrib/testpngs/palette-1-linear.png af63fd4c8602249f
+decode contrib/testpngs/palette-1-sRGB-tRNS.png af63fd4c8602249f
+decode contrib/testpngs/palette-1-sRGB.png af63fd4c8602249f
+decode contrib/testpngs/palette-1-tRNS.png af63fd4c8602249f
+decode contrib/testpngs/palette-1.png af63fd4c8602249f
+decode contrib/testpngs/palette-2-1.8-tRNS.png af63d64c8601e25a
+decode contrib/testpngs/palette-2-1.8.png af63d64c8601e25a
+decode contrib/testpngs/palette-2-linear-tRNS.png af63d64c8601e25a
+decode contrib/testpngs/palette-2-linear.png af63d64c8601e25a
+decode contrib/testpngs/palette-2-sRGB-tRNS.png af63d64c8601e25a
+decode contrib/testpngs/palette-2-sRGB.png af63d64c8601e25a
+decode contrib/testpngs/palette-2-tRNS.png af63d64c8601e25a
+decode contrib/testpngs/palette-2.png af63d64c8601e25a
+decode contrib/testpngs/palette-4-1.8-tRNS.png 9ed00e1af2c13f65
+decode contrib/testpngs/palette-4-1.8.png 9ed00e1af2c13f65
+decode contrib/testpngs/palette-4-linear-tRNS.png 9ed00e1af2c13f65
+decode contrib/testpngs/palette-4-linear.png 9ed00e1af2c13f65
+decode contrib/testpngs/palette-4-sRGB-tRNS.png 9ed00e1af2c13f65
+decode contrib/testpngs/palette-4-sRGB.png 9ed00e1af2c13f65
+decode contrib/testpngs/palette-4-tRNS.png 9ed00e1af2c13f65
+decode contrib/testpngs/palette-4.png 9ed00e1af2c13f65
+decode contrib/testpngs/palette-8-1.8-tRNS.png 1c2c16fae3c06725
+decode contrib/testpngs/palette-8-1.8.png 1c2c16fae3c06725
+decode contrib/testpngs/palette-8-linear-tRNS.png 1c2c16fae3c06725
+decode contrib/testpngs/palette-8-linear.png 1c2c16fae3c06725
+decode contrib/testpngs/palette-8-sRGB-tRNS.png 1c2c16fae3c06725
+decode contrib/testpngs/palette-8-sRGB.png 1c2c16fae3c06725
+decode contrib/testpngs/palette-8-tRNS.png 1c2c16fae3c06725
+decode contrib/testpngs/palette-8.png 1c2c16fae3c06725
+decode contrib/testpngs/rgb-16-1.8-tRNS.png 9c30112a8224c925
+decode contrib/testpngs/rgb-16-1.8.png 9c30112a8224c925
+decode contrib/testpngs/rgb-16-linear-tRNS.png 9c30112a8224c925
+decode contrib/testpngs/rgb-16-linear.png 9c30112a8224c925
+decode contrib/testpngs/rgb-16-sRGB-tRNS.png 9c30112a8224c925
+decode contrib/testpngs/rgb-16-sRGB.png 9c30112a8224c925
+decode contrib/testpngs/rgb-16-tRNS.png 9c30112a8224c925
+decode contrib/testpngs/rgb-16.png 9c30112a8224c925
+decode contrib/testpngs/rgb-8-1.8-tRNS.png 91e4d9d0dc7f0025
+decode contrib/testpngs/rgb-8-1.8.png 91e4d9d0dc7f0025
+decode contrib/testpngs/rgb-8-linear-tRNS.png 91e4d9d0dc7f0025
+decode contrib/testpngs/rgb-8-linear.png 91e4d9d0dc7f0025
+decode contrib/testpngs/rgb-8-sRGB-tRNS.png 91e4d9d0dc7f0025
+decode contrib/testpngs/rgb-8-sRGB.png 91e4d9d0dc7f0025
+decode contrib/testpngs/rgb-8-tRNS.png 91e4d9d0dc7f0025
+decode contrib/testpngs/rgb-8.png 91e4d9d0dc7f0025
+decode contrib/testpngs/rgb-alpha-16-1.8.png f90db3fa403a4325
+decode contrib/testpngs/rgb-alpha-16-linear.png f90db3fa403a4325
+decode contrib/testpngs/rgb-alpha-16-sRGB.png f90db3fa403a4325
+decode contrib/testpngs/rgb-alpha-16.png f90db3fa403a4325
+decode contrib/testpngs/rgb-alpha-8-1.8.png 5d480c30abd24525
+decode contrib/testpngs/rgb-alpha-8-linear.png 5d480c30abd24525
+decode contrib/testpngs/rgb-alpha-8-sRGB.png 5d480c30abd24525
+decode contrib/testpngs/rgb-alpha-8.png 5d480c30abd24525
+decode contrib/testpngs/png-3/cicp-display-p3_reencoded.png 0821af6ec63ff525
+decode contrib/testpngs/crashers/bad_iCCP.png error
+decode contrib/testpngs/crashers/badadler.png error
+decode contrib/testpngs/crashers/badcrc.png error
+decode contrib/testpngs/crashers/empty_ancillary_chunks.png af63bd4c8601b7df
+decode contrib/testpngs/crashers/huge_IDAT.png error
+decode contrib/testpngs/crashers/huge_bKGD_chunk.png error
+decode contrib/testpngs/crashers/huge_cHRM_chunk.png error
+decode contrib/testpngs/crashers/huge_eXIf_chunk.png error
+decode contrib/testpngs/crashers/huge_gAMA_chunk.png error
+decode contrib/testpngs/crashers/huge_hIST_chunk.png error
+decode contrib/testpngs/crashers/huge_iCCP_chunk.png error
+decode contrib/testpngs/crashers/huge_iTXt_chunk.png error
+decode contrib/testpngs/crashers/huge_juNK_unsafe_to_copy.png error
+decode contrib/testpngs/crashers/huge_juNk_safe_to_copy.png error
+decode contrib/testpngs/crashers/huge_pCAL_chunk.png error
+decode contrib/testpngs/crashers/huge_pHYs_chunk.png error
+decode contrib/testpngs/crashers/huge_sCAL_chunk.png error
+decode contrib/testpngs/crashers/huge_sPLT_chunk.png error
+decode contrib/testpngs/crashers/huge_sRGB_chunk.png error
+decode contrib/testpngs/crashers/huge_sTER_chunk.png error
+decode contrib/testpngs/crashers/huge_tEXt_chunk.png error
+decode contrib/testpngs/crashers/huge_tIME_chunk.png error
+decode contrib/testpngs/crashers/huge_zTXt_chunk.png error
+decode contrib/testpngs/badpal/regression-palette-8.png 4242dc5249c33625
+decode contrib/testpngs/badpal/small-palette-1.png af63fd4c8602249f
+decode contrib/testpngs/badpal/small-palette-2.png af63d64c8601e25a
+decode contrib/testpngs/badpal/small-palette-4.png 9ed00e1af2c13f65
+decode contrib/testpngs/badpal/small-palette-8.png 1c2c16fae3c06725
+decode contrib/testpngs/badpal/test-palette-1.png 264e59cbb0e9993d
+decode contrib/testpngs/badpal/test-palette-2.png a08d4108f8f105cd
+decode contrib/testpngs/badpal/test-palette-4.png 722d53d88ff3830d
+decode contrib/testpngs/badpal/test-palette-8.png b3ca73907d0e3125
+xform contrib/pngsuite/basn0g01.png 4f134a5b304931ec/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/pngsuite/basn0g02.png 3fb4f30e56f86b41/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/pngsuite/basn0g04.png 3d1f9a509faba51e/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/pngsuite/basn0g08.png b56eecb4adcd36b6/100,104,115
+xform contrib/pngsuite/basn0g16.png eb37325b17d3484a/100,104,115
+xform contrib/pngsuite/basn2c08.png ccf2d3fefc0582b4/100,104,115
+xform contrib/pngsuite/basn2c16.png 8447e451e7b1ed1b/100,104,115
+xform contrib/pngsuite/basn3p01.png 24b58889773b0aef/100,104,115
+xform contrib/pngsuite/basn3p02.png 53a97558c1cdbcef/100,104,115
+xform contrib/pngsuite/basn3p04.png 0fb21fbb0cc3296b/100,104,115
+xform contrib/pngsuite/basn3p08.png c463b36ae59b937e/100,104,115
+xform contrib/pngsuite/basn4a08.png 85d709d0249a1b99/100,104,115
+xform contrib/pngsuite/basn4a16.png f4fd19ac3547f1cd/100,104,115
+xform contrib/pngsuite/basn6a08.png 49bf745486c97d9b/100,104,115
+xform contrib/pngsuite/basn6a16.png 58250f26992417c2/100,104,115
+xform contrib/pngsuite/ftbbn0g01.png 4be437b423851593/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/pngsuite/ftbbn0g02.png 38a17cbaf61ba4ca/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/pngsuite/ftbbn0g04.png 1dafea701062e75c/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/pngsuite/ftbbn2c16.png dd782dc774769137/100,104,115
+xform contrib/pngsuite/ftbbn3p08.png b8f9a3769657d597/100,104,115
+xform contrib/pngsuite/ftbgn2c16.png 483f78bd0de15673/100,104,115
+xform contrib/pngsuite/ftbgn3p08.png d734ad586b92f22f/100,104,115
+xform contrib/pngsuite/ftbrn2c08.png 4992fe2c000212da/100,104,115
+xform contrib/pngsuite/ftbwn0g16.png 69603c6f36f9d1bf/100,104,115
+xform contrib/pngsuite/ftbwn3p08.png 27593ee1aded9fdc/100,104,115
+xform contrib/pngsuite/ftbyn3p08.png c3a17a61b2f11e6d/100,104,115
+xform contrib/pngsuite/ftp0n0g08.png 820962eecd3d4dc3/100,104,115
+xform contrib/pngsuite/ftp0n2c08.png c36a74bbbbb09eab/100,104,115
+xform contrib/pngsuite/ftp0n3p08.png fe7736f49a5352cd/100,104,115
+xform contrib/pngsuite/ftp1n3p08.png 86cafe56870a0b69/100,104,115
+xform contrib/pngsuite/ibasn0g08.png 980d18c63cb731d6/100,104,115
+xform contrib/pngsuite/ibasn0g16.png e05b8cc81e274463/100,104,115
+xform contrib/pngsuite/ibasn2c08.png d804b0b5d9217b70/100,104,115
+xform contrib/pngsuite/ibasn2c16.png c325d5e59938d417/100,104,115
+xform contrib/pngsuite/ibasn3p08.png 8e4e41692d81c4f8/100,104,115
+xform contrib/pngsuite/ibasn4a08.png 5ff6fe1f924d93f1/100,104,115
+xform contrib/pngsuite/ibasn4a16.png 8549ec2dbe6f5a1a/100,104,115
+xform contrib/pngsuite/ibasn6a08.png 888a579ca75de2cd/100,104,115
+xform contrib/pngsuite/ibasn6a16.png f437ae5d068d3784/100,104,115
+xform contrib/pngsuite/iftbbn2c16.png 0fd835af4d54d47f/100,104,115
+xform contrib/pngsuite/iftbbn3p08.png 829ff0a819c135fb/100,104,115
+xform contrib/pngsuite/iftbgn2c16.png 0fd835af4d54d47f/100,104,115
+xform contrib/pngsuite/iftbgn3p08.png 829ff0a819c135fb/100,104,115
+xform contrib/pngsuite/iftbrn2c08.png cf66f90779171c0f/100,104,115
+xform contrib/pngsuite/iftbwn0g16.png 4c7986f9bf5e840a/100,104,115
+xform contrib/pngsuite/iftbwn3p08.png 829ff0a819c135fb/100,104,115
+xform contrib/pngsuite/iftbyn3p08.png 829ff0a819c135fb/100,104,115
+xform contrib/pngsuite/iftp0n0g08.png c0ffdbd878c09070/100,104,115
+xform contrib/pngsuite/iftp0n2c08.png f6fc3197d3e4dc77/100,104,115
+xform contrib/pngsuite/iftp0n3p08.png 9dd449c1f480456e/100,104,115
+xform contrib/pngsuite/iftp1n3p08.png 829ff0a819c135fb/100,104,115
+xform contrib/testpngs/ch1n3p04.png 0fb21fbb0cc3296b/100,104,115
+xform contrib/testpngs/ch2n3p08.png c463b36ae59b937e/100,104,115
+xform contrib/testpngs/gray-1-1.8-tRNS.png aeddd1f606f5f3f0/100,104,115
+xform contrib/testpngs/gray-1-1.8.png aa4f66816a3018ac/100,104,115
+xform contrib/testpngs/gray-1-linear-tRNS.png 30bf1ca1fb80d793/100,104,115
+xform contrib/testpngs/gray-1-linear.png aa4f66816a3018ac/100,104,115
+xform contrib/testpngs/gray-1-sRGB-tRNS.png 3f3610d74fa070a6/100,104,115
+xform contrib/testpngs/gray-1-sRGB.png aa4f66816a3018ac/100,104,115
+xform contrib/testpngs/gray-1-tRNS.png 30bf1ca1fb80d793/100,104,115
+xform contrib/testpngs/gray-1.png aa4f66816a3018ac/100,104,115
+xform contrib/testpngs/gray-16-1.8-tRNS.png 2eaf9c1e321535ab/100,104,115
+xform contrib/testpngs/gray-16-1.8.png 2eaf9c1e321535ab/100,104,115
+xform contrib/testpngs/gray-16-linear-tRNS.png 4eda338dc05829bc/100,104,115
+xform contrib/testpngs/gray-16-linear.png 4eda338dc05829bc/100,104,115
+xform contrib/testpngs/gray-16-sRGB-tRNS.png 11c30b3501a82595/100,104,115
+xform contrib/testpngs/gray-16-sRGB.png 11c30b3501a82595/100,104,115
+xform contrib/testpngs/gray-16-tRNS.png aef771e1affcc2eb/100,104,115
+xform contrib/testpngs/gray-16.png aef771e1affcc2eb/100,104,115
+xform contrib/testpngs/gray-2-1.8-tRNS.png f21df9e1d17d87c4/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/testpngs/gray-2-1.8.png d603511ac5824487/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/testpngs/gray-2-linear-tRNS.png 286b701ef5606368/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/testpngs/gray-2-linear.png eee1b6c32ab54215/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/testpngs/gray-2-sRGB-tRNS.png 61eb048677e9bdbc/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/testpngs/gray-2-sRGB.png cb76ca1d0b2e8c6e/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/testpngs/gray-2-tRNS.png 5686bee8ae988309/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/testpngs/gray-2.png c97e026447c59cd7/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/testpngs/gray-4-1.8-tRNS.png 666592fe4119222c/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/testpngs/gray-4-1.8.png d4a26d9baaa9bd55/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/testpngs/gray-4-linear-tRNS.png f86ebe203619ffac/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/testpngs/gray-4-linear.png 1860d8bf70effbb8/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/testpngs/gray-4-sRGB-tRNS.png 4bca5ccbd1e9a21a/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/testpngs/gray-4-sRGB.png a4ea18980eb8d092/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/testpngs/gray-4-tRNS.png 4d35859a3fc583fe/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/testpngs/gray-4.png 9dc34be7b579352d/48,49,50,51,67,98,100,103,104,112,115
+xform contrib/testpngs/gray-8-1.8-tRNS.png ae9e66cf890700b1/100,104,115
+xform contrib/testpngs/gray-8-1.8.png 69d43b8382d6c031/100,104,115
+xform contrib/testpngs/gray-8-linear-tRNS.png 072599fb6b8394c4/100,104,115
+xform contrib/testpngs/gray-8-linear.png 6e3debb77ce4fbbf/100,104,115
+xform contrib/testpngs/gray-8-sRGB-tRNS.png 57fcc17cbfe1712c/100,104,115
+xform contrib/testpngs/gray-8-sRGB.png e07e1f9ae86deace/100,104,115
+xform contrib/testpngs/gray-8-tRNS.png bd15204aa0d6ca64/100,104,115
+xform contrib/testpngs/gray-8.png 15788461fa5808f2/100,104,115
+xform contrib/testpngs/gray-alpha-16-1.8.png 53e18c4da0fa0ad9/100,104,115
+xform contrib/testpngs/gray-alpha-16-linear.png 09683c98cc554ecb/100,104,115
+xform contrib/testpngs/gray-alpha-16-sRGB.png 34ed930091d32c6e/100,104,115
+xform contrib/testpngs/gray-alpha-16.png 7956ed7e4352e0c2/100,104,115
+xform contrib/testpngs/gray-alpha-8-1.8.png c344ab9cd040190b/100,104,115
+xform contrib/testpngs/gray-alpha-8-linear.png 7d10326229276c98/100,104,115
+xform contrib/testpngs/gray-alpha-8-sRGB.png ec3e9d37450e2cf7/100,104,115
+xform contrib/testpngs/gray-alpha-8.png 83fbbff4a9c56c9d/100,104,115
+xform contrib/testpngs/palette-1-1.8-tRNS.png 440b98faa4fb85d5/100,104,115
+xform contrib/testpngs/palette-1-1.8.png 714fcd5325141436/100,104,115
+xform contrib/testpngs/palette-1-linear-tRNS.png 5c95db8de208ad2d/100,104,115
+xform contrib/testpngs/palette-1-linear.png 9586cc4ddc2e9428/100,104,115
+xform contrib/testpngs/palette-1-sRGB-tRNS.png fb8be306043f2a13/100,104,115
+xform contrib/testpngs/palette-1-sRGB.png dd80630440d4bedc/100,104,115
+xform contrib/testpngs/palette-1-tRNS.png 5c95db8de208ad2d/100,104,115
+xform contrib/testpngs/palette-1.png 9586cc4ddc2e9428/100,104,115
+xform contrib/testpngs/palette-2-1.8-tRNS.png b8589ecc08b958ba/100,104,115
+xform contrib/testpngs/palette-2-1.8.png 1e851b745974a1cf/100,104,115
+xform contrib/testpngs/palette-2-linear-tRNS.png 821f737f887b9f68/100,104,115
+xform contrib/testpngs/palette-2-linear.png 95163617e01127db/100,104,115
+xform contrib/testpngs/palette-2-sRGB-tRNS.png 91fd77867f49e241/100,104,115
+xform contrib/testpngs/palette-2-sRGB.png ed35a2f9cb30089d/100,104,115
+xform contrib/testpngs/palette-2-tRNS.png d1205b60ed474349/100,104,115
+xform contrib/testpngs/palette-2.png e7e16456e18c8550/100,104,115
+xform contrib/testpngs/palette-4-1.8-tRNS.png 84278714cf8848c0/100,104,115
+xform contrib/testpngs/palette-4-1.8.png 28d58bbc4217d70e/100,104,115
+xform contrib/testpngs/palette-4-linear-tRNS.png da219323c72b3de2/100,104,115
+xform contrib/testpngs/palette-4-linear.png 857dba33bf788d2b/100,104,115
+xform contrib/testpngs/palette-4-sRGB-tRNS.png 262a29f4238a9ebf/100,104,115
+xform contrib/testpngs/palette-4-sRGB.png 1020c71cf87eb216/100,104,115
+xform contrib/testpngs/palette-4-tRNS.png 988233ecd2a9b728/100,104,115
+xform contrib/testpngs/palette-4.png 9222b2dba9d54bf8/100,104,115
+xform contrib/testpngs/palette-8-1.8-tRNS.png 9866a6284cec0d20/100,104,115
+xform contrib/testpngs/palette-8-1.8.png 063ba75e7515371e/100,104,115
+xform contrib/testpngs/palette-8-linear-tRNS.png 79ffeea646379f5b/100,104,115
+xform contrib/testpngs/palette-8-linear.png 81d517939c13a73f/100,104,115
+xform contrib/testpngs/palette-8-sRGB-tRNS.png 892fe37b48223280/100,104,115
+xform contrib/testpngs/palette-8-sRGB.png ba37b115619e8f07/100,104,115
+xform contrib/testpngs/palette-8-tRNS.png 8af38a93e3c2e70c/100,104,115
+xform contrib/testpngs/palette-8.png eca6d5d67cb0903e/100,104,115
+xform contrib/testpngs/rgb-16-1.8-tRNS.png 7bc83bce13618a14/100,104,115
+xform contrib/testpngs/rgb-16-1.8.png 7bc83bce13618a14/100,104,115
+xform contrib/testpngs/rgb-16-linear-tRNS.png 3a76160eb09f28aa/100,104,115
+xform contrib/testpngs/rgb-16-linear.png 3a76160eb09f28aa/100,104,115
+xform contrib/testpngs/rgb-16-sRGB-tRNS.png df46fcf23ae82b77/100,104,115
+xform contrib/testpngs/rgb-16-sRGB.png df46fcf23ae82b77/100,104,115
+xform contrib/testpngs/rgb-16-tRNS.png 959e73b01ce475c1/100,104,115
+xform contrib/testpngs/rgb-16.png 959e73b01ce475c1/100,104,115
+xform contrib/testpngs/rgb-8-1.8-tRNS.png 993344d2e820c4df/100,104,115
+xform contrib/testpngs/rgb-8-1.8.png 8b9341666cf2e872/100,104,115
+xform contrib/testpngs/rgb-8-linear-tRNS.png 8dcd2d65111f488e/100,104,115
+xform contrib/testpngs/rgb-8-linear.png 3a0f755821a0df8a/100,104,115
+xform contrib/testpngs/rgb-8-sRGB-tRNS.png 3b9cc1848da315e0/100,104,115
+xform contrib/testpngs/rgb-8-sRGB.png d4e4d5e8fe1eaf33/100,104,115
+xform contrib/testpngs/rgb-8-tRNS.png 3d62213704a8fb87/100,104,115
+xform contrib/testpngs/rgb-8.png ba3f385e0868faf7/100,104,115
+xform contrib/testpngs/rgb-alpha-16-1.8.png b42a1689c43217e9/100,104,115
+xform contrib/testpngs/rgb-alpha-16-linear.png 73386cbeb9b6b689/100,104,115
+xform contrib/testpngs/rgb-alpha-16-sRGB.png 63d838d2228b4ab6/100,104,115
+xform contrib/testpngs/rgb-alpha-16.png 8e98ce2bff25ed75/100,104,115
+xform contrib/testpngs/rgb-alpha-8-1.8.png 9ac6a98f504e0fba/100,104,115
+xform contrib/testpngs/rgb-alpha-8-linear.png f780bdd508f54045/100,104,115
+xform contrib/testpngs/rgb-alpha-8-sRGB.png d4c750c92b1ea60c/100,104,115
+xform contrib/testpngs/rgb-alpha-8.png 5eec5407ce6151cd/100,104,115
+valid standard 56e313b7c33cbe18
+valid interlace 6c782212631585be
+valid size 715fc7d1a351dbeb
+vxform transform 58ffbded550ebd66/48,49,50,51,67,98,100,103,104,112,115,168,169,170,171,187,218,220,223,224,232,235,288,289,290,291,307,338,340,343,344,352,355,408,409,410,411,427,458,460,463,464,472,475,528,529,530,531,547,578,580,583,584,592,595,648,649,650,651,667,698,700,703,704,712,715,768,769,770,771,787,818,820,823,824,832,835,888,889,890,891,907,938,940,943,944,952,955,1008,1009,1010,1011,1027,1058,1060,1063,1064,1072,1075,1128,1129,1130,1131,1147,1178,1180,1183,1184,1192,1195,1248,1249,1250,1251,1267,1298,1300,1303,1304,1312,1315,1368,1369,1370,1371,1387,1418,1420,1423,1424,1432,1435,1488,1489,1490,1491,1507,1538,1540,1543,1544,1552,1555,1608,1609,1610,1611,1627,1658,1660,1663,1664,1672,1675,1728,1729,1730,1731,1747,1778,1780,1783,1784,1792,1795,1848,1849,1850,1851,1867,1898,1900,1903,1904,1912,1915,1968,1969,1970,1971,1987,2018,2020,2023,2024,2032,2035,2088,2089,2090,2091,2107,2138,2140,2143,2144,2152,2155,2208,2209,2210,2211,2227,2258,2260,2263,2264,2272,2275,2328,2329,2330,2331,2347,2378,2380,2383,2384,2392,2395,2448,2449,2450,2451,2467,2498,2500,2503,2504,2512,2515,2568,2569,2570,2571,2587,2618,2620,2623,2624,2632,2635,2688,2689,2690,2691,2707,2738,2740,2743,2744,2752,2755,2808,2809,2810,2811,2827,2858,2860,2863,2864,2872,2875,2928,2929,2930,2931,2947,2978,2980,2983,2984,2992,2995,3048,3049,3050,3051,3067,3098,3100,3103,3104,3112,3115,3168,3169,3170,3171,3187,3218,3220,3223,3224,3232,3235,3288,3289,3290,3291,3307,3338,3340,3343,3344,3352,3355,3408,3409,3410,3411,3427,3458,3460,3463,3464,3472,3475,3528,3529,3530,3531,3547,3578,3580,3583,3584,3592,3595,3648,3649,3650,3651,3667,3698,3700,3703,3704,3712,3715,3768,3769,3770,3771,3787,3818,3820,3823,3824,3832,3835,3888,3889,3890,3891,3907,3938,3940,3943,3944,3952,3955,4008,4009,4010,4011,4027,4058,4060,4063,4064,4072,4075,4128,4129,4130,4131,4147,4178,4180,4183,4184,4192,4195,4248,4249,4250,4251,4267,4298,4300,4303,4304,4312,4315,4368,4369,4370,4371,4387,4418,4420,4423,4424,4432,4435,4488,4489,4490,4491,4507,4538,4540,4543,4544,4552,4555,4608,4609,4610,4611,4627,4658,4660,4663,4664,4672,4675,4728,4729,4730,4731,4747,4778,4780,4783,4784,4792,4795,4848,4849,4850,4851,4867,4898,4900,4903,4904,4912,4915,4968,4969,4970,4971,4987,5018,5020,5023,5024,5032,5035,5088,5089,5090,5091,5107,5138,5140,5143,5144,5152,5155,5208,5209,5210,5211,5227,5258,5260,5263,5264,5272,5275,5328,5329,5330,5331,5347,5378,5380,5383,5384,5392,5395,5448,5449,5450,5451,5467,5498,5500,5503,5504,5512,5515,5568,5569,5570,5571,5587,5618,5620,5623,5624,5632,5635,5688,5689,5690,5691,5707,5738,5740,5743,5744,5752,5755,5808,5809,5810,5811,5827,5858,5860,5863,5864,5872,5875,5928,5929,5930,5931,5947,5978,5980,5983,5984,5992,5995,6048,6049,6050,6051,6067,6098,6100,6103,6104,6112,6115,6168,6169,6170,6171,6187,6218,6220,6223,6224,6232,6235,6288,6289,6290,6291,6307,6338,6340,6343,6344,6352,6355,6408,6409,6410,6411,6427,6458,6460,6463,6464,6472,6475,6528,6529,6530,6531,6547,6578,6580,6583,6584,6592,6595,6648,6649,6650,6651,6667,6698,6700,6703,6704,6712,6715,6768,6769,6770,6771,6787,6818,6820,6823,6824,6832,6835,6888,6889,6890,6891,6907,6938,6940,6943,6944,6952,6955,7008,7009,7010,7011,7027,7058,7060,7063,7064,7072,7075,7128,7129,7130,7131,7147,7178,7180,7183,7184,7192,7195,7248,7249,7250,7251,7267,7298,7300,7303,7304,7312,7315,7368,7369,7370,7371,7387,7418,7420,7423,7424,7432,7435,7488,7489,7490,7491,7507,7538,7540,7543,7544,7552,7555,7608,7609,7610,7611,7627,7658,7660,7663,7664,7672,7675,7728,7729,7730,7731,7747,7778,7780,7783,7784,7792,7795,7848,7849,7850,7851,7867,7898,7900,7903,7904,7912,7915,7968,7969,7970,7971,7987,8018,8020,8023,8024,8032,8035,8088,8089,8090,8091,8107,8138,8140,8143,8144,8152,8155,8208,8209,8210,8211,8227,8258,8260,8263,8264,8272,8275,8328,8329,8330,8331,8347,8378,8380,8383,8384,8392,8395,8448,8449,8450,8451,8467,8498,8500,8503,8504,8512,8515,8568,8569,8570,8571,8587,8618,8620,8623,8624,8632,8635,8688,8689,8690,8691,8707,8738,8740,8743,8744,8752,8755,8808,8809,8810,8811,8827,8858,8860,8863,8864,8872,8875,8928,8929,8930,8931,8947,8978,8980,8983,8984,8992,8995,9048,9049,9050,9051,9067,9098,9100,9103,9104,9112,9115,9168,9169,9170,9171,9187,9218,9220,9223,9224,9232,9235,9288,9289,9290,9291,9307,9338,9340,9343,9344,9352,9355,9408,9409,9410,9411,9427,9458,9460,9463,9464,9472,9475,9528,9529,9530,9531,9547,9578,9580,9583,9584,9592,9595,9648,9649,9650,9651,9667,9698,9700,9703,9704,9712,9715,9768,9769,9770,9771,9787,9818,9820,9823,9824,9832,9835,9888,9889,9890,9891,9907,9938,9940,9943,9944,9952,9955,10008,10009,10010,10011,10027,10058,10060,10063,10064,10072,10075,10128,10129,10130,10131,10147,10178,10180,10183,10184,10192,10195,10248,10249,10250,10251,10267,10298,10300,10303,10304,10312,10315,10368,10369,10370,10371,10387,10418,10420,10423,10424,10432,10435,10488,10489,10490,10491,10507,10538,10540,10543,10544,10552,10555,10608,10609,10610,10611,10627,10658,10660,10663,10664,10672,10675,10728,10729,10730,10731,10747,10778,10780,10783,10784,10792,10795,10900,10904,10915,11020,11024,11035,11140,11144,11155,11260,11264,11275,11380,11384,11395,11500,11504,11515,11620,11624,11635,11740,11744,11755,11860,11864,11875,11980,11984,11995,12100,12104,12115,12220,12224,12235,12340,12344,12355,12460,12464,12475,12580,12584,12595,12700,12704,12715,12820,12824,12835,12940,12944,12955,13060,13064,13075,13180,13184,13195,13300,13304,13315,13420,13424,13435,13540,13544,13555,13660,13664,13675,13780,13784,13795,13900,13904,13915,14020,14024,14035,14140,14144,14155,14260,14264,14275,14380,14384,14395,14500,14504,14515,14620,14624,14635,14740,14744,14755,14860,14864,14875,14980,14984,14995,15100,15104,15115,15220,15224,15235,15340,15344,15355,15460,15464,15475,15580,15584,15595,15700,15704,15715,15820,15824,15835,15940,15944,15955,16060,16064,16075,16180,16184,16195,16300,16304,16315,16420,16424,16435,16540,16544,16555,16660,16664,16675,16780,16784,16795,16900,16904,16915,17020,17024,17035,17140,17144,17155,17260,17264,17275,17380,17384,17395,17500,17504,17515,17620,17624,17635,17740,17744,17755,17860,17864,17875,17980,17984,17995,18100,18104,18115,18220,18224,18235,18340,18344,18355,18460,18464,18475,18580,18584,18595,18700,18704,18715,18820,18824,18835,18940,18944,18955,19060,19064,19075,19180,19184,19195,19300,19304,19315,19420,19424,19435,19540,19544,19555,19660,19664,19675,19780,19784,19795,19900,19904,19915,20020,20024,20035,20140,20144,20155,20260,20264,20275,20380,20384,20395,20500,20504,20515,20620,20624,20635,20740,20744,20755,20860,20864,20875,20980,20984,20995,21100,21104,21115,21220,21224,21235,21340,21344,21355,21460,21464,21475,21580,21584,21595,21700,21704,21715,21820,21824,21835,21940,21944,21955,22060,22064,22075,22180,22184,22195,22300,22304,22315,22420,22424,22435,22540,22544,22555,22660,22664,22675,22780,22784,22795,22900,22904,22915,23020,23024,23035,23140,23144,23155,23260,23264,23275,23380,23384,23395,23500,23504,23515,23620,23624,23635,23740,23744,23755,23860,23864,23875,23980,23984,23995,24100,24104,24115,24220,24224,24235,24340,24344,24355,24460,24464,24475,24580,24584,24595,24700,24704,24715,24820,24824,24835,24940,24944,24955,25060,25064,25075,25180,25184,25195,25300,25304,25315,25420,25424,25435,25540,25544,25555,25660,25664,25675,25780,25784,25795,25900,25904,25915,26020,26024,26035,26140,26144,26155,26260,26264,26275,26380,26384,26395,26500,26504,26515,26620,26624,26635,26740,26744,26755,26860,26864,26875,26980,26984,26995,27100,27104,27115,27220,27224,27235,27340,27344,27355,27460,27464,27475,27580,27584,27595,27700,27704,27715,27820,27824,27835,27940,27944,27955,28060,28064,28075,28180,28184,28195,28300,28304,28315,28420,28424,28435,28540,28544,28555,28660,28664,28675,28780,28784,28795,28900,28904,28915,29020,29024,29035,29140,29144,29155,29260,29264,29275,29380,29384,29395,29500,29504,29515,29620,29624,29635,29740,29744,29755,29860,29864,29875,29980,29984,29995,30100,30104,30115,30220,30224,30235,30340,30344,30355,30460,30464,30475,30580,30584,30595,30700,30704,30715,30820,30824,30835,30940,30944,30955,31060,31064,31075,31180,31184,31195,31300,31304,31315,31420,31424,31435,31540,31544,31555,31660,31664,31675,31780,31784,31795,31900,31904,31915,32020,32024,32035,32140,32144,32155,32260,32264,32275,32380,32384,32395,32500,32504,32515,32620,32624,32635,32740,32744,32755,32860,32864,32875,32980,32984,32995,33100,33104,33115,33220,33224,33235,33340,33344,33355,33460,33464,33475,33580,33584,33595,33700,33704,33715,33820,33824,33835,33940,33944,33955,34060,34064,34075,34180,34184,34195,34300,34304,34315,34420,34424,34435,34540,34544,34555,34660,34664,34675,34780,34784,34795,34900,34904,34915,35020,35024,35035,35140,35144,35155,35260,35264,35275,35380,35384,35395,35500,35504,35515,35620,35624,35635,35740,35744,35755,35860,35864,35875,35980,35984,35995,36100,36104,36115,36220,36224,36235,36340,36344,36355,36460,36464,36475,36580,36584,36595,36700,36704,36715,36820,36824,36835,36940,36944,36955,37060,37064,37075,37180,37184,37195,37300,37304,37315,37420,37424,37435,37540,37544,37555,37660,37664,37675,37780,37784,37795,37900,37904,37915,38020,38024,38035,38140,38144,38155,38260,38264,38275,38380,38384,38395,38500,38504,38515,38620,38624,38635,38740,38744,38755,38860,38864,38875,38980,38984,38995,39100,39104,39115,39220,39224,39235,39340,39344,39355,39460,39464,39475,39580,39584,39595,39700,39704,39715,39820,39824,39835,39940,39944,39955,40060,40064,40075,40180,40184,40195,40300,40304,40315,40420,40424,40435,40540,40544,40555,40660,40664,40675,40780,40784,40795,40900,40904,40915,41020,41024,41035,41140,41144,41155,41260,41264,41275,41380,41384,41395,41500,41504,41515,41620,41624,41635,41740,41744,41755,41860,41864,41875,41980,41984,41995,42100,42104,42115,42220,42224,42235,42340,42344,42355,42460,42464,42475,42580,42584,42595,42700,42704,42715,42820,42824,42835,42940,42944,42955,43060,43064,43075,43180,43184,43195,43300,43304,43315,43420,43424,43435,43540,43544,43555,43660,43664,43675,43780,43784,43795,43900,43904,43915,44020,44024,44035,44140,44144,44155,44260,44264,44275,44380,44384,44395,44500,44504,44515,44620,44624,44635,44740,44744,44755,44860,44864,44875,44980,44984,44995,45100,45104,45115,45220,45224,45235,45340,45344,45355,45460,45464,45475,45580,45584,45595,45700,45704,45715,45820,45824,45835,45940,45944,45955,46060,46064,46075,46180,46184,46195,46300,46304,46315,46420,46424,46435,46540,46544,46555,46660,46664,46675,46780,46784,46795,46900,46904,46915,47020,47024,47035,47140,47144,47155,47260,47264,47275,47380,47384,47395,47500,47504,47515,47620,47624,47635,47740,47744,47755,47860,47864,47875,47980,47984,47995,48100,48104,48115,48220,48224,48235,48340,48344,48355,48460,48464,48475,48580,48584,48595,48700,48704,48715,48820,48824,48835,48940,48944,48955,49060,49064,49075,49180,49184,49195,49300,49304,49315,49420,49424,49435,49540,49544,49555,49660,49664,49675,49780,49784,49795,49900,49904,49915,50020,50024,50035,50140,50144,50155,50260,50264,50275,50380,50384,50395,50500,50504,50515,50620,50624,50635,50740,50744,50755,50860,50864,50875,50980,50984,50995,51100,51104,51115,51220,51224,51235,51340,51344,51355,51460,51464,51475,51580,51584,51595,51700,51704,51715,51820,51824,51835,51940,51944,51955,52060,52064,52075,52180,52184,52195,52300,52304,52315,52420,52424,52435,52540,52544,52555,52660,52664,52675,52780,52784,52795,52900,52904,52915,53020,53024,53035,53140,53144,53155,53260,53264,53275,53380,53384,53395,53500,53504,53515,53620,53624,53635,53740,53744,53755,53860,53864,53875,53980,53984,53995
+vxform gamma-threshold c450506be9aa9d2c
+vxform gamma-transform 8edbcb9642c92cdd
+vxform gamma-sbit 1e73018a1db4d892
+vxform gamma-16-to-8 c8b51cc639f7996f
+vxform gamma-background d1a92048427d1ef1
+vxform gamma-alpha-mode e9f0e1d093d70139
+vxform gamma-transform-expand16 9af17ad54f3936e5
+vxform gamma-background-expand16 9c2f120948b90165
+vxform gamma-alpha-mode-expand16 e7a2a2ab2530e7ea
+format contrib/testpngs/ch1n3p04.png c03c8b790d5f02e9
+format contrib/testpngs/ch2n3p08.png fb222161184fefc0
+format contrib/testpngs/gray-1-1.8-tRNS.png 6766e35e9cc1f901
+format contrib/testpngs/gray-1-1.8.png f74a1e21be557f15
+format contrib/testpngs/gray-1-linear-tRNS.png 6766e35e9cc1f901
+format contrib/testpngs/gray-1-linear.png f74a1e21be557f15
+format contrib/testpngs/gray-1-sRGB-tRNS.png 6766e35e9cc1f901
+format contrib/testpngs/gray-1-sRGB.png f74a1e21be557f15
+format contrib/testpngs/gray-1-tRNS.png 6766e35e9cc1f901
+format contrib/testpngs/gray-1.png f74a1e21be557f15
+format contrib/testpngs/gray-16-1.8-tRNS.png 183e2b968660732d
+format contrib/testpngs/gray-16-1.8.png 183e2b968660732d
+format contrib/testpngs/gray-16-linear-tRNS.png 8303f04a6f6e35ed
+format contrib/testpngs/gray-16-linear.png 8303f04a6f6e35ed
+format contrib/testpngs/gray-16-sRGB-tRNS.png eea6ce81241fdeed
+format contrib/testpngs/gray-16-sRGB.png eea6ce81241fdeed
+format contrib/testpngs/gray-16-tRNS.png 8303f04a6f6e35ed
+format contrib/testpngs/gray-16.png 8303f04a6f6e35ed
+format contrib/testpngs/gray-2-1.8-tRNS.png 5fac096dceb7164d
+format contrib/testpngs/gray-2-1.8.png 7c34c8350ed6e005
+format contrib/testpngs/gray-2-linear-tRNS.png 0f836b7ecf6945e1
+format contrib/testpngs/gray-2-linear.png faaa44eb9dc66965
+format contrib/testpngs/gray-2-sRGB-tRNS.png c0bcd72b39102d25
+format contrib/testpngs/gray-2-sRGB.png 48438f348e43d065
+format contrib/testpngs/gray-2-tRNS.png c0bcd72b39102d25
+format contrib/testpngs/gray-2.png 48438f348e43d065
+format contrib/testpngs/gray-4-1.8-tRNS.png 015293a1813e1f1d
+format contrib/testpngs/gray-4-1.8.png b59f17813030fce5
+format contrib/testpngs/gray-4-linear-tRNS.png eac4310653a51bf5
+format contrib/testpngs/gray-4-linear.png 9545c308e1960445
+format contrib/testpngs/gray-4-sRGB-tRNS.png 1076ea4302424805
+format contrib/testpngs/gray-4-sRGB.png 4da971c469ee0c65
+format contrib/testpngs/gray-4-tRNS.png 1076ea4302424805
+format contrib/testpngs/gray-4.png 4da971c469ee0c65
+format contrib/testpngs/gray-8-1.8-tRNS.png 425c6a9db2821b99
+format contrib/testpngs/gray-8-1.8.png d7b19d9f12829985
+format contrib/testpngs/gray-8-linear-tRNS.png d989bc2905893c31
+format contrib/testpngs/gray-8-linear.png d90a17c65c514615
+format contrib/testpngs/gray-8-sRGB-tRNS.png 08472daf1785265d
+format contrib/testpngs/gray-8-sRGB.png d186d0b26119db5d
+format contrib/testpngs/gray-8-tRNS.png 08472daf1785265d
+format contrib/testpngs/gray-8.png d186d0b26119db5d
+format contrib/testpngs/gray-alpha-16-1.8.png 15c5ed81af3d9ce5
+format contrib/testpngs/gray-alpha-16-linear.png 5d07c56f551c61b1
+format contrib/testpngs/gray-alpha-16-sRGB.png 4fe6110e2c027b11
+format contrib/testpngs/gray-alpha-16.png 5d07c56f551c61b1
+format contrib/testpngs/gray-alpha-8-1.8.png 2796279693d2fd51
+format contrib/testpngs/gray-alpha-8-linear.png c26589a4d73648c1
+format contrib/testpngs/gray-alpha-8-sRGB.png 3898622245055f5d
+format contrib/testpngs/gray-alpha-8.png 3898622245055f5d
+format contrib/testpngs/palette-1-1.8-tRNS.png 6359fda98147477d
+format contrib/testpngs/palette-1-1.8.png a8c810ec8728d769
+format contrib/testpngs/palette-1-linear-tRNS.png 6359fda98147477d
+format contrib/testpngs/palette-1-linear.png a8c810ec8728d769
+format contrib/testpngs/palette-1-sRGB-tRNS.png 6359fda98147477d
+format contrib/testpngs/palette-1-sRGB.png a8c810ec8728d769
+format contrib/testpngs/palette-1-tRNS.png 6359fda98147477d
+format contrib/testpngs/palette-1.png a8c810ec8728d769
+format contrib/testpngs/palette-2-1.8-tRNS.png 8449319aa6a893f9
+format contrib/testpngs/palette-2-1.8.png fe9297379932dae9
+format contrib/testpngs/palette-2-linear-tRNS.png 440c6c387bc7076d
+format contrib/testpngs/palette-2-linear.png 633dd5439cc24f55
+format contrib/testpngs/palette-2-sRGB-tRNS.png 9d8bc8f689a3caf1
+format contrib/testpngs/palette-2-sRGB.png 14b745ff1e220d05
+format contrib/testpngs/palette-2-tRNS.png 9d8bc8f689a3caf1
+format contrib/testpngs/palette-2.png 14b745ff1e220d05
+format contrib/testpngs/palette-4-1.8-tRNS.png 7a5b529d071aff6d
+format contrib/testpngs/palette-4-1.8.png d1cc21e68297d32d
+format contrib/testpngs/palette-4-linear-tRNS.png e3b268b067af857d
+format contrib/testpngs/palette-4-linear.png c98c1b2135c84065
+format contrib/testpngs/palette-4-sRGB-tRNS.png 9d0bf5d772a5e6b9
+format contrib/testpngs/palette-4-sRGB.png 72474a80e7e61089
+format contrib/testpngs/palette-4-tRNS.png 9d0bf5d772a5e6b9
+format contrib/testpngs/palette-4.png 72474a80e7e61089
+format contrib/testpngs/palette-8-1.8-tRNS.png fc7838b1d5536595
+format contrib/testpngs/palette-8-1.8.png 6d4ede8db7896709
+format contrib/testpngs/palette-8-linear-tRNS.png 0b89cbf006d0c46d
+format contrib/testpngs/palette-8-linear.png 1146480774af5c15
+format contrib/testpngs/palette-8-sRGB-tRNS.png 095b46b5946b6ec9
+format contrib/testpngs/palette-8-sRGB.png c4cf51199af6a351
+format contrib/testpngs/palette-8-tRNS.png 095b46b5946b6ec9
+format contrib/testpngs/palette-8.png c4cf51199af6a351
+format contrib/testpngs/rgb-16-1.8-tRNS.png b3c56f87b1a2348f
+format contrib/testpngs/rgb-16-1.8.png b3c56f87b1a2348f
+format contrib/testpngs/rgb-16-linear-tRNS.png 3e48a6f3a860bb16
+format contrib/testpngs/rgb-16-linear.png 3e48a6f3a860bb16
+format contrib/testpngs/rgb-16-sRGB-tRNS.png da0b3f0a9d5bae64
+format contrib/testpngs/rgb-16-sRGB.png da0b3f0a9d5bae64
+format contrib/testpngs/rgb-16-tRNS.png 3e48a6f3a860bb16
+format contrib/testpngs/rgb-16.png 3e48a6f3a860bb16
+format contrib/testpngs/rgb-8-1.8-tRNS.png d4c6d9cccb871bb4
+format contrib/testpngs/rgb-8-1.8.png 668b5e9339b2fe7e
+format contrib/testpngs/rgb-8-linear-tRNS.png 3b7fd45fb1e2559e
+format contrib/testpngs/rgb-8-linear.png d4d6568fe80451fb
+format contrib/testpngs/rgb-8-sRGB-tRNS.png 5358d5673347cea7
+format contrib/testpngs/rgb-8-sRGB.png 59b74fec2cce4391
+format contrib/testpngs/rgb-8-tRNS.png 5358d5673347cea7
+format contrib/testpngs/rgb-8.png 59b74fec2cce4391
+format contrib/testpngs/rgb-alpha-16-1.8.png 51ba79fa4b645998
+format contrib/testpngs/rgb-alpha-16-linear.png dc9fd72907bda53a
+format contrib/testpngs/rgb-alpha-16-sRGB.png 91d119b2ace0c791
+format contrib/testpngs/rgb-alpha-16.png dc9fd72907bda53a
+format contrib/testpngs/rgb-alpha-8-1.8.png f54daa48a961528a
+format contrib/testpngs/rgb-alpha-8-linear.png 2855a4110c183fdd
+format contrib/testpngs/rgb-alpha-8-sRGB.png 0ef6bd342192bc4f
+format contrib/testpngs/rgb-alpha-8.png 0ef6bd342192bc4f
+format contrib/pngsuite/basn0g01.png 0c20932fa6f7ea29
+format contrib/pngsuite/basn0g02.png 8866b6e44d70b775
+format contrib/pngsuite/basn0g04.png 9c2e1a08cc243221
+format contrib/pngsuite/basn0g08.png f20673ba694f6dc5
+format contrib/pngsuite/basn0g16.png 2e247e83a47e9925
+format contrib/pngsuite/basn2c08.png 5617b22ee99c0c82
+format contrib/pngsuite/basn2c16.png 6a4ce77f544731e9
+format contrib/pngsuite/basn3p01.png 4f244da80c7cbcac
+format contrib/pngsuite/basn3p02.png 396ae0eb7135bd1d
+format contrib/pngsuite/basn3p04.png c03c8b790d5f02e9
+format contrib/pngsuite/basn3p08.png fb222161184fefc0
+format contrib/pngsuite/basn4a08.png cf5007fd239d3f35
+format contrib/pngsuite/basn4a16.png f3f188f6fccc0ddd
+format contrib/pngsuite/basn6a08.png 8b616d5af8f356d9
+format contrib/pngsuite/basn6a16.png 1b4c3cd72e80cba1
+format contrib/pngsuite/ftbbn0g01.png c640478765032765
+format contrib/pngsuite/ftbbn0g02.png 2ce7a4cbed432c25
+format contrib/pngsuite/ftbbn0g04.png 15a33175b4e92a51
+format contrib/pngsuite/ftbbn2c16.png 891be509be6cf3dd
+format contrib/pngsuite/ftbbn3p08.png aa9bcf464efd8d80
+format contrib/pngsuite/ftbgn2c16.png 891be509be6cf3dd
+format contrib/pngsuite/ftbgn3p08.png 0e1063b509a3a229
+format contrib/pngsuite/ftbrn2c08.png 51d2d883d6e8c614
+format contrib/pngsuite/ftbwn0g16.png d5f849057f7f306d
+format contrib/pngsuite/ftbwn3p08.png 60e66e94263f6842
+format contrib/pngsuite/ftbyn3p08.png 7e805c8f915bfc82
+format contrib/pngsuite/ftp0n0g08.png 07c5ba9884a2f8d1
+format contrib/pngsuite/ftp0n2c08.png d41de4118affe073
+format contrib/pngsuite/ftp0n3p08.png e4985f0d4f2d040d
+format contrib/pngsuite/ftp1n3p08.png 60e66e94263f6842
+format contrib/pngsuite/ibasn0g08.png 8592027a865f45fd
+format contrib/pngsuite/ibasn0g16.png 66486683b0d879d5
+format contrib/pngsuite/ibasn2c08.png ead674437eebd27f
+format contrib/pngsuite/ibasn2c16.png e0c06352b3dc9085
+format contrib/pngsuite/ibasn3p08.png 10ec8fe805a41e7b
+format contrib/pngsuite/ibasn4a08.png 5a900820258874e1
+format contrib/pngsuite/ibasn4a16.png 816b36eac10fb40d
+format contrib/pngsuite/ibasn6a08.png f419f8c0041441df
+format contrib/pngsuite/ibasn6a16.png 0d6331f6789d93f6
+format contrib/pngsuite/iftbbn2c16.png 891be509be6cf3dd
+format contrib/pngsuite/iftbbn3p08.png ca1eb48b667a84c4
+format contrib/pngsuite/iftbgn2c16.png 891be509be6cf3dd
+format contrib/pngsuite/iftbgn3p08.png ca1eb48b667a84c4
+format contrib/pngsuite/iftbrn2c08.png 83b2c7e7642c4664
+format contrib/pngsuite/iftbwn0g16.png 59fd64a53d37e049
+format contrib/pngsuite/iftbwn3p08.png ca1eb48b667a84c4
+format contrib/pngsuite/iftbyn3p08.png ca1eb48b667a84c4
+format contrib/pngsuite/iftp0n0g08.png 1421148043e105a5
+format contrib/pngsuite/iftp0n2c08.png f6045346f7d23aa7
+format contrib/pngsuite/iftp0n3p08.png dedad2479e180288
+format contrib/pngsuite/iftp1n3p08.png ca1eb48b667a84c4
+unknown discard -
+unknown if-safe sTER,vpAg
+unknown save sTER,vpAg
+unknown sAPI sBIT,sRGB,gAMA,cHRM,bKGD,eXIf
+unknown sTER sTER
+unknown vpAg vpAg

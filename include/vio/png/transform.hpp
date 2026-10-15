@@ -259,6 +259,8 @@ class TransformPlan {
     const int n = color_type_ == kIndexed ? file_palette_size_ : num_palette_;
     return std::vector<PaletteEntry>(palette_.begin(), palette_.begin() + n);
   }
+  // Packed output samples are least significant first.
+  bool packswapped() const { return has(kPackswap) && out_.bit_depth < 8; }
   // Rows are composited (alpha mode or background) row by row.
   bool composing() const { return has(kCompose); }
   // Partially transparent pixels are left linear (optimized alpha mode).
@@ -446,7 +448,16 @@ class TransformPlan {
     }
     if (t.quantize) set_quantize(*t.quantize);
     if (t.shift) {
-      const SignificantBits& b = *t.shift;
+      // Bits not given: a gray value's for the colors (an image may be
+      // converted to color), the depth's for alpha.
+      SignificantBits b = *t.shift;
+      const std::uint8_t depth = color_type_ == kIndexed ? 8 : bit_depth_;
+      if (!(color_type_ & 2)) {
+        if (!b.red) b.red = b.gray;
+        if (!b.green) b.green = b.gray;
+        if (!b.blue) b.blue = b.gray;
+      }
+      if (!b.alpha) b.alpha = depth;
       bool invalid;
       if (color_type_ & 2) {
         invalid = b.red == 0 || b.red > bit_depth_ || b.green == 0 || b.green > bit_depth_ || b.blue == 0 ||
@@ -1356,7 +1367,16 @@ class WritePlan {
     in_depth_ = t.packing && h.bit_depth < 8 ? 8 : h.bit_depth;
     shift_ = false;
     if (t.shift) {
-      const SignificantBits& b = *t.shift;
+      // Bits not given: a gray value's for the colors (an image may be
+      // converted to color), the depth's for alpha.
+      SignificantBits b = *t.shift;
+      const std::uint8_t depth = color_type_ == kIndexed ? 8 : bit_depth_;
+      if (!(color_type_ & 2)) {
+        if (!b.red) b.red = b.gray;
+        if (!b.green) b.green = b.gray;
+        if (!b.blue) b.blue = b.gray;
+      }
+      if (!b.alpha) b.alpha = depth;
       const unsigned d = h.bit_depth;
       bool ok = (h.color_type & 2) ? b.red && b.red <= d && b.green && b.green <= d && b.blue && b.blue <= d
                                    : b.gray && b.gray <= d;
