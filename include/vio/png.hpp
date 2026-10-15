@@ -12,6 +12,7 @@
 
 #include "png/decoder.hpp"
 #include "png/encoder.hpp"
+#include "png/stream.hpp"
 
 namespace vio::png {
 

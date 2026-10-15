@@ -145,7 +145,11 @@ inline std::int32_t read_i32(const std::uint8_t* p) {
 
 }  // namespace detail
 
+class StreamDecoder;
+
 class Decoder {
+  friend class StreamDecoder;
+
  public:
   ReadOptions options;
   Info info;
@@ -252,6 +256,11 @@ class Decoder {
   void chunk_warning(const char* msg) {
     warn(std::string(reinterpret_cast<const char*>(chunk_type_), 4) + ": " + msg);
   }
+  // A recoverable error not tied to a chunk.
+  void benign_error_text(const char* msg) {
+    if (options.benign_errors_warn) warn(msg);
+    else fail(msg);
+  }
   void benign_error(const char* msg) {
     if (options.benign_errors_warn) chunk_warning(msg);
     else chunk_error(msg);
@@ -313,35 +322,37 @@ class Decoder {
     }
     const std::uint8_t* p = file_.data() + pos_;
     const std::uint32_t len = read_u32(p);
-    chunk_type_ = p + 4;
-    if (p[0] >= 0x80) chunk_error("bad header (invalid length)");
-    if (!valid_chunk_type(chunk_type_)) chunk_error("bad header (invalid type)");
+    check_chunk_header(p);
     if (file_.size() - pos_ - 12 < len) {
       if (mode_ & kModeIDAT) fail("Not enough image data");
       fail("unexpected end of file");
     }
-    const std::uint8_t* data = p + 8;
     pos_ += 12 + static_cast<std::size_t>(len);
-    const bool critical = is_critical(chunk_type_);
-    // Critical chunks whose CRC check is off, and ancillary ones set to be
-    // used quietly, are not checked.
-    const CrcAction action = critical ? options.critical_crc : options.ancillary_crc;
-    if (action != CrcAction::kQuietUse &&
-        zlib::crc32(0, chunk_type_, 4 + static_cast<std::size_t>(len)) != read_u32(data + len)) {
-      if (!crc_mismatch(critical)) return;
-    }
-    int index = chunk_index(chunk_type_);
-    if (index != kUnknown && !critical && keep_rule(chunk_type_) != ChunkKeep::kDefault &&
+    process_chunk(p);
+  }
+
+  // Checks the length and type of the chunk whose header is at p.
+  void check_chunk_header(const std::uint8_t* p) {
+    chunk_type_ = p + 4;
+    if (p[0] >= 0x80) chunk_error("bad header (invalid length)");
+    if (!detail::valid_chunk_type(chunk_type_)) chunk_error("bad header (invalid type)");
+  }
+
+  // The index the chunk is handled as (kUnknown for chunks to treat as
+  // unknown).
+  int handling_index(const std::uint8_t* type) const {
+    using namespace detail;
+    int index = chunk_index(type);
+    if (index != kUnknown && !is_critical(type) && keep_rule(type) != ChunkKeep::kDefault &&
         index != kACTL && index != kFCTL && index != kFDAT)
-      index = kUnknown;  // to be handled as unknown
-    // Anything but IDAT (or fdAT) ends the image data.
-    if ((mode_ & kModeIDAT) && index != kIDAT && index != kFDAT && index != kFCTL)
-      mode_ |= kModeAfterIDAT;
-    if (index == kUnknown) {
-      if (!(mode_ & kModeIHDR)) fail("missing IHDR");
-      handle_unknown(data, len);
-      return;
-    }
+      index = kUnknown;
+    return index;
+  }
+
+  // Checks a known chunk's placement and length; returns false if it is to
+  // be skipped (after a warning).
+  bool check_rules(int index, std::uint32_t len) {
+    using namespace detail;
     if (index != kIHDR && !(mode_ & kModeIHDR)) chunk_error("missing IHDR");
     const ChunkRule& rule = chunk_rules[index];
     const char* err = nullptr;
@@ -354,13 +365,40 @@ class Decoder {
     if (index == kIDAT && (mode_ & kModeAfterIDAT)) {
       // IDAT after other chunks that followed the image data
       benign_error("Too many IDATs found");
-      return;
+      return false;
     }
     if (err) {
-      if (critical) chunk_error(err);
+      if (is_critical(chunk_type_)) chunk_error(err);
       benign_error(err);
+      return false;
+    }
+    return true;
+  }
+
+  // Handles the complete chunk at p (length, type, data and CRC).
+  void process_chunk(const std::uint8_t* p) {
+    using namespace detail;
+    const std::uint32_t len = read_u32(p);
+    chunk_type_ = p + 4;
+    const std::uint8_t* data = p + 8;
+    const bool critical = is_critical(chunk_type_);
+    // Critical chunks whose CRC check is off, and ancillary ones set to be
+    // used quietly, are not checked.
+    const CrcAction action = critical ? options.critical_crc : options.ancillary_crc;
+    if (action != CrcAction::kQuietUse &&
+        zlib::crc32(0, chunk_type_, 4 + static_cast<std::size_t>(len)) != read_u32(data + len)) {
+      if (!crc_mismatch(critical)) return;
+    }
+    const int index = handling_index(chunk_type_);
+    // Anything but IDAT (or fdAT) ends the image data.
+    if ((mode_ & kModeIDAT) && index != kIDAT && index != kFDAT && index != kFCTL)
+      mode_ |= kModeAfterIDAT;
+    if (index == kUnknown) {
+      if (!(mode_ & kModeIHDR)) fail("missing IHDR");
+      handle_unknown(data, len);
       return;
     }
+    if (!check_rules(index, len)) return;
     if (handle_known(index, data, len)) seen_ |= 1u << index;
   }
 

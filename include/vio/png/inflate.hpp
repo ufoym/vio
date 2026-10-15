@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -662,6 +663,317 @@ class Inflater {
   std::uint8_t* out_end_ = nullptr;
   std::uint32_t lit_[detail::kLitTableSize];
   std::uint32_t dist_[detail::kDistTableSize];
+};
+
+// StreamInflater decompresses a stream given in pieces of any size, as they
+// arrive: each feed() decodes as far as the input allows and passes the
+// output to a sink.  It keeps the last 32 KiB of output as the window and
+// the input of a symbol (or block header) not yet complete.
+class StreamInflater {
+ public:
+  using Sink = std::function<void(const std::uint8_t* data, std::size_t n)>;
+
+  // raw = true decodes a bare DEFLATE stream (no zlib header/trailer).
+  // Output beyond `limit` bytes (0 = none) is not decoded.
+  explicit StreamInflater(Sink sink, bool raw = false, bool verify_adler = true, std::uint64_t limit = 0)
+      : sink_(std::move(sink)), raw_(raw), verify_adler_(verify_adler), limit_(limit) {
+    state_ = raw ? kBlock : kHeader;
+  }
+
+  // Decodes as much of the stream as `data` (following the earlier pieces)
+  // allows.  Throws vio::Error on malformed data.
+  void feed(const std::uint8_t* data, std::size_t n) {
+    if (state_ == kDone || state_ == kFull) {
+      extra_ += n;
+      return;
+    }
+    in_.insert(in_.end(), data, data + n);
+    run();
+    flush();
+    // keep only the input not yet consumed
+    if (pos_ > 0) {
+      in_.erase(in_.begin(), in_.begin() + static_cast<std::ptrdiff_t>(pos_));
+      pos_ = 0;
+    }
+    if (state_ == kDone || state_ == kFull) {
+      extra_ += in_.size();
+      in_.clear();
+    }
+  }
+
+  bool stream_end() const { return state_ == kDone; }
+  // The output reached the limit before the end of the stream.
+  bool limited() const { return state_ == kFull; }
+  std::uint64_t total_out() const { return total_; }
+  // Input bytes given after the end of the stream (or of the limit).
+  std::uint64_t extra_input() const { return extra_; }
+
+ private:
+  enum State { kHeader, kBlock, kStored, kCodes, kTrailer, kDone, kFull };
+  struct NeedInput {};
+
+  [[noreturn]] static void fail(const char* msg) { VIO_FAIL("zlib: %s", msg); }
+
+  // Bit input: fills the buffer from the pending input as far as it goes.
+  void fill() {
+    while (bitcnt_ <= 56 && pos_ < in_.size()) {
+      bitbuf_ |= static_cast<std::uint64_t>(in_[pos_++]) << bitcnt_;
+      bitcnt_ += 8;
+    }
+  }
+  void need(int n) {
+    if (bitcnt_ < n) fill();
+    if (bitcnt_ < n) throw NeedInput{};
+  }
+  unsigned bits(int n) {
+    need(n);
+    const unsigned v = static_cast<unsigned>(bitbuf_ & ((1ull << n) - 1));
+    bitbuf_ >>= n;
+    bitcnt_ -= n;
+    return v;
+  }
+  void align() {
+    bitbuf_ >>= bitcnt_ & 7;
+    bitcnt_ &= ~7;
+  }
+
+  // Restart point: the state before the current symbol or header.
+  struct Mark {
+    std::size_t pos;
+    std::uint64_t bitbuf;
+    int bitcnt;
+  };
+  Mark mark() const { return {pos_, bitbuf_, bitcnt_}; }
+  void restore(const Mark& m) {
+    pos_ = m.pos;
+    bitbuf_ = m.bitbuf;
+    bitcnt_ = m.bitcnt;
+  }
+
+  void put(std::uint8_t b) {
+    win_[total_ & kWinMask] = b;
+    total_++;
+    pending_.push_back(b);
+    if (pending_.size() >= 16384) flush();
+  }
+  void flush() {
+    if (pending_.empty()) return;
+    if (!raw_ && verify_adler_) adler_ = adler32(adler_, pending_.data(), pending_.size());
+    sink_(pending_.data(), pending_.size());
+    pending_.clear();
+  }
+  bool full() const { return limit_ && total_ >= limit_; }
+
+  void run() {
+    try {
+      for (;;) {
+        Mark m = mark();
+        try {
+          switch (state_) {
+            case kHeader: {
+              const unsigned cmf = bits(8), flg = bits(8);
+              if ((cmf & 0x0f) != 8 || (cmf >> 4) > 7 || ((cmf << 8) | flg) % 31 != 0)
+                fail("incorrect header check");
+              if (flg & 0x20) fail("need dictionary");
+              state_ = kBlock;
+              break;
+            }
+            case kBlock: block_header(); break;
+            case kStored:
+              while (stored_left_ > 0) {
+                if (full()) {
+                  state_ = kFull;
+                  return;
+                }
+                if (bitcnt_ >= 8) {
+                  put(static_cast<std::uint8_t>(bits(8)));
+                } else {
+                  if (pos_ >= in_.size()) return;
+                  put(in_[pos_++]);
+                }
+                stored_left_--;
+              }
+              state_ = last_ ? (raw_ ? kDone : kTrailer) : kBlock;
+              break;
+            case kCodes:
+              if (!codes()) return;  // more input needed, or the limit reached
+              state_ = last_ ? (raw_ ? kDone : kTrailer) : kBlock;
+              break;
+            case kTrailer: {
+              align();
+              std::uint32_t check = 0;
+              for (int i = 0; i < 4; i++) check = check << 8 | bits(8);
+              flush();
+              if (verify_adler_ && check != adler_) fail("incorrect data check");
+              state_ = kDone;
+              break;
+            }
+            case kDone:
+            case kFull: return;
+          }
+        } catch (const NeedInput&) {
+          restore(m);
+          return;
+        }
+        if (state_ == kDone) {
+          // give back whole bytes still in the bit buffer
+          pos_ -= static_cast<std::size_t>(bitcnt_ >> 3);
+          bitbuf_ = 0;
+          bitcnt_ = 0;
+          return;
+        }
+      }
+    } catch (...) {
+      flush();
+      throw;
+    }
+  }
+
+  void block_header() {
+    last_ = bits(1) != 0;
+    const unsigned type = bits(2);
+    if (type == 0) {
+      align();
+      const unsigned len = bits(16), nlen = bits(16);
+      if ((len ^ 0xffff) != nlen) fail("invalid stored block lengths");
+      stored_left_ = len;
+      state_ = kStored;
+    } else if (type == 1) {
+      lit_ = detail::fixed_tables().lit;
+      dist_ = detail::fixed_tables().dist;
+      state_ = kCodes;
+    } else if (type == 2) {
+      dynamic();
+      lit_ = dyn_lit_.data();
+      dist_ = dyn_dist_.data();
+      state_ = kCodes;
+    } else {
+      fail("invalid block type");
+    }
+  }
+
+  void dynamic() {
+    static constexpr std::uint8_t order[19] = {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
+    const unsigned nlen = bits(5) + 257, ndist = bits(5) + 1, ncode = bits(4) + 4;
+    if (nlen > 286 || ndist > 30) fail("too many length or distance symbols");
+    std::uint8_t lengths[320] = {};
+    for (unsigned i = 0; i < ncode; i++) lengths[order[i]] = static_cast<std::uint8_t>(bits(3));
+    std::uint32_t cl[1 << detail::kCodeLenBits];
+    if (!detail::build_table(cl, lengths, 19, detail::Code::kCodeLen, detail::kCodeLenBits))
+      fail("invalid code lengths set");
+    std::memset(lengths, 0, sizeof(lengths));
+    unsigned idx = 0;
+    while (idx < nlen + ndist) {
+      fill();
+      const std::uint32_t e = cl[bitbuf_ & ((1u << detail::kCodeLenBits) - 1)];
+      if (e & detail::kEntExceptional) fail("invalid code lengths set");
+      bits(static_cast<int>(e & 63));
+      const unsigned sym = e >> 16;
+      if (sym < 16) {
+        lengths[idx++] = static_cast<std::uint8_t>(sym);
+        continue;
+      }
+      unsigned rep;
+      std::uint8_t val = 0;
+      if (sym == 16) {
+        if (idx == 0) fail("invalid bit length repeat");
+        val = lengths[idx - 1];
+        rep = 3 + bits(2);
+      } else if (sym == 17) {
+        rep = 3 + bits(3);
+      } else {
+        rep = 11 + bits(7);
+      }
+      if (idx + rep > nlen + ndist) fail("invalid bit length repeat");
+      while (rep--) lengths[idx++] = val;
+    }
+    if (lengths[256] == 0) fail("invalid code -- missing end-of-block");
+    dyn_lit_.resize(detail::kLitTableSize);
+    dyn_dist_.resize(detail::kDistTableSize);
+    if (!detail::build_table(dyn_lit_.data(), lengths, nlen, detail::Code::kLitLen, detail::kLitBits))
+      fail("invalid literal/lengths set");
+    if (!detail::build_table(dyn_dist_.data(), lengths + nlen, ndist, detail::Code::kDist, detail::kDistBits))
+      fail("invalid distances set");
+  }
+
+  // Looks up the entry for the next code (input permitting); the bits are
+  // consumed by the caller once the whole symbol is known to be there.
+  std::uint32_t lookup(const std::uint32_t* table, int table_bits) {
+    fill();
+    std::uint32_t e = table[bitbuf_ & ((1u << table_bits) - 1)];
+    if ((e & detail::kEntExceptional) && (e & detail::kEntSecond))
+      e = table[(e >> 16) + ((bitbuf_ >> table_bits) & ((1u << ((e >> 8) & 15)) - 1))];
+    return e;
+  }
+
+  // Decodes symbols up to the end of the block; returns false if the input
+  // ran out (the symbol under way is left for the next feed) or the output
+  // limit was reached first.
+  bool codes() {
+    using namespace detail;
+    for (;;) {
+      if (full()) {
+        state_ = kFull;
+        return false;
+      }
+      const Mark m = mark();
+      std::uint32_t e = lookup(lit_, kLitBits);
+      if ((e & 63) > static_cast<unsigned>(bitcnt_)) return false;
+      if (e & kEntLiteral) {
+        bits(static_cast<int>(e & 63));
+        put(static_cast<std::uint8_t>(e >> 16));
+        if (e & kEntSecond) put(static_cast<std::uint8_t>(e >> 24));
+        continue;
+      }
+      if (e & kEntExceptional) {
+        if (e & kEntEndOfBlock) {
+          bits(static_cast<int>(e & 63));
+          return true;
+        }
+        if (bitcnt_ < 15) return false;  // may be a code not all there yet
+        fail("invalid literal/length code");
+      }
+      std::uint64_t saved = bitbuf_;
+      bits(static_cast<int>(e & 63));
+      const unsigned len =
+          (e >> 16) + static_cast<unsigned>((saved & ((1ull << (e & 63)) - 1)) >> ((e >> 8) & 31));
+      const std::uint32_t d = lookup(dist_, kDistBits);
+      if ((d & kEntExceptional) && bitcnt_ < 15) {
+        restore(m);
+        return false;
+      }
+      if ((d & 63) > static_cast<unsigned>(bitcnt_)) {
+        restore(m);
+        return false;
+      }
+      if (d & kEntExceptional) fail("invalid distance code");
+      saved = bitbuf_;
+      bits(static_cast<int>(d & 63));
+      const std::size_t distance =
+          (d >> 16) + static_cast<std::size_t>((saved & ((1ull << (d & 63)) - 1)) >> ((d >> 8) & 31));
+      if (distance > total_ || distance > kWinSize) fail("invalid distance too far back");
+      for (unsigned i = 0; i < len; i++) put(win_[(total_ - distance) & kWinMask]);
+    }
+  }
+
+  static constexpr std::size_t kWinSize = 32768, kWinMask = kWinSize - 1;
+  Sink sink_;
+  bool raw_, verify_adler_;
+  std::uint64_t limit_;
+  State state_;
+  bool last_ = false;
+  unsigned stored_left_ = 0;
+  std::vector<std::uint8_t> in_;
+  std::size_t pos_ = 0;
+  std::uint64_t bitbuf_ = 0;
+  int bitcnt_ = 0;
+  std::uint64_t total_ = 0, extra_ = 0;
+  std::uint32_t adler_ = 1;
+  const std::uint32_t* lit_ = nullptr;
+  const std::uint32_t* dist_ = nullptr;
+  std::vector<std::uint32_t> dyn_lit_, dyn_dist_;
+  std::vector<std::uint8_t> pending_;
+  std::uint8_t win_[kWinSize];
 };
 
 // uncompress(): one-shot zlib-format decompression.  If `limit` is nonzero,
