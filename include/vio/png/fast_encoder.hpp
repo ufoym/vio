@@ -667,15 +667,15 @@ VIO_INLINE void emit_literals(BitWriter& w, const CodeTables& t, const std::uint
 }
 
 VIO_INLINE void emit8(BitWriter& w, const std::uint32_t* lit, const std::uint8_t* q) {
-  // Groups of three and two codes of up to 14 bits per put().
-  std::uint32_t e0 = lit[q[0]], e1 = lit[q[1]], e2 = lit[q[2]];
-  w.put((e0 & 0xffff) | (e1 & 0xffff) << (e0 >> 16) | (e2 & 0xffffull) << ((e0 >> 16) + (e1 >> 16)),
-        (e0 >> 16) + (e1 >> 16) + (e2 >> 16));
-  e0 = lit[q[3]], e1 = lit[q[4]], e2 = lit[q[5]];
-  w.put((e0 & 0xffff) | (e1 & 0xffff) << (e0 >> 16) | (e2 & 0xffffull) << ((e0 >> 16) + (e1 >> 16)),
-        (e0 >> 16) + (e1 >> 16) + (e2 >> 16));
-  e0 = lit[q[6]], e1 = lit[q[7]];
-  w.put((e0 & 0xffff) | (e1 & 0xffff) << (e0 >> 16), (e0 >> 16) + (e1 >> 16));
+  // Two groups of four codes of up to 14 bits per put().
+  for (int k = 0; k < 8; k += 4) {
+    std::uint64_t e0 = lit[q[k]], e1 = lit[q[k + 1]], e2 = lit[q[k + 2]], e3 = lit[q[k + 3]];
+    unsigned l0 = static_cast<unsigned>(e0 >> 16), l1 = static_cast<unsigned>(e1 >> 16),
+             l2 = static_cast<unsigned>(e2 >> 16), l3 = static_cast<unsigned>(e3 >> 16);
+    std::uint64_t lo = (e0 & 0xffff) | (e1 & 0xffff) << l0;
+    std::uint64_t hi = (e2 & 0xffff) | (e3 & 0xffff) << l2;
+    w.put(lo | hi << (l0 + l1), l0 + l1 + l2 + l3);
+  }
 }
 
 // Huffman-codes n bytes, continuing a run of `run` zeros from before;
@@ -881,7 +881,10 @@ class FastEncoder {
         load_row(y, cur);
         filter_row(data.get() + y * line, cur, up);
       }
-      hist.count(data.get(), total);
+      // Statistics of about 32 KiB of rows spread over the image.
+      const std::size_t step = std::max<std::size_t>(1, total / (32 * 1024));
+      for (std::uint32_t y = 0; y < height; y += static_cast<std::uint32_t>(step))
+        hist.count(data.get() + y * line, line);
       build_code_tables(hist, t_);
       adler = zlib::adler32(1, data.get(), total);
       out.reserve(out.size() + 1024 + 2 * total);
