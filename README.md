@@ -313,43 +313,45 @@ is `tests/png-bench/` (`png_bench.py run`, then `report` or `compare`;
 
 PNG decoding:
 
-| Platform       | CPU                        | vs image-png | vs libpng |
-| -------------- | -------------------------- | -----------: | --------: |
-| macOS AArch64  | Apple M4                   |          +7% |     +148% |
-| Windows x86-64 | Core Ultra 9 285K, clang-cl¹ |          —² |     +134% |
-| Windows x86-64 | Core Ultra 9 285K, MSVC¹   |          —² |     +129% |
+| Platform | CPU (compiler) | vs image-png | vs libpng |
+| --- | --- | ---: | ---: |
+| Linux x86-64 | AMD EPYC 7763 (GCC) | +20% | +168% |
+| Windows x86-64 | AMD EPYC 9V74 (MSVC) | +15% | +190% |
+| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | +7% | +221% |
+| Linux AArch64 | Neoverse-N2 (GCC) | +10% | +135% |
+| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | +14% | +172% |
 
 PNG encoding:
 
-| Platform       | CPU                        | vs fpnge          | vs libpng           |
-| -------------- | -------------------------- | ----------------: | ------------------: |
-| macOS AArch64  | Apple M4                   |               —³ | +3733% (+10% size) |
-| Windows x86-64 | Core Ultra 9 285K, clang-cl¹ | +13% (−4% size) | +3171% (+8% size)  |
-| Windows x86-64 | Core Ultra 9 285K, MSVC¹   | +40% (−4% size)   | +2945% (+8% size)  |
+| Platform | CPU (compiler) | vs fpnge | vs image-png (fast) | vs libpng |
+| --- | --- | ---: | ---: | ---: |
+| Linux x86-64 | AMD EPYC 7763 (GCC) | +23% (−5% size) | +68% (−4% size) | +4371% (+10% size) |
+| Windows x86-64 | AMD EPYC 9V74 (MSVC) | +96% (−5% size) | +53% (−4% size) | +4691% (+10% size) |
+| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | +20% (−5% size) | +83% (−4% size) | +4266% (+10% size) |
+| Linux AArch64 | Neoverse-N2 (GCC) | — | +75% (−4% size) | +2875% (+10% size) |
+| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | — | +53% (−4% size) | +3547% (+10% size) |
 
-¹ 1 image in 8 of the corpus (379 images); P-cores.
-² Pending (the hosted-runner benchmark includes it).
-³ fpnge has no Arm code.  Against image-png's fpnge-inspired fast mode:
-+48% (−4% size).
+By image category, number of images in parentheses (Linux x86-64, AMD EPYC 7763, GCC):
 
-By image category, number of images in the corpus in parentheses (decoding on the Apple
-M4, encoding on the Core Ultra 9 285K with clang-cl, 1 image in 8):
+| Category | dec. vs image-png | dec. vs libpng | enc. vs fpnge | enc. vs libpng |
+| --- | ---: | ---: | ---: | ---: |
+| icon_512 (213) | +24% | +287% | +19% (−16% size) | +2309% (+33% size) |
+| icon_64 (213) | +13% | +157% | +47% (−17% size) | +1809% (+14% size) |
+| photo_kodak (24) | +23% | +122% | +13% (−3% size) | +9750% (+8% size) |
+| photo_tecnick (100) | +19% | +166% | +6% (−2% size) | +11645% (+4% size) |
+| photo_wikipedia (49) | +24% | +132% | +12% (−3% size) | +10215% (+4% size) |
+| pngimg (187) | +23% | +226% | +11% (−4% size) | +4711% (+5% size) |
+| screenshot_game (618) | +27% | +195% | +11% (−6% size) | +4083% (+14% size) |
+| screenshot_web (14) | +25% | +147% | +34% (−11% size) | +3071% (+18% size) |
+| textures_photo (20) | +25% | +112% | +29% (−8% size) | +8103% (+15% size) |
+| textures_pk (1002) | +14% | +131% | +39% (−8% size) | +4235% (+5% size) |
+| textures_pk01 (113) | +24% | +181% | +9% (−3% size) | +6067% (+20% size) |
+| textures_pk02 (235) | +24% | +152% | +8% (−3% size) | +8427% (+28% size) |
+| textures_plants (60) | +23% | +210% | +19% (−3% size) | +6085% (+4% size) |
 
-| Category              | dec. vs image-png | dec. vs libpng | enc. vs fpnge   | enc. vs libpng     |
-| --------------------- | ----------------: | -------------: | --------------: | -----------------: |
-| icon_512 (214)        |              +12% |          +216% | +69% (−17% size) | +1537% (+32% size) |
-| icon_64 (214)         |               +4% |          +126% | +35% (−17% size) | +1099% (+15% size) |
-| photo_kodak (25)      |               +4% |          +114% | +26% (−3% size) |  +7685% (+8% size) |
-| photo_tecnick (101)   |               -7% |          +173% |  +9% (−2% size) |  +8301% (+3% size) |
-| photo_wikipedia (50)  |               -4% |          +118% |  +3% (−7% size) |  +5603% (+5% size) |
-| pngimg (189)          |               +8% |          +168% | +45% (−2% size) |  +3373% (+3% size) |
-| screenshot_game (619) |              +11% |          +161% | +32% (−5% size) | +3317% (+10% size) |
-| screenshot_web (15)   |              +92% |          +419% | +45% (−4% size) | +3016% (+10% size) |
-| textures_photo (21)   |               -3% |           +96% |  +4% (−0% size) | +5556% (+25% size) |
-| textures_pk (1004)    |               +3% |          +132% | -13% (−6% size) |  +2756% (+6% size) |
-| textures_pk01 (115)   |               +9% |          +156% | +14% (−6% size) | +3966% (+30% size) |
-| textures_pk02 (237)   |              +12% |          +132% | +16% (−3% size) | +7430% (+27% size) |
-| textures_plants (61)  |               +8% |          +148% | +54% (−6% size) |  +3577% (+1% size) |
+Measured at [dff711f](https://github.com/ufoym/vio/commit/dff711f) on the
+GitHub-hosted runners (one run; the runners' CPUs vary from run to run).
+fpnge has no Arm code; image-png's fast mode is its fpnge-inspired encoder.
 
 ### PNG optimization log
 
