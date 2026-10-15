@@ -245,6 +245,91 @@ inline void apply_filter_sse2(unsigned filter, std::uint8_t* out, const std::uin
 VIO_TARGET_POP()
 #endif
 
+#if VIO_SIMD_AVX2
+VIO_TARGET_PUSH_("avx2,bmi,bmi2")
+VIO_INLINE __m256i loadu_avx2(const std::uint8_t* p) {
+  return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
+}
+VIO_INLINE __m256i paeth_predict_avx2(__m256i a, __m256i b, __m256i c) {
+  auto absdiff = [](__m256i x, __m256i y) { return _mm256_or_si256(_mm256_subs_epu8(x, y), _mm256_subs_epu8(y, x)); };
+  auto le = [](__m256i x, __m256i y) { return _mm256_cmpeq_epi8(_mm256_min_epu8(x, y), x); };
+  __m256i pa = absdiff(b, c), pb = absdiff(a, c);
+  __m256i diff_sign = _mm256_xor_si256(le(c, a), le(c, b));  // a < c differs from b < c
+  __m256i pc = _mm256_blendv_epi8(_mm256_adds_epu8(pa, pb), absdiff(pa, pb), diff_sign);
+  __m256i use_a = _mm256_and_si256(le(pa, pb), le(pa, pc));
+  __m256i use_b = le(pb, pc);
+  return _mm256_blendv_epi8(_mm256_blendv_epi8(c, b, use_b), a, use_a);
+}
+VIO_INLINE __m256i avg_floor_avx2(__m256i a, __m256i b) {
+  return _mm256_sub_epi8(_mm256_avg_epu8(a, b), _mm256_and_si256(_mm256_xor_si256(a, b), _mm256_set1_epi8(1)));
+}
+VIO_INLINE __m256i abs_sum_avx2(__m256i r) {
+  return _mm256_sad_epu8(_mm256_min_epu8(r, _mm256_sub_epi8(_mm256_setzero_si256(), r)), _mm256_setzero_si256());
+}
+
+inline unsigned choose_filter_avx2(const std::uint8_t* cur, const std::uint8_t* up,
+                                   std::size_t n, unsigned bpp) {
+  __m256i acc[5];
+  for (auto& a : acc) a = _mm256_setzero_si256();
+  std::size_t i = 0;
+  for (; i + 32 <= n; i += 32) {
+    __m256i x = loadu_avx2(cur + i), a = loadu_avx2(cur + i - bpp), b = loadu_avx2(up + i),
+            c = loadu_avx2(up + i - bpp);
+    acc[0] = _mm256_add_epi64(acc[0], abs_sum_avx2(x));
+    acc[1] = _mm256_add_epi64(acc[1], abs_sum_avx2(_mm256_sub_epi8(x, a)));
+    acc[2] = _mm256_add_epi64(acc[2], abs_sum_avx2(_mm256_sub_epi8(x, b)));
+    acc[3] = _mm256_add_epi64(acc[3], abs_sum_avx2(_mm256_sub_epi8(x, avg_floor_avx2(a, b))));
+    acc[4] = _mm256_add_epi64(acc[4], abs_sum_avx2(_mm256_sub_epi8(x, paeth_predict_avx2(a, b, c))));
+  }
+  std::uint64_t cost[5];
+  for (int f = 0; f < 5; f++) {
+    alignas(32) std::uint64_t v[4];
+    _mm256_store_si256(reinterpret_cast<__m256i*>(v), acc[f]);
+    cost[f] = v[0] + v[1] + v[2] + v[3];
+  }
+  for (; i < n; i++) {
+    std::uint8_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp];
+    std::uint8_t r[5] = {x, static_cast<std::uint8_t>(x - a), static_cast<std::uint8_t>(x - b),
+                         static_cast<std::uint8_t>(x - ((a + b) >> 1)),
+                         static_cast<std::uint8_t>(x - paeth(a, b, c))};
+    for (int f = 0; f < 5; f++) cost[f] += r[f] < 128 ? r[f] : 256 - r[f];
+  }
+  unsigned best = 0;
+  for (unsigned f = 1; f < 5; f++)
+    if (cost[f] < cost[best]) best = f;
+  return best;
+}
+
+inline void apply_filter_avx2(unsigned filter, std::uint8_t* out, const std::uint8_t* cur,
+                              const std::uint8_t* up, std::size_t n, unsigned bpp) {
+  std::size_t i = 0;
+  auto store = [](std::uint8_t* p, __m256i v) { _mm256_storeu_si256(reinterpret_cast<__m256i*>(p), v); };
+  switch (filter) {
+    case kFilterNone:
+      std::memcpy(out, cur, n);
+      return;
+    case kFilterSub:
+      for (; i + 32 <= n; i += 32) store(out + i, _mm256_sub_epi8(loadu_avx2(cur + i), loadu_avx2(cur + i - bpp)));
+      break;
+    case kFilterUp:
+      for (; i + 32 <= n; i += 32) store(out + i, _mm256_sub_epi8(loadu_avx2(cur + i), loadu_avx2(up + i)));
+      break;
+    case kFilterAvg:
+      for (; i + 32 <= n; i += 32)
+        store(out + i, _mm256_sub_epi8(loadu_avx2(cur + i), avg_floor_avx2(loadu_avx2(cur + i - bpp), loadu_avx2(up + i))));
+      break;
+    case kFilterPaeth:
+      for (; i + 32 <= n; i += 32)
+        store(out + i, _mm256_sub_epi8(loadu_avx2(cur + i),
+                                       paeth_predict_avx2(loadu_avx2(cur + i - bpp), loadu_avx2(up + i),
+                                                          loadu_avx2(up + i - bpp))));
+      break;
+  }
+  apply_filter_scalar(filter, out + i, cur + i, up + i, n - i, bpp);
+}
+VIO_TARGET_POP()
+#endif
+
 inline unsigned choose_filter(const std::uint8_t* cur, const std::uint8_t* up, std::size_t n,
                               unsigned bpp) {
 #if VIO_SIMD_NEON_A64
@@ -940,6 +1025,14 @@ class FastEncoder {
   // Filters the row at cur (above it: up) into dst (filter type byte
   // first).
   void filter_row(std::uint8_t* dst, const std::uint8_t* cur, const std::uint8_t* up) {
+#if VIO_SIMD_AVX2
+    if (avx2_) {
+      unsigned f = filter_ ? choose_filter_avx2(cur, up, rb_, bpp_) : kFilterNone;
+      dst[0] = static_cast<std::uint8_t>(f);
+      apply_filter_avx2(f, dst + 1, cur, up, rb_, bpp_);
+      return;
+    }
+#endif
     unsigned f = filter_ ? choose_filter(cur, up, rb_, bpp_) : kFilterNone;
     dst[0] = static_cast<std::uint8_t>(f);
     apply_filter(f, dst + 1, cur, up, rb_, bpp_);
