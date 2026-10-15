@@ -1,0 +1,92 @@
+# On demand: PNG throughput of vio vs fpnge (encoding, x86 only), image-png
+# (decoding and its fast encoding mode) and libpng 1.6 with zlib, all built
+# on the runner, over the QOI benchmark corpus (tests/png-bench/).  Each run
+# uploads the per-file results and a summary.
+name: bench-png
+
+on:
+  workflow_dispatch:
+    inputs:
+      sample:
+        description: "Use 1 of every N corpus images"
+        default: "1"
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: bench-png · ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: linux-x64, os: ubuntu-24.04, fpnge: true}
+          - {name: linux-arm64, os: ubuntu-24.04-arm}
+          - {name: macos-arm64, os: macos-15}
+          - {name: macos-x64, os: macos-15-intel, fpnge: true}
+          - {name: windows-x64, os: windows-2025, fpnge: true}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Fetch sources and corpus
+        run: |
+          mkdir -p build/ref build/corpus
+          git clone -q https://github.com/madler/zlib.git build/ref/zlib
+          git -C build/ref/zlib checkout -q v1.3.2
+          if [ "${{ matrix.fpnge }}" = true ]; then
+            git clone -q https://github.com/veluca93/fpnge.git build/ref/fpnge
+            git -C build/ref/fpnge checkout -q 097ebccf3d3db443d9a8f238b1deed010a82f961 ||
+              echo "::warning::fpnge revision not found, using its default branch"
+          fi
+          curl -fsSL --retry 3 -o qoi.tar https://qoiformat.org/benchmark/qoi_benchmark_suite.tar
+          tar xf qoi.tar -C build/corpus && rm qoi.tar
+
+      - name: Build
+        run: |
+          args=(-DCMAKE_BUILD_TYPE=Release -DVIO_TEST_SCALAR=OFF
+                -DVIO_LIBPNG_SOURCE_DIR=$PWD/tests/libpng
+                -DVIO_ZLIB_SOURCE_DIR=$PWD/build/ref/zlib)
+          [ "${{ matrix.fpnge }}" = true ] && args+=(-DVIO_FPNGE_SOURCE_DIR=$PWD/build/ref/fpnge)
+          [ "$RUNNER_OS" = Windows ] && args+=(-G Ninja)
+          cmake -S . -B build/vio "${args[@]}"
+          cmake --build build/vio --parallel --target png-bench
+          cargo build --release --manifest-path tests/png-bench/image-png/Cargo.toml
+
+      - name: Benchmark
+        run: |
+          py=python3
+          [ "$RUNNER_OS" = Windows ] && py=python
+          exe=""
+          [ "$RUNNER_OS" = Windows ] && exe=.exe
+          fpnge=""
+          [ "${{ matrix.fpnge }}" = true ] && fpnge=--fpnge
+          mkdir -p results
+          $py tests/png-bench/png_bench.py run --corpus build/corpus \
+            --out results/png-${{ matrix.name }}.txt --sample ${{ inputs.sample }} --reps 3 \
+            --vio build/vio/png-bench$exe --libpng $fpnge \
+            --image-png tests/png-bench/image-png/target/release/png-bench-image-png$exe
+          { echo "### ${{ matrix.name }}"; echo '```';
+            $py tests/png-bench/png_bench.py report results/png-${{ matrix.name }}.txt --by-category;
+            echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+          uname -a > results/cpu-${{ matrix.name }}.txt || true
+          if [ "$RUNNER_OS" = Linux ]; then lscpu >> results/cpu-${{ matrix.name }}.txt; fi
+          if [ "$RUNNER_OS" = macOS ]; then sysctl -n machdep.cpu.brand_string >> results/cpu-${{ matrix.name }}.txt; fi
+          if [ "$RUNNER_OS" = Windows ]; then powershell -c "(Get-CimInstance Win32_Processor).Name" >> results/cpu-${{ matrix.name }}.txt; fi
+
+      - name: Upload results
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-png-${{ matrix.name }}
+          path: results/
