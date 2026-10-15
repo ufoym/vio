@@ -76,6 +76,8 @@ compiler.
 
 ## Performance
 
+### JPEG
+
 Throughput measured by `tjbench` on GitHub-hosted runners: vio, libjpeg-turbo
 3.2 (built from the test submodule) and IJG libjpeg 10 (driven through a thin
 TurboJPEG layer, `tests/libjpeg/`), all built on the same machine with the
@@ -221,7 +223,7 @@ the macOS x86-64 runner).  Shared CI
 runners are noisy (the macOS x86-64 runner most of all), so differences of a
 few percent are within run-to-run variation.
 
-### Optimization log
+### JPEG optimization log
 
 Throughput gain of each change over the build before it (A/B on the same machine).
 
@@ -246,6 +248,49 @@ Throughput gain of each change over the build before it (A/B on the same machine
 - Grayscale-to-RGB output as one 32-bit store per pixel on x86, where the byte-store loop stays scalar ([3317d93](https://github.com/ufoym/vio/commit/3317d93)): grayscale decompression +2–23% (x86).
 - Sequential Huffman decoding fast path compiled a second time for BMI2 (shlx/shrx in place of shifts by cl) and chosen at run time ([680f0d8](https://github.com/ufoym/vio/commit/680f0d8)): decompression +3–6% (Intel Xeon, AVX2).
 - 128-bit accurate IDCT kept in named vectors instead of an array MSVC left in memory ([1f83f2d](https://github.com/ufoym/vio/commit/1f83f2d)): SSE2 decompression +2% (MSVC).
+
+### PNG
+
+Single-threaded throughput on the 2848 images of the
+[QOI benchmark corpus](https://qoiformat.org/benchmark/) (icons, photos,
+textures, screenshots of games and web pages), the corpus image-png's own
+benchmark uses.  Each figure is the geometric mean, over the images, of
+megapixels per second, each image timed as the fastest of 3 runs.  Decoding
+produces the image's own sample layout (`png::Decoder`; image-png 0.18.1
+with `Transformations::IDENTITY`, built by `cargo --release`); checksums are
+verified, except Adler-32 by image-png, which skips it by default.  The
+benchmark is `tests/png-bench/` (`png_bench.py run`, then `report`).
+
+PNG decoding, vio vs image-png:
+
+| Platform       | CPU         | vio MP/s | image-png MP/s | vs image-png |
+| -------------- | ----------- | -------: | -------------: | -----------: |
+| macOS AArch64  | Apple M4    |      391 |            366 |          +7% |
+
+By image category (Apple M4; number of images in parentheses):
+
+| Category                  | vio MP/s | image-png MP/s | vs image-png |
+| ------------------------- | -------: | -------------: | -----------: |
+| icon_512 (214)            |      495 |            442 |         +12% |
+| icon_64 (214)             |      248 |            233 |          +7% |
+| photo_kodak (25)          |      188 |            184 |          +2% |
+| photo_tecnick (101)       |      232 |            253 |          -8% |
+| photo_wikipedia (50)      |      173 |            178 |          -3% |
+| pngimg (189)              |      352 |            329 |          +7% |
+| screenshot_game (619)     |      421 |            378 |         +11% |
+| screenshot_web (15)       |     1030 |            549 |         +88% |
+| textures_photo (21)       |      163 |            171 |          -5% |
+| textures_pk (1004)        |      555 |            538 |          +3% |
+| textures_pk01 (115)       |      243 |            223 |          +9% |
+| textures_pk02 (237)       |      210 |            187 |         +12% |
+| textures_plants (61)      |      276 |            254 |          +9% |
+
+### PNG optimization log
+
+Throughput gain of each change over the build before it (A/B on the same
+machine, geometric mean over the corpus or the stated subset).
+
+- Inflate into the image buffer with an 11-bit literal/length table whose entries hold two literals, three table lookups per bit-buffer refill and 16-byte match copies; rows reconstructed in place with NEON/SSE2 filters; CRC-32 by carry-less multiplication and SIMD Adler-32 ([4a01186](https://github.com/ufoym/vio/commit/4a01186)): decoding +170% (Apple M4, 1/8 of the corpus).
 
 ## Building and testing
 
@@ -293,8 +338,15 @@ include/vio/
 ├── core.hpp                          shared by all codecs: color spaces,
 │                                     vio::Error, row reader/writer interfaces
 ├── bmp.hpp gif.hpp ppm.hpp targa.hpp one file per format; needs only core.hpp
-├── png.hpp                           own DEFLATE (zlib-identical output) and
-│                                     checksums
+├── png.hpp                           includes the png/ codec; Reader, Writer
+├── png/
+│   ├── decoder.hpp encoder.hpp       whole-image codec
+│   ├── inflate.hpp                   DEFLATE decompression
+│   ├── deflate.hpp                   DEFLATE compression, zlib-identical
+│   │                                 output
+│   ├── filter.hpp                    scanline filters (scalar, NEON, SSE2)
+│   └── checksum.hpp                  CRC-32, Adler-32 (PCLMUL/PMULL folding,
+│                                     Arm CRC32, SSSE3/NEON sums)
 ├── jpeg.hpp                          includes the jpeg/ public API
 └── jpeg/
     ├── decoder.hpp encoder.hpp       public API
@@ -320,7 +372,9 @@ tests/                                conformance suite: test definitions,
                                       test programs and images (submodule),
                                       command-line tools the tests run
                                       (tools/: jpeg-encode, jpeg-decode,
-                                      jpeg-transform, jpeg-example)
+                                      jpeg-transform, jpeg-example);
+                                      png-bench/: PNG benchmark (vio, and
+                                      image-png and fpnge for comparison)
 ```
 
 ## License
