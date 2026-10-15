@@ -368,6 +368,7 @@ machine, geometric mean over the corpus or the stated subset).
 - Single-pass encoder: filters chosen by the smallest sum of absolute residuals, one Huffman code per image from sampled rows, runs of zero residuals as distance-1 matches, structured literal codes coded 32 at a time with AVX2 ([80db3a4](https://github.com/ufoym/vio/commit/80db3a4)): encoding +4100% over the zlib-level-6 encoder (Apple M4), files 5% larger.
 - Literal-table lookups chained through the already shifted bit buffer (one shift, mask and load per lookup) ([ed781ce](https://github.com/ufoym/vio/commit/ed781ce)): decoding +5.5% (Apple M4, 1/8 of the corpus).
 - Huffman statistics of small images from about 32 KiB of their rows; four literal codes per bit-buffer write in the scalar coder ([20ddc88](https://github.com/ufoym/vio/commit/20ddc88)): encoding +11% (Apple M4, 1/8 of the corpus), +24% on 256×256 textures.
+- AVX2 filter selection and filtering, 32 bytes per step ([78b6799](https://github.com/ufoym/vio/commit/78b6799)): encoding +25% (Core Ultra 9 285K, clang-cl, 1/8 of the corpus).
 
 ## Building and testing
 
