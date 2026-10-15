@@ -37,6 +37,25 @@ namespace vio::png::detail {
 // Filters and filter selection
 // ---------------------------------------------------------------------------
 
+inline unsigned ctz32(std::uint32_t v) {
+#if defined(_MSC_VER) && !defined(__clang__)
+  unsigned long r;
+  _BitScanForward(&r, v);
+  return static_cast<unsigned>(r);
+#else
+  return static_cast<unsigned>(__builtin_ctz(v));
+#endif
+}
+inline unsigned clz32(std::uint32_t v) {
+#if defined(_MSC_VER) && !defined(__clang__)
+  unsigned long r;
+  _BitScanReverse(&r, v);
+  return 31 - static_cast<unsigned>(r);
+#else
+  return static_cast<unsigned>(__builtin_clz(v));
+#endif
+}
+
 // Rows are kept with kRowPad zero bytes before their first sample, so that
 // the left neighbors of the first pixel read as zero.
 inline constexpr std::size_t kRowPad = 16;
@@ -351,6 +370,60 @@ inline void apply_filter(unsigned filter, std::uint8_t* out, const std::uint8_t*
 #endif
 }
 
+// Filters the padded row at cur (above it: up) into dst, the filter type
+// byte first: the one allowed filter, or the best of those allowed.
+inline void filter_row(std::uint8_t* dst, const std::uint8_t* cur, const std::uint8_t* up,
+                       std::size_t n, unsigned bpp, unsigned allowed, [[maybe_unused]] bool avx2) {
+  const bool choose = (allowed & (allowed - 1)) != 0;  // more than one allowed
+  const unsigned only = choose ? 0 : ctz32(allowed);
+#if VIO_SIMD_AVX2
+  if (avx2) {
+    unsigned f = choose ? choose_filter_avx2(cur, up, n, bpp, allowed) : only;
+    dst[0] = static_cast<std::uint8_t>(f);
+    apply_filter_avx2(f, dst + 1, cur, up, n, bpp);
+    return;
+  }
+#endif
+  unsigned f = choose ? choose_filter(cur, up, n, bpp, allowed) : only;
+  dst[0] = static_cast<std::uint8_t>(f);
+  apply_filter(f, dst + 1, cur, up, n, bpp);
+}
+
+// Consecutive rows of up to max_row_bytes bytes filtered one by one: load a
+// row into row(), then filter() writes its filter type byte and residuals
+// and keeps it as the row above the next one.
+class RowFilter {
+ public:
+  void start(std::size_t max_row_bytes, unsigned bpp, unsigned filters) {
+    bpp_ = bpp;
+    allowed_ = filters ? filters : 1;
+#if VIO_SIMD_AVX2
+    avx2_ = (jpeg::simd::cpu_flags() & (jpeg::simd::kAVX2 | jpeg::simd::kBMI2)) ==
+            (jpeg::simd::kAVX2 | jpeg::simd::kBMI2);
+#endif
+    stride_ = kRowPad + ((max_row_bytes + 15) & ~std::size_t(15)) + 16;
+    rows_.assign(2 * stride_, 0);
+    cur_ = 0;
+  }
+  // Starts a new sequence of rows (the first row's "above" is zeros).
+  void restart() {
+    std::memset(rows_.data(), 0, rows_.size());
+    cur_ = 0;
+  }
+  std::uint8_t* row() { return rows_.data() + kRowPad + cur_ * stride_; }
+  void filter(std::uint8_t* dst, std::size_t n) {
+    const std::uint8_t* up = rows_.data() + kRowPad + (cur_ ^ 1) * stride_;
+    filter_row(dst, row(), up, n, bpp_, allowed_, avx2_);
+    cur_ ^= 1;
+  }
+
+ private:
+  std::vector<std::uint8_t> rows_;
+  std::size_t stride_ = 0, cur_ = 0;
+  unsigned bpp_ = 1, allowed_ = 1;
+  bool avx2_ = false;
+};
+
 // ---------------------------------------------------------------------------
 // Huffman codes
 // ---------------------------------------------------------------------------
@@ -554,24 +627,6 @@ std::size_t for_run_matches(std::size_t m, Fn&& fn) {
   return m;
 }
 
-inline unsigned ctz32(std::uint32_t v) {
-#if defined(_MSC_VER) && !defined(__clang__)
-  unsigned long r;
-  _BitScanForward(&r, v);
-  return static_cast<unsigned>(r);
-#else
-  return static_cast<unsigned>(__builtin_ctz(v));
-#endif
-}
-inline unsigned clz32(std::uint32_t v) {
-#if defined(_MSC_VER) && !defined(__clang__)
-  unsigned long r;
-  _BitScanReverse(&r, v);
-  return 31 - static_cast<unsigned>(r);
-#else
-  return static_cast<unsigned>(__builtin_clz(v));
-#endif
-}
 inline unsigned ctz64(std::uint64_t v) {
 #if defined(_MSC_VER) && !defined(__clang__)
   unsigned long r;
@@ -1104,22 +1159,8 @@ class FastEncoder {
     return encode_bytes_scalar(w, t_, p, n, run);
   }
 
-  // Filters the row at cur (above it: up) into dst (filter type byte
-  // first).
   void filter_row(std::uint8_t* dst, const std::uint8_t* cur, const std::uint8_t* up) {
-    const bool choose = (allowed_ & (allowed_ - 1)) != 0;  // more than one allowed
-    const unsigned only = choose ? 0 : ctz32(allowed_);
-#if VIO_SIMD_AVX2
-    if (avx2_) {
-      unsigned f = choose ? choose_filter_avx2(cur, up, rb_, bpp_, allowed_) : only;
-      dst[0] = static_cast<std::uint8_t>(f);
-      apply_filter_avx2(f, dst + 1, cur, up, rb_, bpp_);
-      return;
-    }
-#endif
-    unsigned f = choose ? choose_filter(cur, up, rb_, bpp_, allowed_) : only;
-    dst[0] = static_cast<std::uint8_t>(f);
-    apply_filter(f, dst + 1, cur, up, rb_, bpp_);
+    detail::filter_row(dst, cur, up, rb_, bpp_, allowed_, avx2_);
   }
 
   void write_headers(BitWriter& w) {
@@ -1202,9 +1243,7 @@ class FastEncoder {
   std::size_t rb_ = 0;
   unsigned bpp_ = 1;
   unsigned allowed_ = 0x1f;
-#if VIO_SIMD_AVX2
   bool avx2_ = false;
-#endif
   std::vector<std::uint8_t> rows_, filtered_;
   CodeTables t_;
 };

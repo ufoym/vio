@@ -641,18 +641,19 @@ class Encoder {
         }
       } while (d.avail_out == 0 || (flush == zlib::kFinish && ret != zlib::kStreamEnd));
     };
-    std::vector<std::uint8_t> prev, cur, filtered;
+    std::size_t max_rb = 0;
+    for (auto& seg : segs) max_rb = std::max(max_rb, seg.row_bytes);
+    detail::RowFilter rf;
+    rf.start(max_rb, bpp_, filters_);
+    std::vector<std::uint8_t> filtered(max_rb + 1);
     for (auto& seg : segs) {
-      prev.assign(seg.row_bytes, 0);
-      cur.resize(seg.row_bytes);
-      filtered.resize(seg.row_bytes + 1);
+      rf.restart();
       for (std::uint32_t y = 0; y < seg.rows; y++) {
-        seg.load(y, cur.data());
-        filter_scanline(filtered.data(), prev.data(), cur.data(), seg.row_bytes);
+        seg.load(y, rf.row());
+        rf.filter(filtered.data(), seg.row_bytes);
         d.next_in = filtered.data();
-        d.avail_in = static_cast<unsigned>(filtered.size());
+        d.avail_in = static_cast<unsigned>(seg.row_bytes + 1);
         drain(zlib::kNoFlush);
-        std::swap(prev, cur);
       }
     }
     d.next_in = nullptr;
@@ -675,8 +676,7 @@ class Encoder {
   // IDAT chunks as the deflater fills its output.
   void start_row_stream() {
     deflater_ = make_deflater();
-    scanline_.assign(row_bytes_, 0);
-    prev_.assign(row_bytes_, 0);
+    row_filter_.start(row_bytes_, bpp_, filters_);
     filtered_.assign(row_bytes_ + 1, 0);
     zbuf_.resize(options.idat_size ? options.idat_size : 8192);
     deflater_->next_out = zbuf_.data();
@@ -690,8 +690,8 @@ class Encoder {
     deflater_->avail_out = static_cast<unsigned>(zbuf_.size());
   }
   void stream_row(const std::uint8_t* row) {
-    load_row(scanline_.data(), row, row_bytes_, header.bit_depth == 16);
-    filter_scanline(filtered_.data(), prev_.data(), scanline_.data(), row_bytes_);
+    load_row(row_filter_.row(), row, row_bytes_, header.bit_depth == 16);
+    row_filter_.filter(filtered_.data(), row_bytes_);
     auto& z = *deflater_;
     z.next_in = filtered_.data();
     z.avail_in = static_cast<unsigned>(row_bytes_ + 1);
@@ -699,7 +699,6 @@ class Encoder {
       if (z.deflate(zlib::kNoFlush) != zlib::kOk) fail("zlib error");
       if (z.avail_out == 0) flush_zbuf();
     } while (z.avail_in);
-    std::swap(prev_, scanline_);
   }
   void finish_row_stream() {
     auto& z = *deflater_;
@@ -713,52 +712,11 @@ class Encoder {
     streaming_ = false;
   }
 
-  // Filters one scanline (prev = the unfiltered row above, zeros for the
-  // first) into out[0] = filter type, out[1..] = residuals.  With several
-  // filters allowed, picks the one with the smallest sum of absolute
-  // residuals.
-  void filter_scanline(std::uint8_t* out, const std::uint8_t* prev, const std::uint8_t* cur,
-                       std::size_t n) const {
-    unsigned f = 0;
-    if ((filters_ & (filters_ - 1)) == 0) {
-      f = detail::ctz32(filters_);
-    } else if (n <= INT32_MAX / 128) {
-      std::int32_t best_score = INT32_MAX;
-      for (unsigned t = 0; t < 5; t++) {
-        if (!((filters_ >> t) & 1)) continue;
-        std::int32_t sum = 0;
-        for (std::size_t i = 0; i < n; i++) {
-          std::uint8_t x = residual(t, prev, cur, i);
-          sum += 128 - std::abs(static_cast<int>(x) - 128);
-        }
-        std::int32_t score = std::abs(sum);
-        if (score < best_score) {
-          best_score = score;
-          f = t;
-        }
-      }
-    }
-    out[0] = static_cast<std::uint8_t>(f);
-    for (std::size_t i = 0; i < n; i++) out[1 + i] = residual(f, prev, cur, i);
-  }
-
-  std::uint8_t residual(unsigned f, const std::uint8_t* prev, const std::uint8_t* cur,
-                        std::size_t i) const {
-    std::uint8_t a = i >= bpp_ ? cur[i - bpp_] : 0, b = prev[i], c = i >= bpp_ ? prev[i - bpp_] : 0,
-                 x = cur[i];
-    switch (f) {
-      case 1: return static_cast<std::uint8_t>(x - a);
-      case 2: return static_cast<std::uint8_t>(x - b);
-      case 3: return static_cast<std::uint8_t>(x - (a + b) / 2);
-      case 4: return static_cast<std::uint8_t>(x - detail::paeth(a, b, c));
-      default: return x;
-    }
-  }
-
   detail::ByteBuffer out_;
   std::unique_ptr<std::uint8_t[]> image_;  // rows kept by write_row()
   std::unique_ptr<zlib::Deflater> deflater_;
-  std::vector<std::uint8_t> scanline_, prev_, filtered_, zbuf_, row_tmp_;
+  detail::RowFilter row_filter_;
+  std::vector<std::uint8_t> filtered_, zbuf_, row_tmp_;
   std::size_t row_bytes_ = 0;
   unsigned bpp_ = 1, filters_ = kFilterBitsAll;
   std::uint32_t rows_done_ = 0, seq_ = 0;
