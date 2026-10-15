@@ -508,10 +508,12 @@ class Inflater {
         // refill.  The lookups for the second and third are made before it
         // is known whether the first ones are literals.
         if (e & kEntLiteral) {
-          const unsigned s1 = e & 63;
-          const std::uint32_t e2 = lit[(bitbuf >> s1) & kLitMask];
-          const unsigned s2 = s1 + (e2 & 63);
-          const std::uint32_t e3 = lit[(bitbuf >> s2) & kLitMask];
+          // Each lookup shifts the bits left by the one before it, keeping
+          // the dependency chain to a shift, a mask and a load.
+          const std::uint64_t b1 = bitbuf >> (e & 63);
+          const std::uint32_t e2 = lit[b1 & kLitMask];
+          const std::uint64_t b2 = b1 >> (e2 & 63);
+          const std::uint32_t e3 = lit[b2 & kLitMask];
           out[0] = static_cast<std::uint8_t>(e >> 16);
           out[1] = static_cast<std::uint8_t>(e >> 24);
           out += 1 + ((e >> 14) & 1);
@@ -520,23 +522,23 @@ class Inflater {
             out[1] = static_cast<std::uint8_t>(e2 >> 24);
             out += 1 + ((e2 >> 14) & 1);
             if (e3 & kEntLiteral) {
-              const unsigned s3 = s2 + (e3 & 63);
-              const std::uint32_t e4 = lit[(bitbuf >> s3) & kLitMask];
+              const std::uint64_t b3 = b2 >> (e3 & 63);
+              const std::uint32_t e4 = lit[b3 & kLitMask];
               out[0] = static_cast<std::uint8_t>(e3 >> 16);
               out[1] = static_cast<std::uint8_t>(e3 >> 24);
               out += 1 + ((e3 >> 14) & 1);
-              bitbuf >>= s3;
-              bitcnt -= s3;
+              bitbuf = b3;
+              bitcnt -= (e & 63) + (e2 & 63) + (e3 & 63);
               refill();
               e = e4;
               continue;
             }
-            bitbuf >>= s2;
-            bitcnt -= s2;
+            bitbuf = b2;
+            bitcnt -= (e & 63) + (e2 & 63);
             e = e3;
           } else {
-            bitbuf >>= s1;
-            bitcnt -= s1;
+            bitbuf = b1;
+            bitcnt -= e & 63;
             e = e2;
           }
           refill();
