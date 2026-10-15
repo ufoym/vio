@@ -398,6 +398,16 @@ class Inflater {
       bitcnt_ += 8;
     }
   }
+  // refill_slow(), eight bytes at once while the input allows.
+  void refill() {
+    if (in_end_ - in_ >= 8 && in_ <= in_end_) {
+      bitbuf_ |= detail::load_le64(in_) << bitcnt_;
+      in_ += (63 - bitcnt_) >> 3;
+      bitcnt_ |= 56;
+    } else {
+      refill_slow();
+    }
+  }
   void check_overrun() {
     std::size_t past = static_cast<std::size_t>(in_ > in_end_ ? in_ - in_end_ : 0);
     if (past * 8 > static_cast<std::size_t>(bitcnt_)) fail("unexpected end of stream");
@@ -438,12 +448,12 @@ class Inflater {
   void dynamic() {
     static constexpr std::uint8_t order[19] = {16, 17, 18, 0, 8,  7, 9,  6, 10, 5,
                                                11, 4,  12, 3, 13, 2, 14, 1, 15};
-    refill_slow();
+    refill();
     unsigned nlen = bits(5) + 257, ndist = bits(5) + 1, ncode = bits(4) + 4;
     if (nlen > 286 || ndist > 30) fail("too many length or distance symbols");
     std::uint8_t lengths[320] = {};
     for (unsigned i = 0; i < ncode; i++) {
-      if (bitcnt_ < 3) refill_slow();
+      if (bitcnt_ < 3) refill();
       lengths[order[i]] = static_cast<std::uint8_t>(bits(3));
     }
     std::uint32_t cl[1 << detail::kCodeLenBits];
@@ -452,7 +462,7 @@ class Inflater {
     unsigned idx = 0;
     std::memset(lengths, 0, sizeof(lengths));
     while (idx < nlen + ndist) {
-      if (bitcnt_ < 14) refill_slow();
+      if (bitcnt_ < 14) refill();
       std::uint32_t e = cl[bitbuf_ & ((1u << detail::kCodeLenBits) - 1)];
       if (e & detail::kEntExceptional) fail("invalid code lengths set");
       bits(static_cast<int>(e & 63));
