@@ -145,6 +145,62 @@ inline std::int32_t read_i32(const std::uint8_t* p) {
 
 }  // namespace detail
 
+namespace detail {
+
+// An image buffer.  The last one released on a thread is kept for the next
+// image decoded there: freeing and allocating megabytes per image costs a
+// page fault per 4 KiB page on systems whose allocator returns large blocks
+// to the OS (Windows, glibc's mmap threshold).
+class ImageBuffer {
+ public:
+  ImageBuffer() = default;
+  ImageBuffer(const ImageBuffer&) = delete;
+  ImageBuffer& operator=(const ImageBuffer&) = delete;
+  ~ImageBuffer() { release(); }
+
+  // Room for n bytes (contents undefined).
+  void allocate(std::size_t n) {
+    if (data_ && cap_ >= n) return;
+    release();
+    Cache& c = cache();
+    if (c.data && c.cap >= n && c.cap / 4 <= n) {
+      data_ = std::move(c.data);
+      cap_ = c.cap;
+      c.cap = 0;
+      return;
+    }
+    data_.reset(new std::uint8_t[n]);
+    cap_ = n;
+  }
+  void release() {
+    if (!data_) return;
+    Cache& c = cache();
+    if (cap_ <= kMaxCached && (!c.data || c.cap < cap_)) {
+      c.data = std::move(data_);
+      c.cap = cap_;
+    }
+    data_.reset();
+    cap_ = 0;
+  }
+  std::uint8_t* get() const { return data_.get(); }
+  std::uint8_t& operator[](std::size_t i) const { return data_[i]; }
+
+ private:
+  static constexpr std::size_t kMaxCached = std::size_t(64) << 20;
+  struct Cache {
+    std::unique_ptr<std::uint8_t[]> data;
+    std::size_t cap = 0;
+  };
+  static Cache& cache() {
+    thread_local Cache c;
+    return c;
+  }
+  std::unique_ptr<std::uint8_t[]> data_;
+  std::size_t cap_ = 0;
+};
+
+}  // namespace detail
+
 class StreamDecoder;
 class FormatReader;
 
@@ -211,7 +267,7 @@ class Decoder {
     if (i >= info.frames.size()) fail("no such frame");
     Frame f;
     f.control = info.frames[i];
-    std::unique_ptr<std::uint8_t[]> buf;
+    detail::ImageBuffer buf;
     if (i == 0 && info.default_image_is_frame) {
       f.row_bytes = row_bytes_;
       f.pixels.assign(pixels_.get(), pixels_.get() + row_bytes_ * header.height);
@@ -928,7 +984,7 @@ class Decoder {
 
   // Decodes an image (or APNG frame) of w x h pixels from its zlib stream.
   void decode_image(std::span<const std::uint8_t> idat, std::uint32_t width, std::uint32_t height,
-                    std::unique_ptr<std::uint8_t[]>& pixels, std::size_t& row_bytes) {
+                    detail::ImageBuffer& pixels, std::size_t& row_bytes) {
     using namespace detail;
     const Header& h = header;
     const int ch = num_channels(h.color_type);
@@ -941,7 +997,7 @@ class Decoder {
     constexpr std::size_t kSlack = 16;
     if (!h.interlace) {
       const std::size_t expected = static_cast<std::size_t>(height) * (rb + 1);
-      pixels.reset(new std::uint8_t[expected + kSlack]);
+      pixels.allocate(expected + kSlack);
       inflate(idat, pixels.get(), expected);
       unfilter_rows(pixels.get(), rb, height, bpp);
       if (h.bit_depth == 16) swap16(pixels.get(), rb * height);
@@ -971,7 +1027,8 @@ class Decoder {
     }
     std::unique_ptr<std::uint8_t[]> raw(new std::uint8_t[expected + kSlack]);
     inflate(idat, raw.get(), expected);
-    pixels.reset(new std::uint8_t[rb * height + kSlack]());
+    pixels.allocate(rb * height + kSlack);
+    std::memset(pixels.get(), 0, rb * height + kSlack);
     for (const Pass& ps : passes) {
       if (!ps.w || !ps.h) continue;
       std::uint8_t* base = raw.get() + ps.offset;
@@ -1082,7 +1139,7 @@ class Decoder {
   std::vector<std::vector<std::span<const std::uint8_t>>> frame_data_;
   std::vector<std::vector<std::uint8_t>> joined_;
   std::size_t row_bytes_ = 0;
-  std::unique_ptr<std::uint8_t[]> pixels_;
+  detail::ImageBuffer pixels_;
 };
 
 }  // namespace vio::png

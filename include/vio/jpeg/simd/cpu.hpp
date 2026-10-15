@@ -22,6 +22,11 @@
 #include <intrin.h>
 #include <immintrin.h>
 #else
+#if defined(_MSC_VER)
+// clang-cl: <intrin.h> declares a function __cpuid that <cpuid.h> defines
+// as a macro; included first, later inclusions do not trip on the macro.
+#include <intrin.h>
+#endif
 #include <cpuid.h>
 #endif
 #endif

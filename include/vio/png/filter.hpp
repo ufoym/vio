@@ -14,12 +14,13 @@
 #include <cstring>
 
 #include "../jpeg/config.hpp"
+#include "../jpeg/simd/cpu.hpp"
 
 #if VIO_SIMD_NEON
 #include <arm_neon.h>
 #endif
 #if VIO_SIMD_X86
-#include <emmintrin.h>
+#include <immintrin.h>
 #endif
 
 namespace vio::png::detail {
@@ -145,16 +146,90 @@ inline void unfilter_row_neon(unsigned filter, std::uint8_t* dst, const std::uin
 #endif
 
 #if VIO_SIMD_X86
+// Pixels of 3 or 4 bytes go through 4-byte loads (one byte too many is
+// stored for 3: the next pixel's source byte it overwrites, when unfiltering
+// in place, was read already), pixels of 6 or 8 bytes through 8-byte loads
+// and stores of exactly the pixel.
+//
+// Paeth works on 16-bit lanes: with x = a - c and e = b - c (e and
+// pa = |e| computed off the critical path), pb = |x| and pc = |x + e|, so
+// the chain from one pixel to the next is a subtraction, two absolute
+// values, an addition, a minimum, a comparison and two selections.
 VIO_TARGET_PUSH_SSE2()
-VIO_INLINE __m128i load_px_sse2(const std::uint8_t* p) {
-  std::int32_t v;
-  std::memcpy(&v, p, 4);
-  return _mm_cvtsi32_si128(v);
+template <unsigned W>
+struct PxSse2;
+template <>
+struct PxSse2<4> {
+  VIO_INLINE static __m128i load(const std::uint8_t* p) {
+    std::int32_t v;
+    std::memcpy(&v, p, 4);
+    return _mm_cvtsi32_si128(v);
+  }
+  VIO_INLINE static void store(std::uint8_t* p, __m128i v, unsigned) {
+    const std::int32_t w = _mm_cvtsi128_si32(v);
+    std::memcpy(p, &w, 4);
+  }
+};
+template <>
+struct PxSse2<8> {
+  VIO_INLINE static __m128i load(const std::uint8_t* p) { return _mm_loadl_epi64(reinterpret_cast<const __m128i*>(p)); }
+  VIO_INLINE static void store(std::uint8_t* p, __m128i v, unsigned bpp) {
+    if (bpp == 8) {
+      _mm_storel_epi64(reinterpret_cast<__m128i*>(p), v);
+    } else {
+      const std::int32_t lo = _mm_cvtsi128_si32(v);
+      const std::int16_t hi = static_cast<std::int16_t>(_mm_extract_epi16(v, 2));
+      std::memcpy(p, &lo, 4);
+      std::memcpy(p + 4, &hi, 2);
+    }
+  }
+};
+VIO_TARGET_POP()
+
+// The loop, for SSE2 and for SSE4.1 (pabsw, pblendvb); each copy is
+// compiled for its instruction set.
+#define VIO_PNG_PAETH16(NAME, ABS, SELECT)                                                          \
+  template <unsigned W>                                                                           \
+  inline void NAME(std::uint8_t* dst, const std::uint8_t* src, const std::uint8_t* prev,          \
+                   std::size_t n, unsigned bpp) {                                                 \
+    using P = PxSse2<W>;                                                                          \
+    const __m128i z = _mm_setzero_si128(), lo = _mm_set1_epi16(0xff);                             \
+    __m128i a = z, c = z;                                                                         \
+    for (std::size_t i = 0; i < n; i += bpp) {                                                    \
+      const __m128i b = _mm_unpacklo_epi8(P::load(prev + i), z),                                  \
+                    s = _mm_unpacklo_epi8(P::load(src + i), z);                                   \
+      const __m128i e = _mm_sub_epi16(b, c), x = _mm_sub_epi16(a, c), y = _mm_add_epi16(x, e);    \
+      const __m128i pa = ABS(e), pb = ABS(x), pc = ABS(y);                                        \
+      const __m128i use_c = _mm_cmpgt_epi16(pb, pc);                                              \
+      const __m128i not_a = _mm_cmpgt_epi16(pa, _mm_min_epi16(pb, pc));                           \
+      const __m128i pred = SELECT(not_a, SELECT(use_c, c, b), a);                                 \
+      a = _mm_and_si128(_mm_add_epi16(pred, s), lo);                                              \
+      c = b;                                                                                      \
+      P::store(dst + i, _mm_packus_epi16(a, a), bpp);                                             \
+    }                                                                                             \
+  }
+
+VIO_TARGET_PUSH_SSE2()
+VIO_INLINE __m128i abs16_sse2(__m128i x) { return _mm_max_epi16(x, _mm_sub_epi16(_mm_setzero_si128(), x)); }
+VIO_INLINE __m128i select16_sse2(__m128i m, __m128i x, __m128i y) {
+  return _mm_or_si128(_mm_and_si128(m, x), _mm_andnot_si128(m, y));
 }
-VIO_INLINE void store_px_sse2(std::uint8_t* p, __m128i v) {
-  std::int32_t w = _mm_cvtsi128_si32(v);
-  std::memcpy(p, &w, 4);
+VIO_PNG_PAETH16(paeth_rows_sse2, abs16_sse2, select16_sse2)
+VIO_TARGET_POP()
+
+VIO_TARGET_PUSH_("sse4.1")
+VIO_INLINE __m128i select16_sse41(__m128i m, __m128i x, __m128i y) { return _mm_blendv_epi8(y, x, m); }
+VIO_PNG_PAETH16(paeth_rows_sse41_, _mm_abs_epi16, select16_sse41)
+inline void paeth_rows_sse41(std::uint8_t* dst, const std::uint8_t* src, const std::uint8_t* prev, std::size_t n,
+                             unsigned bpp) {
+  if (bpp <= 4) paeth_rows_sse41_<4>(dst, src, prev, n, bpp);
+  else paeth_rows_sse41_<8>(dst, src, prev, n, bpp);
 }
+VIO_TARGET_POP()
+#undef VIO_PNG_PAETH16
+
+VIO_TARGET_PUSH_SSE2()
+// 8-bit helpers (also used by the encoder's filters).
 VIO_INLINE __m128i absdiff_sse2(__m128i x, __m128i y) {
   return _mm_or_si128(_mm_subs_epu8(x, y), _mm_subs_epu8(y, x));
 }
@@ -163,15 +238,52 @@ VIO_INLINE __m128i le_sse2(__m128i x, __m128i y) { return _mm_cmpeq_epi8(_mm_min
 VIO_INLINE __m128i select_sse2(__m128i m, __m128i x, __m128i y) {
   return _mm_or_si128(_mm_and_si128(m, x), _mm_andnot_si128(m, y));
 }
-VIO_INLINE __m128i paeth_sse2(__m128i a, __m128i b, __m128i c) {
-  __m128i pa = absdiff_sse2(b, c), pb = absdiff_sse2(a, c);
-  // a < c differs from b < c
-  __m128i a_lt = _mm_andnot_si128(le_sse2(c, a), _mm_set1_epi8(-1));
-  __m128i b_lt = _mm_andnot_si128(le_sse2(c, b), _mm_set1_epi8(-1));
-  __m128i pc = select_sse2(_mm_xor_si128(a_lt, b_lt), absdiff_sse2(pa, pb), _mm_adds_epu8(pa, pb));
-  __m128i use_a = _mm_and_si128(le_sse2(pa, pb), le_sse2(pa, pc));
-  __m128i use_b = le_sse2(pb, pc);
-  return select_sse2(use_a, a, select_sse2(use_b, b, c));
+
+template <unsigned W>
+VIO_INLINE void unfilter_px_sse2(unsigned filter, std::uint8_t* dst, const std::uint8_t* src,
+                                 const std::uint8_t* prev, std::size_t n, unsigned bpp) {
+  using P = PxSse2<W>;
+  __m128i a = _mm_setzero_si128();
+  switch (filter) {
+    case kFilterSub:
+      for (std::size_t i = 0; i < n; i += bpp) {
+        a = _mm_add_epi8(P::load(src + i), a);
+        P::store(dst + i, a, bpp);
+      }
+      break;
+    case kFilterAvg: {
+      const __m128i one = _mm_set1_epi8(1);
+      if (!prev) {
+        for (std::size_t i = 0; i < n; i += bpp) {
+          // (a >> 1) per byte
+          const __m128i half = _mm_and_si128(_mm_srli_epi16(a, 1), _mm_set1_epi8(0x7f));
+          a = _mm_add_epi8(P::load(src + i), half);
+          P::store(dst + i, a, bpp);
+        }
+      } else {
+        for (std::size_t i = 0; i < n; i += bpp) {
+          const __m128i b = P::load(prev + i);
+          // floor((a + b) / 2) = rounded average minus the dropped low bit
+          const __m128i avg = _mm_sub_epi8(_mm_avg_epu8(a, b), _mm_and_si128(_mm_xor_si128(a, b), one));
+          a = _mm_add_epi8(P::load(src + i), avg);
+          P::store(dst + i, a, bpp);
+        }
+      }
+      break;
+    }
+    case kFilterPaeth:
+      if (!prev) {  // b = c = 0: the prediction is a
+        for (std::size_t i = 0; i < n; i += bpp) {
+          a = _mm_add_epi8(P::load(src + i), a);
+          P::store(dst + i, a, bpp);
+        }
+      } else {
+        static const bool sse41 = (jpeg::simd::cpu_flags() & jpeg::simd::kSSE41) != 0;
+        if (sse41) paeth_rows_sse41(dst, src, prev, n, bpp);
+        else paeth_rows_sse2<W>(dst, src, prev, n, bpp);
+      }
+      break;
+  }
 }
 
 inline void unfilter_row_sse2(unsigned filter, std::uint8_t* dst, const std::uint8_t* src,
@@ -185,54 +297,13 @@ inline void unfilter_row_sse2(unsigned filter, std::uint8_t* dst, const std::uin
     for (; i < n; i++) dst[i] = static_cast<std::uint8_t>(src[i] + prev[i]);
     return;
   }
-  if ((bpp != 3 && bpp != 4) || filter == kFilterNone || filter == kFilterUp) {
+  if (filter == kFilterNone || filter == kFilterUp || bpp < 3 || bpp == 5 || bpp == 7 || bpp > 8) {
     unfilter_row_scalar(filter, dst, src, prev, n, bpp);
     return;
   }
-  __m128i a = _mm_setzero_si128(), c = a;
-  switch (filter) {
-    case kFilterSub:
-      for (std::size_t i = 0; i < n; i += bpp) {
-        a = _mm_add_epi8(load_px_sse2(src + i), a);
-        store_px_sse2(dst + i, a);
-      }
-      break;
-    case kFilterAvg: {
-      const __m128i one = _mm_set1_epi8(1);
-      if (!prev) {
-        for (std::size_t i = 0; i < n; i += bpp) {
-          // (a >> 1) per byte
-          __m128i half = _mm_and_si128(_mm_srli_epi16(a, 1), _mm_set1_epi8(0x7f));
-          a = _mm_add_epi8(load_px_sse2(src + i), half);
-          store_px_sse2(dst + i, a);
-        }
-      } else {
-        for (std::size_t i = 0; i < n; i += bpp) {
-          __m128i b = load_px_sse2(prev + i);
-          // floor((a + b) / 2) = rounded average minus the dropped low bit
-          __m128i avg = _mm_sub_epi8(_mm_avg_epu8(a, b), _mm_and_si128(_mm_xor_si128(a, b), one));
-          a = _mm_add_epi8(load_px_sse2(src + i), avg);
-          store_px_sse2(dst + i, a);
-        }
-      }
-      break;
-    }
-    case kFilterPaeth:
-      if (!prev) {
-        for (std::size_t i = 0; i < n; i += bpp) {
-          a = _mm_add_epi8(load_px_sse2(src + i), a);
-          store_px_sse2(dst + i, a);
-        }
-      } else {
-        for (std::size_t i = 0; i < n; i += bpp) {
-          __m128i b = load_px_sse2(prev + i);
-          a = _mm_add_epi8(load_px_sse2(src + i), paeth_sse2(a, b, c));
-          c = b;
-          store_px_sse2(dst + i, a);
-        }
-      }
-      break;
-  }
+  // n is a multiple of bpp here.
+  if (bpp <= 4) unfilter_px_sse2<4>(filter, dst, src, prev, n, bpp);
+  else unfilter_px_sse2<8>(filter, dst, src, prev, n, bpp);
 }
 VIO_TARGET_POP()
 #endif
