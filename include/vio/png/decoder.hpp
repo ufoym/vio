@@ -148,13 +148,13 @@ class Decoder {
   void parse_iccp(const std::uint8_t* d, std::uint32_t len) {
     std::uint32_t n = 0;
     while (n < len && n < 80 && d[n] != 0) n++;
-    if (n == 0 || n >= 80 || n + 2 > len) fail("invalid iCCP profile name");
-    if (d[n + 1] != 0) fail("invalid iCCP compression method");
+    // A malformed profile is ignored, as other ancillary chunks would be.
+    if (n == 0 || n >= 80 || n + 2 > len || d[n + 1] != 0) return;
     try {
       icc_profile = zlib::uncompress(std::span(d + n + 2, len - n - 2));
       has_icc = true;
     } catch (const Error&) {
-      fail("inflate error");
+      icc_profile.clear();
     }
   }
 
@@ -207,6 +207,12 @@ class Decoder {
       inflate(idat, pixels_.get(), expected);
       unfilter_rows(pixels_.get(), row_bytes_, h.height, bpp);
       if (h.bit_depth == 16) swap16(pixels_.get(), row_bytes_ * h.height);
+      if (const unsigned used = (static_cast<std::size_t>(h.width) * bits_pp) % 8) {
+        // Clear the padding bits after the last sample of each row (only
+        // now: reconstructing the next row needs them as they were).
+        const std::uint8_t mask = static_cast<std::uint8_t>(0xff00u >> used);
+        for (std::uint32_t y = 0; y < h.height; y++) pixels_[y * row_bytes_ + row_bytes_ - 1] &= mask;
+      }
       return;
     }
     struct Pass {

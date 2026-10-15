@@ -147,7 +147,8 @@ std::vector<std::uint8_t> encode_fpnge(const Rgb8& img) {
 #ifdef VIO_BENCH_LIBPNG
 // Decodes to the PNG's own sample layout (16-bit samples big-endian),
 // libpng's defaults otherwise (CRC and Adler-32 checked).
-std::size_t decode_libpng(const std::vector<std::uint8_t>& file, double& mp) {
+std::size_t decode_libpng(const std::vector<std::uint8_t>& file, double& mp,
+                          std::vector<std::uint8_t>* pixels = nullptr) {
   png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
   png_infop info = png_create_info_struct(png);
   struct Src {
@@ -180,6 +181,7 @@ std::size_t decode_libpng(const std::vector<std::uint8_t>& file, double& mp) {
   png_read_end(png, nullptr);
   png_destroy_read_struct(&png, &info, nullptr);
   mp = double(w) * h * 1e-6;
+  if (pixels) *pixels = std::move(px);
   return px.size();
 }
 
@@ -228,6 +230,16 @@ int main(int argc, char** argv) {
     try {
       if (mode == "hash") {
         // FNV-1a of the decoded samples (16-bit ones big-endian)
+#ifdef VIO_BENCH_LIBPNG
+        if (impl == "libpng") {
+          std::vector<std::uint8_t> px;
+          decode_libpng(file, mp, &px);
+          std::uint64_t h = 0xcbf29ce484222325ull;
+          for (std::uint8_t b : px) h = (h ^ b) * 0x100000001b3ull;
+          std::printf("%s %016llx\n", path.c_str(), static_cast<unsigned long long>(h));
+          continue;
+        }
+#endif
         vio::png::Decoder d;
         d.decode(file);
         auto px = d.pixels();

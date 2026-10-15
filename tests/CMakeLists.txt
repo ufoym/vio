@@ -1,8 +1,11 @@
-# Test suite: libjpeg-turbo's tests, run against vio.
+# Test suite: libjpeg-turbo's and libpng's tests, run against vio.
 #
 #   libjpeg-turbo/        libjpeg-turbo 3.2.0 (git submodule): test programs,
 #                         TurboJPEG header and test images, used unchanged
 #   libjpeg-turbo.cmake   libjpeg-turbo's test definitions, adapted to vio
+#   libpng/               libpng 1.6.59 (git submodule): test images
+#   libpng.cmake          libpng's tests, adapted to vio (tools/png_test.cpp);
+#   libpng-expected.txt   the images as libpng decodes them
 #   tools/                jpeg-encode/-decode/-transform/-example: command-line
 #                         compatible stand-ins for cjpeg/djpeg/jpegtran/example
 #   turbojpeg/            the TurboJPEG API implemented on vio, for tjunittest
@@ -12,8 +15,9 @@
 #   bmpsizetest.cpp       port of libjpeg-turbo's bmpsizetest.c
 
 set(LJT_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libjpeg-turbo)
-if(NOT EXISTS ${LJT_SOURCE_DIR}/src/turbojpeg.h)
-  message(FATAL_ERROR "tests/libjpeg-turbo is missing; run\n"
+if(NOT EXISTS ${LJT_SOURCE_DIR}/src/turbojpeg.h OR
+   NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/libpng/pngtest.png)
+  message(FATAL_ERROR "tests/libjpeg-turbo or tests/libpng is missing; run\n"
     "  git submodule update --init\n"
     "or configure with -DVIO_BUILD_TESTS=OFF.")
 endif()
@@ -50,6 +54,10 @@ foreach(variant ${VIO_VARIANTS})
     target_link_libraries(jpeg-${tool}${sfx} PRIVATE vio)
     target_compile_definitions(jpeg-${tool}${sfx} PRIVATE ${defs})
   endforeach()
+
+  add_executable(png-test${sfx} tools/png_test.cpp)
+  target_link_libraries(png-test${sfx} PRIVATE vio)
+  target_compile_definitions(png-test${sfx} PRIVATE ${defs})
 
   add_executable(bmpsizetest${sfx} bmpsizetest.cpp)
   target_link_libraries(bmpsizetest${sfx} PRIVATE vio)
@@ -118,6 +126,7 @@ set(WITH_TURBOJPEG 1)
 set(WITH_ARITH_ENC 1)
 set(WITH_ARITH_DEC 1)
 include(libjpeg-turbo.cmake)
+include(libpng.cmake)
 
 # PNG benchmark (png-bench/): vio, and optionally fpnge (x86 only; it needs
 # SSE4.1, PCLMUL and AVX2) and libpng with zlib, built from source trees with

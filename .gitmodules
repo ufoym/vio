@@ -1,3 +1,6 @@
 [submodule "tests/libjpeg-turbo"]
 	path = tests/libjpeg-turbo
 	url = https://github.com/libjpeg-turbo/libjpeg-turbo.git
+[submodule "tests/libpng"]
+	path = tests/libpng
+	url = https://github.com/pnggroup/libpng.git
