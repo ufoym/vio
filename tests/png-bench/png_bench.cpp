@@ -4,7 +4,9 @@
 //
 // impl: vio; fpnge when built with VIO_FPNGE_SOURCE_DIR (x86 only, encode
 //       only); libpng when built with VIO_LIBPNG_SOURCE_DIR and
-//       VIO_ZLIB_SOURCE_DIR.
+//       VIO_ZLIB_SOURCE_DIR.  For encoding, a suffix -zN (vio-z6, libpng-z1)
+//       selects zlib level N: vio's zlib mode instead of its fast mode, or
+//       libpng at that level instead of its default (6).
 // mode: decode   decode to the PNG's own sample layout
 //       encode   decode to 8-bit RGB or RGBA (RGBA when the file has alpha or
 //                tRNS), then time encoding that buffer at the default effort
@@ -123,8 +125,15 @@ Rgb8 to_rgb8(std::span<const std::uint8_t> file) {
   return r;
 }
 
+// zlib level of a -zN implementation (-1: none)
+int g_level = -1;
+
 std::vector<std::uint8_t> encode_vio(const Rgb8& img) {
   vio::png::Encoder e;
+  if (g_level >= 0) {
+    e.mode = vio::png::Encoder::Mode::kZlib;
+    e.options.level = g_level;
+  }
   e.header.width = img.width;
   e.header.height = img.height;
   e.header.bit_depth = 8;
@@ -185,7 +194,8 @@ std::size_t decode_libpng(const std::vector<std::uint8_t>& file, double& mp,
   return px.size();
 }
 
-// libpng's default compression (zlib level 6, adaptive filters).
+// libpng's default compression (zlib level 6, adaptive filters), or the
+// -zN level.
 std::vector<std::uint8_t> encode_libpng(const Rgb8& img) {
   png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
   png_infop info = png_create_info_struct(png);
@@ -194,6 +204,7 @@ std::vector<std::uint8_t> encode_libpng(const Rgb8& img) {
     png_destroy_write_struct(&png, &info);
     throw std::runtime_error("libpng error");
   }
+  if (g_level >= 0) png_set_compression_level(png, g_level);
   png_set_write_fn(png, &out, [](png_structp p, png_bytep data, png_size_t n) {
     auto* o = static_cast<std::vector<std::uint8_t>*>(png_get_io_ptr(p));
     o->insert(o->end(), data, data + n);
@@ -218,7 +229,12 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "usage: %s <impl> <decode|encode> [reps] < file-list\n", argv[0]);
     return 1;
   }
-  const std::string impl = argv[1], mode = argv[2];
+  const std::string impl_arg = argv[1], mode = argv[2];
+  std::string impl = impl_arg;
+  if (std::size_t z = impl.rfind("-z"); z != std::string::npos) {
+    g_level = std::atoi(impl.c_str() + z + 2);
+    impl.resize(z);
+  }
   const int reps = argc > 3 ? std::atoi(argv[3]) : 5;
   std::string path;
   int failures = 0;
@@ -297,7 +313,7 @@ int main(int argc, char** argv) {
       failures++;
       continue;
     }
-    std::printf("%s %s %s %.6f %.9f %zu\n", impl.c_str(), mode.c_str(), path.c_str(), mp, best,
+    std::printf("%s %s %s %.6f %.9f %zu\n", impl_arg.c_str(), mode.c_str(), path.c_str(), mp, best,
                 bytes);
     std::fflush(stdout);
   }

@@ -6,8 +6,8 @@
                [--libpng]
                [--modes decode,encode]
   png_bench.py report RESULTS... [--by-category]
-  png_bench.py compare RESULTS... --mode decode|encode --vs IMPL [--vs IMPL]
-               [--by-category]
+  png_bench.py compare RESULTS... --mode decode|encode [--base IMPL]
+               --vs IMPL [--vs IMPL] [--by-category]
 
 `run` lists the corpus's PNG files (sorted; --sample N keeps a deterministic
 1-in-N subset), runs every implementation on them and appends the per-file
@@ -15,9 +15,13 @@ lines to RESULTS.  `report` prints, per mode and implementation, the mean
 and geometric-mean throughput in megapixels per second over the files that
 every implementation of that mode handled, the size of the encoded output
 in bits per pixel, and the throughput relative to vio.  `compare` prints
-Markdown table cells: how much faster vio is than each IMPL (geometric
-means over the files both handled), and for encoding the relative size of
-vio's output.
+Markdown table cells: how much faster the base (vio by default) is than
+each IMPL (geometric means over the files both handled), and for encoding
+the relative size of the base's output.
+
+With --libpng, encoding also runs at matched zlib levels: libpng-z1 (zlib
+level 1, about the size of vio's fast mode), and vio-z1 and vio-z6 (vio's
+zlib mode, whose files are the same as libpng's at that level).
 """
 import argparse
 import collections
@@ -53,6 +57,9 @@ def run(args):
             jobs.append([args.vio, "fpnge", mode, str(args.reps)])
         if args.libpng:
             jobs.append([args.vio, "libpng", mode, str(args.reps)])
+            if mode == "encode":
+                for impl in ("libpng-z1", "vio-z1", "vio-z6"):
+                    jobs.append([args.vio, impl, mode, str(args.reps)])
     with open(args.out, "a") as out:
         for cmd in jobs:
             print("running:", " ".join(cmd), f"({len(files)} files)", file=sys.stderr)
@@ -120,7 +127,7 @@ def report(args):
 
 def compare(args):
     data = load(args.results)
-    vio = data[(args.mode, "vio")]
+    vio = data[(args.mode, args.base)]
     groups = {"all": sorted(vio)}
     if args.by_category:
         for f in sorted(vio):
@@ -161,6 +168,7 @@ def main():
     c = sub.add_parser("compare")
     c.add_argument("results", nargs="+")
     c.add_argument("--mode", required=True)
+    c.add_argument("--base", default="vio")
     c.add_argument("--vs", action="append", required=True)
     c.add_argument("--by-category", action="store_true")
     a = ap.parse_args()
