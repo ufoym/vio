@@ -188,13 +188,15 @@ inline bool build_table(std::uint32_t* table, const std::uint8_t* lens, unsigned
       for (unsigned i = 0; i < total && lens[sorted[i]] <= table_bits - min_lit; i++) {
         unsigned sym = sorted[i];
         if (sym >= 256) continue;
-        unsigned l1 = lens[sym], r = rev_of[i];
-        unsigned room = static_cast<unsigned>(table_bits) - l1;
+        const unsigned l1 = lens[sym], r = rev_of[i];
+        const unsigned room = static_cast<unsigned>(table_bits) - l1;
+        const std::uint32_t first = kEntLiteral | kEntSecond | sym << 16 | l1 << 8 | l1;
+        // branchless: whether a second code fits is unpredictable
         for (unsigned j = 0; j < (1u << room); j++) {
-          std::uint32_t e2 = second[j];
-          if ((e2 & kEntLiteral) && (e2 & 63) <= room)
-            table[r + (j << l1)] = kEntLiteral | kEntSecond | sym << 16 | (e2 & 0xff0000u) << 8 |
-                                   l1 << 8 | (l1 + (e2 & 63));
+          const std::uint32_t e2 = second[j];
+          const bool pair = (e2 & kEntLiteral) && (e2 & 63) <= room;
+          std::uint32_t& t = table[r + (j << l1)];
+          t = pair ? first + ((e2 & 0xff0000u) << 8) + (e2 & 63) : t;
         }
       }
     }

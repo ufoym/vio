@@ -975,6 +975,14 @@ class Decoder {
     }
   }
 
+  // Pixels of B bytes from a pass row to their places in an image row.
+  template <unsigned B>
+  static void scatter_pixels(std::uint8_t* dst, const std::uint8_t* line, std::uint32_t n, std::size_t x0,
+                             std::size_t dx) {
+    std::uint8_t* d = dst + x0 * B;
+    for (std::uint32_t x = 0; x < n; x++, d += dx * B, line += B) std::memcpy(d, line, B);
+  }
+
   static void swap16(std::uint8_t* p, std::size_t n) {
     for (std::size_t i = 0; i + 1 < n; i += 2) {
       std::uint16_t v = static_cast<std::uint16_t>(p[i] << 8 | p[i + 1]);
@@ -1028,24 +1036,31 @@ class Decoder {
     std::unique_ptr<std::uint8_t[]> raw(new std::uint8_t[expected + kSlack]);
     inflate(idat, raw.get(), expected);
     pixels.allocate(rb * height + kSlack);
-    std::memset(pixels.get(), 0, rb * height + kSlack);
+    // Every pixel comes from some pass; packed rows are assembled by OR.
+    if (bits_pp < 8) std::memset(pixels.get(), 0, rb * height + kSlack);
     for (const Pass& ps : passes) {
       if (!ps.w || !ps.h) continue;
       std::uint8_t* base = raw.get() + ps.offset;
       unfilter_rows(base, ps.rb, ps.h, bpp);
+      const std::size_t x0 = adam7_x_start[ps.p], dx = adam7_x_delta[ps.p];
       for (std::uint32_t y = 0; y < ps.h; y++) {
         const std::uint8_t* line = base + y * ps.rb;
-        std::uint32_t oy = adam7_y_start[ps.p] + y * adam7_y_delta[ps.p];
+        const std::uint32_t oy = adam7_y_start[ps.p] + y * adam7_y_delta[ps.p];
         std::uint8_t* dst = pixels.get() + oy * rb;
-        for (std::uint32_t x = 0; x < ps.w; x++) {
-          std::size_t ox = adam7_x_start[ps.p] + static_cast<std::size_t>(x) * adam7_x_delta[ps.p];
-          if (bits_pp >= 8) {
-            std::memcpy(dst + ox * bpp, line + x * bpp, bpp);
-          } else {
-            unsigned spb = 8 / bits_pp;
-            unsigned sample = (line[x / spb] >> (8 - bits_pp - (x % spb) * bits_pp)) &
-                              ((1u << bits_pp) - 1);
-            dst[ox / spb] |= static_cast<std::uint8_t>(sample << (8 - bits_pp - (ox % spb) * bits_pp));
+        switch (bits_pp) {
+          case 8: scatter_pixels<1>(dst, line, ps.w, x0, dx); break;
+          case 16: scatter_pixels<2>(dst, line, ps.w, x0, dx); break;
+          case 24: scatter_pixels<3>(dst, line, ps.w, x0, dx); break;
+          case 32: scatter_pixels<4>(dst, line, ps.w, x0, dx); break;
+          case 48: scatter_pixels<6>(dst, line, ps.w, x0, dx); break;
+          case 64: scatter_pixels<8>(dst, line, ps.w, x0, dx); break;
+          default: {
+            const unsigned spb = 8 / bits_pp, mask = (1u << bits_pp) - 1;
+            for (std::uint32_t x = 0; x < ps.w; x++) {
+              const std::size_t ox = x0 + x * dx;
+              const unsigned sample = (line[x / spb] >> (8 - bits_pp - (x % spb) * bits_pp)) & mask;
+              dst[ox / spb] |= static_cast<std::uint8_t>(sample << (8 - bits_pp - (ox % spb) * bits_pp));
+            }
           }
         }
       }
