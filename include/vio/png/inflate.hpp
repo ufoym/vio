@@ -654,7 +654,14 @@ class Inflater {
         fail("invalid distance too far back");
       std::size_t room = static_cast<std::size_t>(out_end_ - out_);
       std::size_t n = len < room ? len : room;
-      for (std::size_t i = 0; i < n; i++) out_[i] = out_[static_cast<std::ptrdiff_t>(i) - static_cast<std::ptrdiff_t>(distance)];
+      if (distance == 1) {
+        std::memset(out_, out_[-1], n);
+      } else if (distance >= n) {
+        std::memcpy(out_, out_ - distance, n);
+      } else {
+        for (std::size_t i = 0; i < n; i++)
+          out_[i] = out_[static_cast<std::ptrdiff_t>(i) - static_cast<std::ptrdiff_t>(distance)];
+      }
       out_ += n;
       if (n < len) return false;
     }
