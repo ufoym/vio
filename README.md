@@ -315,41 +315,41 @@ PNG decoding:
 
 | Platform | CPU (compiler) | vs image-png | vs libpng |
 | --- | --- | ---: | ---: |
-| Linux x86-64 | AMD EPYC 7763 (GCC) | +20% | +168% |
-| Windows x86-64 | AMD EPYC 9V74 (MSVC) | +15% | +190% |
-| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | +7% | +221% |
-| Linux AArch64 | Neoverse-N2 (GCC) | +10% | +135% |
-| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | +14% | +172% |
+| Linux x86-64 | AMD EPYC 7763 (GCC) | +21% | +171% |
+| Windows x86-64 | AMD EPYC 9V74 (MSVC) | +18% | +203% |
+| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | +18% | +241% |
+| Linux AArch64 | Neoverse-N2 (GCC) | +12% | +139% |
+| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | +8% | +177% |
 
 PNG encoding:
 
 | Platform | CPU (compiler) | vs fpnge | vs image-png (fast) | vs libpng |
 | --- | --- | ---: | ---: | ---: |
-| Linux x86-64 | AMD EPYC 7763 (GCC) | +23% (−5% size) | +68% (−4% size) | +4371% (+10% size) |
-| Windows x86-64 | AMD EPYC 9V74 (MSVC) | +96% (−5% size) | +53% (−4% size) | +4691% (+10% size) |
-| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | +20% (−5% size) | +83% (−4% size) | +4266% (+10% size) |
-| Linux AArch64 | Neoverse-N2 (GCC) | — | +75% (−4% size) | +2875% (+10% size) |
-| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | — | +53% (−4% size) | +3547% (+10% size) |
+| Linux x86-64 | AMD EPYC 7763 (GCC) | +27% (−5% size) | +77% (−4% size) | +4592% (+10% size) |
+| Windows x86-64 | AMD EPYC 9V74 (MSVC) | +96% (−5% size) | +56% (−4% size) | +4721% (+10% size) |
+| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | +8% (−5% size) | +81% (−4% size) | +3404% (+10% size) |
+| Linux AArch64 | Neoverse-N2 (GCC) | — | +83% (−4% size) | +3020% (+10% size) |
+| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | — | +85% (−4% size) | +3783% (+10% size) |
 
 By image category, number of images in parentheses (Linux x86-64, AMD EPYC 7763, GCC):
 
 | Category | dec. vs image-png | dec. vs libpng | enc. vs fpnge | enc. vs libpng |
 | --- | ---: | ---: | ---: | ---: |
-| icon_512 (213) | +24% | +287% | +19% (−16% size) | +2309% (+33% size) |
-| icon_64 (213) | +13% | +157% | +47% (−17% size) | +1809% (+14% size) |
-| photo_kodak (24) | +23% | +122% | +13% (−3% size) | +9750% (+8% size) |
-| photo_tecnick (100) | +19% | +166% | +6% (−2% size) | +11645% (+4% size) |
-| photo_wikipedia (49) | +24% | +132% | +12% (−3% size) | +10215% (+4% size) |
-| pngimg (187) | +23% | +226% | +11% (−4% size) | +4711% (+5% size) |
-| screenshot_game (618) | +27% | +195% | +11% (−6% size) | +4083% (+14% size) |
-| screenshot_web (14) | +25% | +147% | +34% (−11% size) | +3071% (+18% size) |
-| textures_photo (20) | +25% | +112% | +29% (−8% size) | +8103% (+15% size) |
-| textures_pk (1002) | +14% | +131% | +39% (−8% size) | +4235% (+5% size) |
-| textures_pk01 (113) | +24% | +181% | +9% (−3% size) | +6067% (+20% size) |
-| textures_pk02 (235) | +24% | +152% | +8% (−3% size) | +8427% (+28% size) |
-| textures_plants (60) | +23% | +210% | +19% (−3% size) | +6085% (+4% size) |
+| icon_512 (213) | +26% | +292% | +11% (−16% size) | +2295% (+33% size) |
+| icon_64 (213) | +20% | +175% | +72% (−17% size) | +2118% (+15% size) |
+| photo_kodak (24) | +23% | +124% | +9% (−3% size) | +9875% (+8% size) |
+| photo_tecnick (100) | +14% | +155% | +5% (−2% size) | +11878% (+4% size) |
+| photo_wikipedia (49) | +22% | +130% | +15% (−3% size) | +10545% (+4% size) |
+| pngimg (187) | +23% | +228% | +10% (−4% size) | +4725% (+5% size) |
+| screenshot_game (618) | +30% | +204% | +8% (−6% size) | +4118% (+14% size) |
+| screenshot_web (14) | +23% | +151% | +35% (−11% size) | +3091% (+18% size) |
+| textures_photo (20) | +25% | +112% | +26% (−8% size) | +8392% (+15% size) |
+| textures_pk (1002) | +14% | +130% | +51% (−8% size) | +4643% (+6% size) |
+| textures_pk01 (113) | +23% | +183% | +10% (−3% size) | +6175% (+20% size) |
+| textures_pk02 (235) | +24% | +154% | +8% (−3% size) | +8573% (+28% size) |
+| textures_plants (60) | +21% | +205% | +17% (−3% size) | +6106% (+4% size) |
 
-Measured at [dff711f](https://github.com/ufoym/vio/commit/dff711f) on the
+Measured at [5d4100c](https://github.com/ufoym/vio/commit/5d4100c) on the
 GitHub-hosted runners (one run; the runners' CPUs vary from run to run).
 fpnge has no Arm code; image-png's fast mode is its fpnge-inspired encoder.
 
