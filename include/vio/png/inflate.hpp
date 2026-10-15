@@ -1,0 +1,685 @@
+// vio::png::zlib - DEFLATE decompression (RFC 1950/1951).
+//
+// Inflater decodes into a caller-provided buffer of known capacity, which is
+// what PNG needs: the size of the decompressed image data is known up front.
+//
+// The Huffman decoder uses a 64-bit bit buffer refilled eight bytes at a time
+// without branches, an 11-bit literal/length table whose entries hold up to
+// two literals, an 8-bit distance table (longer codes go through
+// sub-tables), and match copies in 16-byte (or, for short distances,
+// repeated-pattern) stores.  A careful byte-at-a-time loop finishes the
+// last few hundred bytes of input and output.
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <memory>
+#include <vector>
+
+#include "../core.hpp"
+#include "checksum.hpp"
+
+#if VIO_SIMD_NEON
+#include <arm_neon.h>
+#endif
+#if VIO_SIMD_X86
+#include <emmintrin.h>
+#endif
+
+namespace vio::png::zlib {
+
+namespace detail {
+
+// Decode table entries (32 bits):
+//   bits 0..5    number of bits the entry consumes (code plus extra bits)
+//   bits 8..12   code length (the extra bits follow the code); for a pair of
+//                literals, the length of the first one's code
+//   bit 13       exceptional: end of block, sub-table pointer or invalid code
+//   bit 14       literal: two literals; exceptional: sub-table pointer
+//   bit 15       literal
+//   bits 16..31  literal(s) (bits 16..23 and 24..31), base length or
+//                distance, or the sub-table's offset
+// A sub-table pointer holds the main-table bits in bits 0..5 and the
+// sub-table's index bits in bits 8..11; sub-table entries describe the whole
+// code, main-table bits included.
+enum : std::uint32_t {
+  kEntExceptional = 1u << 13,
+  kEntSecond = 1u << 14,
+  kEntLiteral = 1u << 15,
+  kEntEndOfBlock = 1u << 12,
+};
+
+inline constexpr int kLitBits = 11, kDistBits = 8, kCodeLenBits = 7;
+// Main table plus room for every possible sub-table.
+inline constexpr int kLitTableSize = (1 << kLitBits) + 288 * (1 << (15 - kLitBits));
+inline constexpr int kDistTableSize = (1 << kDistBits) + 32 * (1 << (15 - kDistBits));
+
+inline constexpr std::uint16_t len_base[29] = {3,  4,  5,  6,  7,  8,  9,  10,  11,  13,
+                                               15, 17, 19, 23, 27, 31, 35, 43,  51,  59,
+                                               67, 83, 99, 115, 131, 163, 195, 227, 258};
+inline constexpr std::uint8_t len_extra[29] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2,
+                                               2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
+inline constexpr std::uint16_t dist_base[30] = {
+    1,   2,   3,   4,   5,   7,    9,    13,   17,   25,   33,   49,   65,    97,    129,
+    193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
+inline constexpr std::uint8_t dist_extra[30] = {0, 0, 0, 0, 1, 1, 2, 2,  3,  3,  4,  4,  5,  5,  6,
+                                                6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
+
+enum class Code { kLitLen, kDist, kCodeLen };
+
+// Entry for `sym` with a code of `len` bits, before the length fields.
+inline std::uint32_t symbol_entry(Code kind, unsigned sym, unsigned& extra) {
+  extra = 0;
+  if (kind == Code::kCodeLen) return sym << 16;
+  if (kind == Code::kLitLen) {
+    if (sym < 256) return kEntLiteral | sym << 16;
+    if (sym == 256) return kEntExceptional | kEntEndOfBlock;
+    if (sym >= 286) return kEntExceptional;
+    extra = len_extra[sym - 257];
+    return std::uint32_t(len_base[sym - 257]) << 16;
+  }
+  if (sym >= 30) return kEntExceptional;
+  extra = dist_extra[sym];
+  return std::uint32_t(dist_base[sym]) << 16;
+}
+
+// Next codeword of the same length in bit-reversed form (codes are sent
+// most significant bit first, so table indices are reversed codewords).
+VIO_INLINE unsigned next_reversed(unsigned rev, int len) {
+  unsigned bit = 1u << (len - 1);
+  while (rev & bit) bit >>= 1;
+  return (rev & (bit - 1)) | bit;
+}
+
+// Builds a decode table from code lengths.  Returns false for an
+// over-subscribed code, or an incomplete one other than a single 1-bit code
+// (accepted for literal/length and distance codes, as is an empty code).
+inline bool build_table(std::uint32_t* table, const std::uint8_t* lens, unsigned n, Code kind,
+                        int table_bits) {
+  unsigned count[16] = {};
+  for (unsigned i = 0; i < n; i++) count[lens[i]]++;
+  count[0] = 0;
+  int left = 1, max_len = 0;
+  for (int len = 1; len < 16; len++) {
+    left = 2 * left - static_cast<int>(count[len]);
+    if (left < 0) return false;
+    if (count[len]) max_len = len;
+  }
+  if (max_len != 0 && left > 0 && (kind == Code::kCodeLen || max_len != 1)) return false;
+  unsigned offs[16];
+  offs[1] = 0;
+  for (int len = 1; len < 15; len++) offs[len + 1] = offs[len] + count[len];
+  std::uint16_t sorted[288];
+  for (unsigned i = 0; i < n; i++)
+    if (lens[i]) sorted[offs[lens[i]]++] = static_cast<std::uint16_t>(i);
+  const unsigned main_size = 1u << table_bits;
+  const unsigned total = offs[15];  // number of codes
+  auto entry = [&](unsigned sym, int len) {
+    unsigned extra;
+    std::uint32_t e = symbol_entry(kind, sym, extra);
+    return e | static_cast<std::uint32_t>(len) << 8 | (len + extra);
+  };
+  // Codes up to table_bits long: fill the first 2^len entries for each
+  // length, doubling the filled part when moving to the next length.
+  table[0] = table[1] = kEntExceptional;
+  unsigned filled = 2, idx = 0, rev = 0;
+  std::uint16_t rev_of[288];
+  int len = 1;
+  for (; len <= table_bits && len <= max_len; len++) {
+    if (len > 1) {
+      std::memcpy(table + filled, table, filled * sizeof(std::uint32_t));
+      filled *= 2;
+    }
+    for (unsigned k = 0; k < count[len]; k++) {
+      table[rev] = entry(sorted[idx], len);
+      rev_of[idx] = static_cast<std::uint16_t>(rev);
+      if (++idx < total) rev = next_reversed(rev, len);
+    }
+  }
+  while (filled < main_size) {
+    std::memcpy(table + filled, table, filled * sizeof(std::uint32_t));
+    filled *= 2;
+  }
+  // Longer codes: one sub-table per main-table prefix, just large enough
+  // for the codes that share it.
+  unsigned next = main_size, sub_start = 0, sub_bits = 0, prefix = ~0u;
+  unsigned remaining[16];
+  std::memcpy(remaining, count, sizeof(remaining));
+  for (; len <= max_len; len++) {
+    for (unsigned k = 0; k < count[len]; k++, idx++) {
+      if ((rev & (main_size - 1)) != prefix) {
+        prefix = rev & (main_size - 1);
+        sub_bits = static_cast<unsigned>(len - table_bits);
+        unsigned used = remaining[len];
+        while (used < (1u << sub_bits)) {
+          sub_bits++;
+          used = 2 * used + remaining[table_bits + sub_bits];
+        }
+        sub_start = next;
+        next += 1u << sub_bits;
+        table[prefix] = kEntExceptional | kEntSecond | sub_start << 16 | sub_bits << 8 |
+                        static_cast<unsigned>(table_bits);
+      }
+      std::uint32_t e = entry(sorted[idx], len);
+      for (unsigned fill = rev >> table_bits; fill < (1u << sub_bits);
+           fill += 1u << (len - table_bits))
+        table[sub_start + fill] = e;
+      remaining[len]--;
+      if (idx + 1 < total) rev = next_reversed(rev, len);
+    }
+  }
+  if (kind == Code::kLitLen && total) {
+    // Pair literals whose two codes fit in the main-table bits together:
+    // for a first literal of l1 bits at index r, entries r + (j << l1) get
+    // the second literal from the single-symbol entry j, when its code fits
+    // in the remaining table_bits - l1 bits.
+    unsigned min_lit = 16;
+    for (unsigned i = 0; i < total; i++)
+      if (sorted[i] < 256) {
+        min_lit = lens[sorted[i]];
+        break;
+      }
+    if (static_cast<int>(2 * min_lit) <= table_bits) {
+      std::uint32_t second[1 << kLitBits];
+      const unsigned span = 1u << (table_bits - min_lit);
+      std::memcpy(second, table, span * sizeof(std::uint32_t));
+      for (unsigned i = 0; i < total && lens[sorted[i]] <= table_bits - min_lit; i++) {
+        unsigned sym = sorted[i];
+        if (sym >= 256) continue;
+        unsigned l1 = lens[sym], r = rev_of[i];
+        unsigned room = static_cast<unsigned>(table_bits) - l1;
+        for (unsigned j = 0; j < (1u << room); j++) {
+          std::uint32_t e2 = second[j];
+          if ((e2 & kEntLiteral) && (e2 & 63) <= room)
+            table[r + (j << l1)] = kEntLiteral | kEntSecond | sym << 16 | (e2 & 0xff0000u) << 8 |
+                                   l1 << 8 | (l1 + (e2 & 63));
+        }
+      }
+    }
+  }
+  return true;
+}
+
+struct FixedTables {
+  std::uint32_t lit[kLitTableSize];
+  std::uint32_t dist[kDistTableSize];
+  FixedTables() {
+    std::uint8_t l[288];
+    int i = 0;
+    for (; i < 144; i++) l[i] = 8;
+    for (; i < 256; i++) l[i] = 9;
+    for (; i < 280; i++) l[i] = 7;
+    for (; i < 288; i++) l[i] = 8;
+    build_table(lit, l, 288, Code::kLitLen, kLitBits);
+    for (i = 0; i < 32; i++) l[i] = 5;
+    build_table(dist, l, 32, Code::kDist, kDistBits);
+  }
+};
+
+inline const FixedTables& fixed_tables() {
+  static const FixedTables t;
+  return t;
+}
+
+VIO_INLINE std::uint64_t load_le64(const std::uint8_t* p) {
+  std::uint64_t v;
+  std::memcpy(&v, p, 8);
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+  v = __builtin_bswap64(v);
+#endif
+  return v;
+}
+
+VIO_INLINE void copy16(std::uint8_t* d, const std::uint8_t* s) {
+#if VIO_SIMD_NEON
+  vst1q_u8(d, vld1q_u8(s));
+#elif VIO_SIMD_X86
+  _mm_storeu_si128(reinterpret_cast<__m128i*>(d), _mm_loadu_si128(reinterpret_cast<const __m128i*>(s)));
+#else
+  std::uint64_t a, b;
+  std::memcpy(&a, s, 8);
+  std::memcpy(&b, s + 8, 8);
+  std::memcpy(d, &a, 8);
+  std::memcpy(d + 8, &b, 8);
+#endif
+}
+
+// Copies a match of `len` bytes from `dist` bytes back; may write up to 15
+// bytes past the end of the match.
+VIO_INLINE void copy_match(std::uint8_t* out, std::size_t dist, unsigned len) {
+  std::uint8_t* end = out + len;
+  const std::uint8_t* src = out - dist;
+  if (dist >= 16) {
+    do {
+      copy16(out, src);
+      out += 16;
+      src += 16;
+    } while (out < end);
+  } else if (dist == 1) {
+#if VIO_SIMD_NEON
+    uint8x16_t v = vdupq_n_u8(*src);
+    do {
+      vst1q_u8(out, v);
+      out += 16;
+    } while (out < end);
+#else
+    std::uint64_t v = 0x0101010101010101ull * *src;
+    do {
+      std::memcpy(out, &v, 8);
+      std::memcpy(out + 8, &v, 8);
+      out += 16;
+    } while (out < end);
+#endif
+  } else if (dist >= 8) {
+    do {
+      std::uint64_t v;
+      std::memcpy(&v, src, 8);
+      std::memcpy(out, &v, 8);
+      out += 8;
+      src += 8;
+    } while (out < end);
+  } else {
+#if VIO_SIMD_NEON_A64
+    // Repeat the dist-byte pattern: store it in 16-byte vectors advanced by
+    // the largest multiple of dist that fits.
+    static constexpr std::uint8_t idx[8][16] = {
+        {}, {},
+        {0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1},
+        {0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0},
+        {0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3},
+        {0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0},
+        {0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3},
+        {0, 1, 2, 3, 4, 5, 6, 0, 1, 2, 3, 4, 5, 6, 0, 1}};
+    static constexpr std::uint8_t step[8] = {0, 0, 16, 15, 16, 15, 12, 14};
+    uint8x16_t v = vqtbl1q_u8(vld1q_u8(src), vld1q_u8(idx[dist]));
+    const unsigned s = step[dist];
+    do {
+      vst1q_u8(out, v);
+      out += s;
+    } while (out < end);
+#else
+    do {
+      *out = out[-static_cast<std::ptrdiff_t>(dist)];
+      out++;
+    } while (out < end);
+#endif
+  }
+}
+
+}  // namespace detail
+
+class Inflater {
+ public:
+  // raw = true decodes a bare DEFLATE stream (no zlib header/trailer).
+  explicit Inflater(bool raw = false, bool verify_adler = true)
+      : raw_(raw), verify_adler_(verify_adler) {}
+
+  // Decompresses `src` into out[0..out_size).  Stops at the end of the
+  // stream or when the output is full, whichever comes first, and returns
+  // the number of bytes written; stream_end() tells which.  Throws vio::Error
+  // on malformed or truncated data.
+  std::size_t decompress(std::span<const std::uint8_t> src, std::uint8_t* out,
+                         std::size_t out_size) {
+    in_ = src.data();
+    in_begin_ = in_;
+    in_end_ = in_ + src.size();
+    bitbuf_ = 0;
+    bitcnt_ = 0;
+    overrun_ = 0;
+    out_begin_ = out;
+    out_ = out;
+    out_end_ = out + out_size;
+    stream_end_ = false;
+    if (!raw_) {
+      unsigned cmf = header_byte(), flg = header_byte();
+      if ((cmf & 0x0f) != 8 || (cmf >> 4) > 7 || ((cmf << 8) | flg) % 31 != 0)
+        fail("incorrect header check");
+      if (flg & 0x20) fail("need dictionary");
+    }
+    bool last = false;
+    while (!last) {
+      refill_slow();
+      last = bits(1) != 0;
+      unsigned type = bits(2);
+      bool done;
+      if (type == 0) {
+        done = stored();
+      } else if (type == 1) {
+        const detail::FixedTables& t = detail::fixed_tables();
+        done = codes(t.lit, t.dist);
+      } else if (type == 2) {
+        dynamic();
+        done = codes(lit_, dist_);
+      } else {
+        fail("invalid block type");
+      }
+      check_overrun();
+      if (!done) return static_cast<std::size_t>(out_ - out_begin_);  // output full
+    }
+    stream_end_ = true;
+    // Return whole bytes still in the bit buffer to the input.
+    in_ -= bitcnt_ >> 3;
+    bitbuf_ = 0;
+    bitcnt_ = 0;
+    if (!raw_) {
+      std::uint32_t check = 0;
+      for (int i = 0; i < 4; i++) check = check << 8 | header_byte();
+      if (verify_adler_ && check != adler32(1, out_begin_, static_cast<std::size_t>(out_ - out_begin_)))
+        fail("incorrect data check");
+    }
+    return static_cast<std::size_t>(out_ - out_begin_);
+  }
+
+  bool stream_end() const { return stream_end_; }
+  // Input bytes consumed by the last decompress() that reached the end.
+  std::size_t consumed() const { return static_cast<std::size_t>(in_ - in_begin_); }
+
+ private:
+  [[noreturn]] static void fail(const char* msg) { VIO_FAIL("zlib: %s", msg); }
+
+  unsigned header_byte() {
+    if (in_ >= in_end_) fail("unexpected end of stream");
+    return *in_++;
+  }
+
+  // Fills the bit buffer to at least 56 bits; past the end of the input it
+  // supplies zero bytes, which check_overrun() rejects if they get consumed.
+  void refill_slow() {
+    while (bitcnt_ <= 56) {
+      if (in_ < in_end_) {
+        bitbuf_ |= static_cast<std::uint64_t>(*in_++) << bitcnt_;
+      } else {
+        if (overrun_ > 16) fail("unexpected end of stream");
+        overrun_++;
+        in_++;
+      }
+      bitcnt_ += 8;
+    }
+  }
+  void check_overrun() {
+    std::size_t past = static_cast<std::size_t>(in_ > in_end_ ? in_ - in_end_ : 0);
+    if (past * 8 > static_cast<std::size_t>(bitcnt_)) fail("unexpected end of stream");
+  }
+  unsigned bits(int n) {
+    unsigned v = static_cast<unsigned>(bitbuf_ & ((1ull << n) - 1));
+    bitbuf_ >>= n;
+    bitcnt_ -= n;
+    return v;
+  }
+
+  // Stored block; returns false if the output filled up.
+  bool stored() {
+    bits(bitcnt_ & 7);
+    in_ -= bitcnt_ >> 3;  // return whole buffered bytes to the input
+    bitbuf_ = 0;
+    bitcnt_ = 0;
+    if (in_ > in_end_) fail("unexpected end of stream");
+    overrun_ = 0;
+    unsigned len = header_byte();
+    len |= header_byte() << 8;
+    unsigned nlen = header_byte();
+    nlen |= header_byte() << 8;
+    if ((len ^ 0xffff) != nlen) fail("invalid stored block lengths");
+    std::size_t room = static_cast<std::size_t>(out_end_ - out_);
+    std::size_t avail = static_cast<std::size_t>(in_end_ - in_);
+    std::size_t n = std::min<std::size_t>({len, room, avail});
+    std::memcpy(out_, in_, n);
+    out_ += n;
+    in_ += n;
+    if (n < len) {
+      if (n == room) return false;
+      fail("unexpected end of stream");
+    }
+    return true;
+  }
+
+  void dynamic() {
+    static constexpr std::uint8_t order[19] = {16, 17, 18, 0, 8,  7, 9,  6, 10, 5,
+                                               11, 4,  12, 3, 13, 2, 14, 1, 15};
+    refill_slow();
+    unsigned nlen = bits(5) + 257, ndist = bits(5) + 1, ncode = bits(4) + 4;
+    if (nlen > 286 || ndist > 30) fail("too many length or distance symbols");
+    std::uint8_t lengths[320] = {};
+    for (unsigned i = 0; i < ncode; i++) {
+      if (bitcnt_ < 3) refill_slow();
+      lengths[order[i]] = static_cast<std::uint8_t>(bits(3));
+    }
+    std::uint32_t cl[1 << detail::kCodeLenBits];
+    if (!detail::build_table(cl, lengths, 19, detail::Code::kCodeLen, detail::kCodeLenBits))
+      fail("invalid code lengths set");
+    unsigned idx = 0;
+    std::memset(lengths, 0, sizeof(lengths));
+    while (idx < nlen + ndist) {
+      if (bitcnt_ < 14) refill_slow();
+      std::uint32_t e = cl[bitbuf_ & ((1u << detail::kCodeLenBits) - 1)];
+      if (e & detail::kEntExceptional) fail("invalid code lengths set");
+      bits(static_cast<int>(e & 63));
+      unsigned sym = e >> 16;
+      if (sym < 16) {
+        lengths[idx++] = static_cast<std::uint8_t>(sym);
+      } else {
+        unsigned rep;
+        std::uint8_t val = 0;
+        if (sym == 16) {
+          if (idx == 0) fail("invalid bit length repeat");
+          val = lengths[idx - 1];
+          rep = 3 + bits(2);
+        } else if (sym == 17) {
+          rep = 3 + bits(3);
+        } else {
+          rep = 11 + bits(7);
+        }
+        if (idx + rep > nlen + ndist) fail("invalid bit length repeat");
+        while (rep--) lengths[idx++] = val;
+      }
+    }
+    if (lengths[256] == 0) fail("invalid code -- missing end-of-block");
+    if (!detail::build_table(lit_, lengths, nlen, detail::Code::kLitLen, detail::kLitBits))
+      fail("invalid literal/lengths set");
+    if (!detail::build_table(dist_, lengths + nlen, ndist, detail::Code::kDist, detail::kDistBits))
+      fail("invalid distances set");
+  }
+
+  // Decodes one Huffman-coded block; returns false if the output filled up
+  // before its end.
+  bool codes(const std::uint32_t* lit, const std::uint32_t* dist) {
+    using namespace detail;
+    constexpr std::uint64_t kLitMask = (1u << kLitBits) - 1, kDistMask = (1u << kDistBits) - 1;
+    // Fast loop: enough input for 8-byte refills and enough output room for
+    // a maximal match plus a 16-byte overrun.
+    if (in_end_ - in_ >= 32 && out_end_ - out_ >= 258 + 32) {
+      const std::uint8_t* in = in_;
+      std::uint8_t* out = out_;
+      const std::uint8_t* const in_fast_end = in_end_ - 16;  // two refills per iteration
+      std::uint8_t* const out_fast_end = out_end_ - (258 + 32);
+      std::uint64_t bitbuf = bitbuf_;
+      unsigned bitcnt = static_cast<unsigned>(bitcnt_);
+      auto refill = [&]() VIO_LAMBDA_INLINE {
+        bitbuf |= load_le64(in) << bitcnt;
+        in += (63 - bitcnt) >> 3;
+        bitcnt |= 56;
+      };
+      bool end_of_block = false;
+      refill();
+      std::uint32_t e = lit[bitbuf & kLitMask];
+      while (in < in_fast_end && out < out_fast_end) {
+        // Up to three literal entries (each one or two literals) per
+        // refill.  The lookups for the second and third are made before it
+        // is known whether the first ones are literals.
+        if (e & kEntLiteral) {
+          const unsigned s1 = e & 63;
+          const std::uint32_t e2 = lit[(bitbuf >> s1) & kLitMask];
+          const unsigned s2 = s1 + (e2 & 63);
+          const std::uint32_t e3 = lit[(bitbuf >> s2) & kLitMask];
+          out[0] = static_cast<std::uint8_t>(e >> 16);
+          out[1] = static_cast<std::uint8_t>(e >> 24);
+          out += 1 + ((e >> 14) & 1);
+          if (e2 & kEntLiteral) {
+            out[0] = static_cast<std::uint8_t>(e2 >> 16);
+            out[1] = static_cast<std::uint8_t>(e2 >> 24);
+            out += 1 + ((e2 >> 14) & 1);
+            if (e3 & kEntLiteral) {
+              const unsigned s3 = s2 + (e3 & 63);
+              const std::uint32_t e4 = lit[(bitbuf >> s3) & kLitMask];
+              out[0] = static_cast<std::uint8_t>(e3 >> 16);
+              out[1] = static_cast<std::uint8_t>(e3 >> 24);
+              out += 1 + ((e3 >> 14) & 1);
+              bitbuf >>= s3;
+              bitcnt -= s3;
+              refill();
+              e = e4;
+              continue;
+            }
+            bitbuf >>= s2;
+            bitcnt -= s2;
+            e = e3;
+          } else {
+            bitbuf >>= s1;
+            bitcnt -= s1;
+            e = e2;
+          }
+          refill();
+        }
+        if (VIO_UNLIKELY(e & kEntExceptional)) {
+          if (e & kEntSecond) {
+            e = lit[(e >> 16) + ((bitbuf >> kLitBits) & ((1u << ((e >> 8) & 15)) - 1))];
+            if (e & kEntLiteral) {
+              *out++ = static_cast<std::uint8_t>(e >> 16);
+              bitbuf >>= e & 63;
+              bitcnt -= e & 63;
+              refill();
+              e = lit[bitbuf & kLitMask];
+              continue;
+            }
+          }
+          if (e & kEntExceptional) {
+            if (e & kEntEndOfBlock) {
+              bitbuf >>= e & 63;
+              bitcnt -= e & 63;
+              end_of_block = true;
+              break;
+            }
+            fail("invalid literal/length code");
+          }
+        }
+        std::uint64_t saved = bitbuf;
+        bitbuf >>= e & 63;
+        bitcnt -= e & 63;
+        unsigned len = (e >> 16) +
+                       static_cast<unsigned>((saved & ((1ull << (e & 63)) - 1)) >> ((e >> 8) & 31));
+        std::uint32_t d = dist[bitbuf & kDistMask];
+        if (VIO_UNLIKELY(d & kEntExceptional)) {
+          if (d & kEntSecond)
+            d = dist[(d >> 16) + ((bitbuf >> kDistBits) & ((1u << ((d >> 8) & 15)) - 1))];
+          if (d & kEntExceptional) fail("invalid distance code");
+        }
+        saved = bitbuf;
+        bitbuf >>= d & 63;
+        bitcnt -= d & 63;
+        std::size_t distance =
+            (d >> 16) + static_cast<std::size_t>((saved & ((1ull << (d & 63)) - 1)) >> ((d >> 8) & 31));
+        if (VIO_UNLIKELY(distance > static_cast<std::size_t>(out - out_begin_)))
+          fail("invalid distance too far back");
+        refill();
+        e = lit[bitbuf & kLitMask];
+        copy_match(out, distance, len);
+        out += len;
+      }
+      // Give back whole bytes not yet consumed so that the careful loop
+      // continues from an exact position.
+      in -= bitcnt >> 3;
+      bitcnt &= 7;
+      bitbuf &= (1ull << bitcnt) - 1;
+      in_ = in;
+      out_ = out;
+      bitbuf_ = bitbuf;
+      bitcnt_ = static_cast<int>(bitcnt);
+      if (end_of_block) return true;
+    }
+    // Careful loop: one symbol at a time with bounds checks.
+    for (;;) {
+      refill_slow();
+      std::uint32_t e = lit[bitbuf_ & kLitMask];
+      if ((e & kEntExceptional) && (e & kEntSecond))
+        e = lit[(e >> 16) + ((bitbuf_ >> kLitBits) & ((1u << ((e >> 8) & 15)) - 1))];
+      if (e & kEntLiteral) {
+        if (out_ == out_end_) return false;
+        *out_++ = static_cast<std::uint8_t>(e >> 16);
+        if (e & kEntSecond) {
+          if (out_ == out_end_) {
+            bits(static_cast<int>((e >> 8) & 31));
+            return false;
+          }
+          *out_++ = static_cast<std::uint8_t>(e >> 24);
+        }
+        bits(static_cast<int>(e & 63));
+        continue;
+      }
+      if (e & kEntExceptional) {
+        if (e & kEntEndOfBlock) {
+          bits(static_cast<int>(e & 63));
+          return true;
+        }
+        fail("invalid literal/length code");
+      }
+      std::uint64_t saved = bitbuf_;
+      bits(static_cast<int>(e & 63));
+      unsigned len = (e >> 16) +
+                     static_cast<unsigned>((saved & ((1ull << (e & 63)) - 1)) >> ((e >> 8) & 31));
+      std::uint32_t d = dist[bitbuf_ & kDistMask];
+      if (d & kEntExceptional) {
+        if (d & kEntSecond)
+          d = dist[(d >> 16) + ((bitbuf_ >> kDistBits) & ((1u << ((d >> 8) & 15)) - 1))];
+        if (d & kEntExceptional) fail("invalid distance code");
+      }
+      saved = bitbuf_;
+      bits(static_cast<int>(d & 63));
+      std::size_t distance =
+          (d >> 16) + static_cast<std::size_t>((saved & ((1ull << (d & 63)) - 1)) >> ((d >> 8) & 31));
+      if (distance > static_cast<std::size_t>(out_ - out_begin_))
+        fail("invalid distance too far back");
+      std::size_t room = static_cast<std::size_t>(out_end_ - out_);
+      std::size_t n = len < room ? len : room;
+      for (std::size_t i = 0; i < n; i++) out_[i] = out_[static_cast<std::ptrdiff_t>(i) - static_cast<std::ptrdiff_t>(distance)];
+      out_ += n;
+      if (n < len) return false;
+    }
+  }
+
+  bool raw_, verify_adler_;
+  bool stream_end_ = false;
+  const std::uint8_t* in_ = nullptr;
+  const std::uint8_t* in_begin_ = nullptr;
+  const std::uint8_t* in_end_ = nullptr;
+  std::uint64_t bitbuf_ = 0;
+  int bitcnt_ = 0;
+  int overrun_ = 0;
+  std::uint8_t* out_begin_ = nullptr;
+  std::uint8_t* out_ = nullptr;
+  std::uint8_t* out_end_ = nullptr;
+  std::uint32_t lit_[detail::kLitTableSize];
+  std::uint32_t dist_[detail::kDistTableSize];
+};
+
+// uncompress(): one-shot zlib-format decompression.  If `limit` is nonzero,
+// output beyond it is an error.
+inline std::vector<std::uint8_t> uncompress(std::span<const std::uint8_t> src,
+                                            std::size_t limit = 0) {
+  std::size_t cap = std::max<std::size_t>(src.size() * 4, 1024);
+  if (limit && cap > limit) cap = limit;
+  auto inf = std::make_unique<Inflater>();
+  for (;;) {
+    std::vector<std::uint8_t> out(cap);
+    std::size_t n = inf->decompress(src, out.data(), out.size());
+    if (inf->stream_end()) {
+      out.resize(n);
+      return out;
+    }
+    if (limit && cap >= limit) VIO_FAIL("zlib: output exceeds limit");
+    cap *= 2;
+    if (limit && cap > limit) cap = limit;
+  }
+}
+
+}  // namespace vio::png::zlib

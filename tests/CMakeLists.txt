@@ -118,3 +118,22 @@ set(WITH_TURBOJPEG 1)
 set(WITH_ARITH_ENC 1)
 set(WITH_ARITH_DEC 1)
 include(libjpeg-turbo.cmake)
+
+# PNG benchmark (png-bench/): vio, and optionally fpnge built from a source
+# tree with the same compiler (x86 only; it needs SSE4.1, PCLMUL and AVX2).
+add_executable(png-bench png-bench/png_bench.cpp)
+target_link_libraries(png-bench PRIVATE vio)
+set(VIO_FPNGE_SOURCE_DIR "" CACHE PATH
+  "fpnge source tree; adds fpnge to png-bench when set")
+if(VIO_FPNGE_SOURCE_DIR)
+  target_sources(png-bench PRIVATE ${VIO_FPNGE_SOURCE_DIR}/fpnge.cc)
+  target_include_directories(png-bench PRIVATE ${VIO_FPNGE_SOURCE_DIR})
+  target_compile_definitions(png-bench PRIVATE VIO_BENCH_FPNGE)
+  if(MSVC)
+    set_source_files_properties(${VIO_FPNGE_SOURCE_DIR}/fpnge.cc PROPERTIES
+      COMPILE_OPTIONS "/arch:AVX2")
+  else()
+    set_source_files_properties(${VIO_FPNGE_SOURCE_DIR}/fpnge.cc PROPERTIES
+      COMPILE_OPTIONS "-march=haswell;-w")
+  endif()
+endif()
