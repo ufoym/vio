@@ -16,7 +16,7 @@ include only the formats you need:
 | Header           | API                                                      |
 | ---------------- | -------------------------------------------------------- |
 | `vio/jpeg.hpp`   | `vio::jpeg::Decoder`, `Encoder`, lossless transforms (or include `vio/jpeg/decoder.hpp` etc. individually) |
-| `vio/png.hpp`    | `vio::png::Reader<T>`, `Writer<T>`; whole-image `Decoder`, `Encoder` |
+| `vio/png.hpp`    | `vio::png::Reader<T>`, `Writer<T>`; whole-image `Decoder`, `Encoder` (with `Transforms`, `WriteTransforms`); `StreamDecoder` (progressive); `FormatReader`, `FormatWriter` (pixel format conversion) |
 | `vio/bmp.hpp`    | `vio::bmp::Reader`, `Writer`                             |
 | `vio/gif.hpp`    | `vio::gif::Reader`, `Writer<T>`                          |
 | `vio/ppm.hpp`    | `vio::ppm::Reader<T>`, `Writer<T>`                       |
@@ -75,49 +75,41 @@ compiler.
 ⁴ A separate build of the library (8- or 12-bit, not both).
 ⁵ NASM or Yasm for the x86 SIMD code.
 
-PNG features, compared with libpng 1.6 (with zlib), the reference PNG
-library:
+PNG features, compared with libpng 1.8 (the libpng18 branch, with zlib),
+the reference PNG library.  The tests run libpng's test suite (same names,
+images and checks, see [Building and testing](#building-and-testing)); read
+transformations and format conversions give libpng's results bit for bit.
 
 | Feature                                                          | vio | libpng |
 | ---------------------------------------------------------------- | :-: | :----: |
 | Decoding: all color types and bit depths (1- to 16-bit)          |  ✓  |   ✓    |
 | Decoding: Adam7 interlaced images                                |  ✓  |   ✓    |
-| Decoding: PLTE, tRNS, iCCP                                       |  ✓  |   ✓    |
-| Decoding: other ancillary chunks (gAMA, cHRM, sRGB, cICP, mDCV, cLLI, bKGD, hIST, pHYs, sBIT, sPLT, oFFs, pCAL, sCAL, tIME, eXIf, text) | ✗¹ | ✓ |
-| Decoding: unknown chunks kept for the application                |  ✗  |   ✓    |
-| Decoding: CRC-32 and Adler-32 verification                       |  ✓  |   ✓    |
-| Decoding: configurable CRC error handling                        |  ✗  |   ✓    |
-| Decoding: progressive (push) input                               |  ✗  |   ✓    |
-| Decoding: row by row, without holding the whole image            |  ✗  |   ✓    |
-| Decoding: image size limits                                      |  ✓  |   ✓    |
-| Transforms: palette and grayscale to RGB, sample depth scaling   | ✓²  |   ✓    |
-| Transforms: gamma, alpha compositing and modes, RGB to gray, quantization, filler, swaps | ✗ | ✓ |
-| Encoding: all color types and bit depths                         |  ✓  |   ✓    |
-| Encoding: Adam7 interlaced images                                |  ✗  |   ✓    |
-| Encoding: PLTE, tRNS, iCCP                                       |  ✓  |   ✓    |
-| Encoding: other ancillary and custom chunks                      |  ✗  |   ✓    |
-| Encoding: adaptive filter selection                              |  ✓  |   ✓    |
-| Encoding: choice of zlib level, strategy and filters             | ✗³  |   ✓    |
+| Decoding: every standard chunk (PLTE, tRNS, gAMA, cHRM, sRGB, iCCP, cICP, mDCV, cLLI, bKGD, hIST, pHYs, sBIT, sPLT, oFFs, pCAL, sCAL, tIME, eXIf, tEXt, zTXt, iTXt) | ✓ | ✓ |
+| Decoding: unknown chunks kept per rule, or passed to a callback  |  ✓  |   ✓    |
+| Decoding: CRC-32 and Adler-32 verification, configurable CRC error handling | ✓ | ✓ |
+| Decoding: recoverable errors as warnings or errors; size and chunk limits | ✓ | ✓ |
+| Decoding: progressive (push) input, rows as they arrive          |  ✓  |   ✓    |
+| Read transformations: palette, gray and tRNS expansion, 16↔8 bits, gray↔RGB, RGB to gray, gamma, alpha modes, background compositing, quantization, sBIT shift, packing, filler, BGR, alpha and byte order, inversion, user callback | ✓ | ✓ |
+| Encoding: all color types and bit depths, Adam7 interlacing      |  ✓  |   ✓    |
+| Encoding: every standard chunk, text (compressed or not), custom chunks before or after the image data | ✓ | ✓ |
+| Write transformations: filler removal, packing, sBIT scaling, BGR, alpha and byte order, inversion, user callback | ✓ | ✓ |
+| Encoding: adaptive filter selection; zlib level, strategy, window, memory level, filters, IDAT size | ✓ | ✓ |
 | Encoding: single-pass fast mode                                  |  ✓  |   ✗    |
-| APNG (animation)                                                 |  ✗  |   ✗    |
-| SIMD: reconstruction filters when decoding                       | ✓⁴  |   ✓⁵   |
-| SIMD: DEFLATE decoding, CRC-32, Adler-32                         | ✓⁴  |   ✗⁶   |
-| SIMD: filter selection and Huffman coding when encoding          | ✓⁴  |   ✗    |
-| Simplified API (whole images in a few calls)                     |  ✓  |   ✓    |
+| APNG (animation): reading, progressive reading and writing       |  ✓  |   ✓    |
+| Format conversion (simplified API): gray/GA/RGB/RGBA, BGR, alpha first, 8-bit sRGB or 16-bit linear, colormaps, alpha removal, any row stride | ✓ | ✓ |
+| SIMD: reconstruction filters when decoding                       | ✓¹  |   ✓²   |
+| SIMD: DEFLATE decoding, CRC-32, Adler-32                         | ✓¹  |   ✗³   |
+| SIMD: filter selection and Huffman coding when encoding          | ✓¹  |   ✗    |
 | Error reporting                                                  | C++ exceptions | setjmp/longjmp |
 | Integration: header-only, no build step                          |  ✓  |   ✗    |
 | Integration: no external zlib                                    |  ✓  |   ✗    |
 | Integration: C API                                               |  ✗  |   ✓    |
 
-¹ Skipped (a malformed one is ignored, as libpng does after a warning).
-² Through `png::Reader`, for 8- and 16-bit images.
-³ Two modes: the fast encoder (default) and zlib level 6 with libspng's
-filter choice (byte-identical files).
-⁴ x86 SSE2/SSSE3/SSE4.1/PCLMUL/AVX2 and Arm NEON/CRC32/PMULL, chosen at run
+¹ x86 SSE2/SSSE3/SSE4.1/PCLMUL/AVX2 and Arm NEON/CRC32/PMULL, chosen at run
 time.
-⁵ Unfiltering only: NEON, SSE2, MIPS MSA/MMI, PowerPC VSX, LoongArch LSX,
+² Unfiltering only: NEON, SSE2, MIPS MSA/MMI, PowerPC VSX, LoongArch LSX,
 RISC-V RVV.
-⁶ zlib's portable code (Arm CRC32 instructions only when compiled for them);
+³ zlib's portable code (Arm CRC32 instructions only when compiled for them);
 zlib-ng and Chromium's zlib add SIMD.
 
 ## Performance
@@ -397,6 +389,19 @@ cmake --build build/msvc
 ctest --test-dir build/msvc -j 8
 ```
 
+The PNG tests (`tests/libpng.cmake`) mirror libpng's test suite: pngtest,
+pnggetset, pngimage, pngstest, pngunknown and pngvalid, under the same names,
+on libpng's images and on generated ones.  Their reference values,
+`tests/libpng-expected.txt`, are what libpng produces for the same cases;
+to regenerate them after changing the cases (`tests/tools/png_cases.hpp`),
+build `png-golden` against the libpng submodule (needs zlib):
+
+```sh
+cmake --preset native -DVIO_PNG_GOLDEN=ON
+cmake --build build/native --target png-golden
+build/native/png-golden tests/libpng > tests/libpng-expected.txt
+```
+
 To benchmark against libjpeg-turbo, build it from the submodule into a tree
 of its own; to add IJG libjpeg, unpack its source (`jpegsrc.v10.tar.gz` from
 ijg.org) and point `VIO_LIBJPEG_SOURCE_DIR` at it, which builds
@@ -419,7 +424,14 @@ include/vio/
 ├── png.hpp                           includes the png/ codec; Reader, Writer
 ├── png/
 │   ├── decoder.hpp encoder.hpp       whole-image codec
-│   ├── inflate.hpp                   DEFLATE decompression
+│   ├── info.hpp common.hpp           chunk contents, shared types
+│   ├── transform.hpp                 read and write transformations
+│   ├── stream.hpp                    progressive (push) decoding
+│   ├── simple.hpp                    pixel format conversion reader/writer
+│   ├── fast_encoder.hpp              single-pass encoder (SIMD filtering
+│   │                                 and Huffman coding)
+│   ├── inflate.hpp                   DEFLATE decompression (whole buffer,
+│   │                                 or resumable)
 │   ├── deflate.hpp                   DEFLATE compression, zlib-identical
 │   │                                 output
 │   ├── filter.hpp                    scanline filters (scalar, NEON, SSE2)
@@ -450,7 +462,8 @@ tests/                                conformance suite: test definitions,
                                       test programs and images (submodule),
                                       command-line tools the tests run
                                       (tools/: jpeg-encode, jpeg-decode,
-                                      jpeg-transform, jpeg-example);
+                                      jpeg-transform, jpeg-example,
+                                      png-test, png-golden);
                                       png-bench/: PNG benchmark (vio, and
                                       image-png and fpnge for comparison)
 ```
