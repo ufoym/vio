@@ -365,6 +365,7 @@ machine, geometric mean over the corpus or the stated subset).
 - Unfiltering of 1-, 2-, 6- and 8-byte pixels: NEON for 16-bit images, register-carried scalar loops for gray and gray+alpha ([b7c46cb](https://github.com/ufoym/vio/commit/b7c46cb)): decoding of the corpus's gray, gray+alpha and 16-bit images +26% (Apple M4).
 - One inflater (decode tables) per thread instead of one per image ([3b275b6](https://github.com/ufoym/vio/commit/3b275b6)): decoding of 64×64 icons +35% (Core Ultra 9 285K, clang-cl).
 - De-interlacing with fixed-size pixel moves, no zero fill for whole-byte pixels ([65386c4](https://github.com/ufoym/vio/commit/65386c4)): decoding of interlaced images +27% (Apple M4; the corpus's 8 and PngSuite's interlaced images).
+- 12-bit literal/length table, literal pairs written before the table is doubled ([8309220](https://github.com/ufoym/vio/commit/8309220)): decoding +2% (Apple M4), +2–3% (Core Ultra 9 285K, clang-cl and MSVC), 1/8 of the corpus.
 
 ## Building and testing
 
