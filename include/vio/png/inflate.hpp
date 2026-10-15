@@ -4,8 +4,10 @@
 // what PNG needs: the size of the decompressed image data is known up front.
 //
 // The Huffman decoder uses a 64-bit bit buffer refilled eight bytes at a time
-// without branches, an 11-bit literal/length table whose entries hold up to
-// two literals, an 8-bit distance table (longer codes go through
+// without branches, a 12-bit literal/length table whose entries hold up to
+// two literals (pairs are written once, at the table size of their combined
+// code length, and reach their other places as the table is doubled), an
+// 8-bit distance table (longer codes go through
 // sub-tables), and match copies in 16-byte (or, for short distances,
 // repeated-pattern) stores.  A careful byte-at-a-time loop finishes the
 // last few hundred bytes of input and output.
@@ -51,7 +53,7 @@ enum : std::uint32_t {
   kEntEndOfBlock = 1u << 12,
 };
 
-inline constexpr int kLitBits = 11, kDistBits = 8, kCodeLenBits = 7;
+inline constexpr int kLitBits = 12, kDistBits = 8, kCodeLenBits = 7;
 // Main table plus room for every possible sub-table.
 inline constexpr int kLitTableSize = (1 << kLitBits) + 288 * (1 << (15 - kLitBits));
 inline constexpr int kDistTableSize = (1 << kDistBits) + 32 * (1 << (15 - kDistBits));
@@ -111,6 +113,8 @@ inline bool build_table(std::uint32_t* table, const std::uint8_t* lens, unsigned
   unsigned offs[16];
   offs[1] = 0;
   for (int len = 1; len < 15; len++) offs[len + 1] = offs[len] + count[len];
+  unsigned start[16];
+  std::memcpy(start, offs, sizeof(start));
   std::uint16_t sorted[288];
   for (unsigned i = 0; i < n; i++)
     if (lens[i]) sorted[offs[lens[i]]++] = static_cast<std::uint16_t>(i);
@@ -136,6 +140,21 @@ inline bool build_table(std::uint32_t* table, const std::uint8_t* lens, unsigned
       table[rev] = entry(sorted[idx], len);
       rev_of[idx] = static_cast<std::uint16_t>(rev);
       if (++idx < total) rev = next_reversed(rev, len);
+    }
+    if (kind == Code::kLitLen) {
+      // Pairs of literals whose codes total len bits, written once here:
+      // the doubling copies give them their other places.  (Within a
+      // length, symbols are in increasing order: literals come first.)
+      for (int l1 = 1; l1 < len; l1++) {
+        const int l2 = len - l1;
+        for (unsigned i1 = start[l1]; i1 < start[l1] + count[l1] && sorted[i1] < 256; i1++) {
+          const std::uint32_t first = kEntLiteral | kEntSecond | std::uint32_t(sorted[i1]) << 16 |
+                                      static_cast<std::uint32_t>(l1) << 8 | static_cast<std::uint32_t>(len);
+          const unsigned r1 = rev_of[i1];
+          for (unsigned i2 = start[l2]; i2 < start[l2] + count[l2] && sorted[i2] < 256; i2++)
+            table[r1 | static_cast<unsigned>(rev_of[i2]) << l1] = first | std::uint32_t(sorted[i2]) << 24;
+        }
+      }
     }
   }
   while (filled < main_size) {
@@ -168,37 +187,6 @@ inline bool build_table(std::uint32_t* table, const std::uint8_t* lens, unsigned
         table[sub_start + fill] = e;
       remaining[len]--;
       if (idx + 1 < total) rev = next_reversed(rev, len);
-    }
-  }
-  if (kind == Code::kLitLen && total) {
-    // Pair literals whose two codes fit in the main-table bits together:
-    // for a first literal of l1 bits at index r, entries r + (j << l1) get
-    // the second literal from the single-symbol entry j, when its code fits
-    // in the remaining table_bits - l1 bits.
-    unsigned min_lit = 16;
-    for (unsigned i = 0; i < total; i++)
-      if (sorted[i] < 256) {
-        min_lit = lens[sorted[i]];
-        break;
-      }
-    if (static_cast<int>(2 * min_lit) <= table_bits) {
-      std::uint32_t second[1 << kLitBits];
-      const unsigned span = 1u << (table_bits - min_lit);
-      std::memcpy(second, table, span * sizeof(std::uint32_t));
-      for (unsigned i = 0; i < total && lens[sorted[i]] <= table_bits - min_lit; i++) {
-        unsigned sym = sorted[i];
-        if (sym >= 256) continue;
-        const unsigned l1 = lens[sym], r = rev_of[i];
-        const unsigned room = static_cast<unsigned>(table_bits) - l1;
-        const std::uint32_t first = kEntLiteral | kEntSecond | sym << 16 | l1 << 8 | l1;
-        // branchless: whether a second code fits is unpredictable
-        for (unsigned j = 0; j < (1u << room); j++) {
-          const std::uint32_t e2 = second[j];
-          const bool pair = (e2 & kEntLiteral) && (e2 & 63) <= room;
-          std::uint32_t& t = table[r + (j << l1)];
-          t = pair ? first + ((e2 & 0xff0000u) << 8) + (e2 & 63) : t;
-        }
-      }
     }
   }
   return true;
