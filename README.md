@@ -362,6 +362,7 @@ machine, geometric mean over the corpus or the stated subset).
 - Huffman statistics of small images from about 32 KiB of their rows; four literal codes per bit-buffer write in the scalar coder ([20ddc88](https://github.com/ufoym/vio/commit/20ddc88)): encoding +11% (Apple M4, 1/8 of the corpus), +24% on 256×256 textures.
 - AVX2 filter selection and filtering, 32 bytes per step ([78b6799](https://github.com/ufoym/vio/commit/78b6799)): encoding +25% (Core Ultra 9 285K, clang-cl, 1/8 of the corpus).
 - x86 Paeth unfiltering on 16-bit lanes (SSE4.1 variant at run time), SSE2 unfiltering of 16-bit images, image buffer reused across decodes ([e3125ea](https://github.com/ufoym/vio/commit/e3125ea)): decoding +12% (Core Ultra 9 285K, clang-cl and MSVC, 1/8 of the corpus).
+- Unfiltering of 1-, 2-, 6- and 8-byte pixels: NEON for 16-bit images, register-carried scalar loops for gray and gray+alpha ([b7c46cb](https://github.com/ufoym/vio/commit/b7c46cb)): decoding of the corpus's gray, gray+alpha and 16-bit images +26% (Apple M4).
 
 ## Building and testing
 
