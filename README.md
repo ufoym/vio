@@ -6,7 +6,8 @@ lossless transforms, and SIMD acceleration for x86 (MMX through AVX2), Arm
 NEON, PowerPC AltiVec, Loongson MMI and RISC-V Vector.  It is faster than
 libjpeg-turbo in every configuration measured.  The PNG codec, with its own
 DEFLATE implementation, decodes faster than image-png and encodes faster
-than fpnge (see [Performance](#performance)).
+than fpnge, and faster than libpng at the same compression, with
+byte-identical files in its zlib mode (see [Performance](#performance)).
 
 ## Using the library
 
@@ -302,10 +303,14 @@ each image timed as the fastest of 3 runs.
   0.18.1 with `Transformations::IDENTITY`, built by `cargo --release`;
   libpng without transformations).  Checksums are verified, except Adler-32
   by image-png, which skips it by default.
-- Encoding starts from 8-bit RGB or RGBA (`png::Encoder`, default fast mode;
-  fpnge at its default level, x86 only; libpng at its defaults: zlib level 6,
-  adaptive filters).  In parentheses, the size of vio's files relative to
-  the other's.
+- Encoding starts from 8-bit RGB or RGBA, and each encoder is compared with
+  encoders whose files are about the same size.  vio's default fast mode
+  (`png::Encoder`) is compared with fpnge at its default level (x86 only),
+  image-png's fast mode and libpng at zlib level 1, its fastest compressing
+  level; in parentheses, the size of vio's files relative to the other's.
+  vio's zlib mode (`Encoder::Mode::kZlib`), whose files are byte for byte
+  libpng's at the same level, is compared with libpng at levels 1 and 6 (6
+  being libpng's default; adaptive filters in both).
 
 All libraries are built from source with the same compiler; the benchmark
 is `tests/png-bench/` (`png_bench.py run`, then `report` or `compare`;
@@ -315,41 +320,51 @@ PNG decoding:
 
 | Platform | CPU (compiler) | vs image-png | vs libpng |
 | --- | --- | ---: | ---: |
-| Linux x86-64 | AMD EPYC 7763 (GCC) | +21% | +171% |
-| Windows x86-64 | AMD EPYC 9V74 (MSVC) | +18% | +203% |
-| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | +18% | +241% |
-| Linux AArch64 | Neoverse-N2 (GCC) | +12% | +139% |
-| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | +8% | +177% |
+| Linux x86-64 | AMD EPYC 7763 (GCC) | +24% | +174% |
+| Windows x86-64 | AMD EPYC 9V74 (MSVC) | +17% | +195% |
+| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | −1% | +219% |
+| Linux AArch64 | Neoverse-N2 (GCC) | +11% | +139% |
+| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | +15% | +167% |
 
-PNG encoding:
+PNG encoding, fast mode:
 
-| Platform | CPU (compiler) | vs fpnge | vs image-png (fast) | vs libpng |
+| Platform | CPU (compiler) | vs fpnge | vs image-png (fast) | vs libpng level 1 |
 | --- | --- | ---: | ---: | ---: |
-| Linux x86-64 | AMD EPYC 7763 (GCC) | +27% (−5% size) | +77% (−4% size) | +4592% (+10% size) |
-| Windows x86-64 | AMD EPYC 9V74 (MSVC) | +96% (−5% size) | +56% (−4% size) | +4721% (+10% size) |
-| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | +8% (−5% size) | +81% (−4% size) | +3404% (+10% size) |
-| Linux AArch64 | Neoverse-N2 (GCC) | — | +83% (−4% size) | +3020% (+10% size) |
-| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | — | +85% (−4% size) | +3783% (+10% size) |
+| Linux x86-64 | AMD EPYC 7763 (GCC) | +25% (−5% size) | +73% (−4% size) | +1519% (−1% size) |
+| Windows x86-64 | AMD EPYC 9V74 (MSVC) | +107% (−5% size) | +59% (−4% size) | +1634% (−1% size) |
+| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | +31% (−5% size) | +91% (−4% size) | +1472% (−1% size) |
+| Linux AArch64 | Neoverse-N2 (GCC) | — | +80% (−4% size) | +1037% (−1% size) |
+| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | — | +73% (−4% size) | +1202% (−1% size) |
+
+PNG encoding, zlib mode (the same files as libpng's):
+
+| Platform | CPU (compiler) | vs libpng level 1 | vs libpng level 6 |
+| --- | --- | ---: | ---: |
+| Linux x86-64 | AMD EPYC 7763 (GCC) | +107% | +42% |
+| Windows x86-64 | AMD EPYC 9V74 (MSVC) | +109% | +45% |
+| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | +136% | +67% |
+| Linux AArch64 | Neoverse-N2 (GCC) | +100% | +41% |
+| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | +112% | +67% |
 
 By image category, number of images in parentheses (Linux x86-64, AMD EPYC 7763, GCC):
 
-| Category | dec. vs image-png | dec. vs libpng | enc. vs fpnge | enc. vs libpng |
-| --- | ---: | ---: | ---: | ---: |
-| icon_512 (213) | +26% | +292% | +11% (−16% size) | +2295% (+33% size) |
-| icon_64 (213) | +20% | +175% | +72% (−17% size) | +2118% (+15% size) |
-| photo_kodak (24) | +23% | +124% | +9% (−3% size) | +9875% (+8% size) |
-| photo_tecnick (100) | +14% | +155% | +5% (−2% size) | +11878% (+4% size) |
-| photo_wikipedia (49) | +22% | +130% | +15% (−3% size) | +10545% (+4% size) |
-| pngimg (187) | +23% | +228% | +10% (−4% size) | +4725% (+5% size) |
-| screenshot_game (618) | +30% | +204% | +8% (−6% size) | +4118% (+14% size) |
-| screenshot_web (14) | +23% | +151% | +35% (−11% size) | +3091% (+18% size) |
-| textures_photo (20) | +25% | +112% | +26% (−8% size) | +8392% (+15% size) |
-| textures_pk (1002) | +14% | +130% | +51% (−8% size) | +4643% (+6% size) |
-| textures_pk01 (113) | +23% | +183% | +10% (−3% size) | +6175% (+20% size) |
-| textures_pk02 (235) | +24% | +154% | +8% (−3% size) | +8573% (+28% size) |
-| textures_plants (60) | +21% | +205% | +17% (−3% size) | +6106% (+4% size) |
+| Category | dec. vs image-png | dec. vs libpng | enc. vs fpnge | enc. vs libpng level 1 | zlib mode vs libpng level 6 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| icon_512 (213) | +27% | +292% | +16% (−16% size) | +1070% (−4% size) | +77% |
+| icon_64 (213) | +30% | +196% | +72% (−17% size) | +877% (+5% size) | +50% |
+| photo_kodak (24) | +27% | +130% | +7% (−3% size) | +1959% (+5% size) | +21% |
+| photo_tecnick (100) | +24% | +175% | +2% (−2% size) | +2009% (−5% size) | +28% |
+| photo_wikipedia (49) | +25% | +135% | +8% (−3% size) | +2124% (−2% size) | +26% |
+| pngimg (187) | +24% | +226% | +11% (−4% size) | +1548% (−9% size) | +51% |
+| screenshot_game (618) | +29% | +200% | +7% (−6% size) | +1310% (−3% size) | +59% |
+| screenshot_web (14) | +14% | +130% | +33% (−11% size) | +1417% (+5% size) | +63% |
+| textures_photo (20) | +27% | +114% | +19% (−8% size) | +1989% (+21% size) | +19% |
+| textures_pk (1002) | +18% | +135% | +45% (−8% size) | +1873% (+2% size) | +31% |
+| textures_pk01 (113) | +24% | +182% | +8% (−3% size) | +1450% (+11% size) | +26% |
+| textures_pk02 (235) | +25% | +153% | +4% (−3% size) | +1558% (+17% size) | +26% |
+| textures_plants (60) | +23% | +206% | +13% (−3% size) | +1721% (−7% size) | +40% |
 
-Measured at [5d4100c](https://github.com/ufoym/vio/commit/5d4100c) on the
+Measured at [df87ff9](https://github.com/ufoym/vio/commit/df87ff9) on the
 GitHub-hosted runners (one run; the runners' CPUs vary from run to run).
 fpnge has no Arm code; image-png's fast mode is its fpnge-inspired encoder.
 
@@ -370,6 +385,9 @@ machine, geometric mean over the corpus or the stated subset).
 - 12-bit literal/length table, literal pairs written before the table is doubled ([8309220](https://github.com/ufoym/vio/commit/8309220)): decoding +2% (Apple M4), +2–3% (Core Ultra 9 285K, clang-cl and MSVC), 1/8 of the corpus.
 - Encoder set-up for small images: canonical codes over the reduced alphabet, statistics from 8 KiB of data ([cd4f332](https://github.com/ufoym/vio/commit/cd4f332)): encoding of 64×64 icons +20% (Apple M4; sizes +0.1%).
 - Match copies in inflate's tail loop with memset/memcpy ([aef2df7](https://github.com/ufoym/vio/commit/aef2df7)): decoding of 64×64 icons +7% (Apple M4).
+- zlib mode: rows filtered with the fast mode's SIMD filter selection, files unchanged ([fb6801e](https://github.com/ufoym/vio/commit/fb6801e)): zlib-mode encoding +68% at level 6, +260% at level 1 (Apple M4, 1/8 of the corpus).
+- zlib mode: matches compared 8 bytes at a time, codes written 32 bits at a time, output still identical to zlib's ([df87ff9](https://github.com/ufoym/vio/commit/df87ff9)): zlib-mode encoding +23% at level 6, +18% at level 1 (Apple M4, 1/8 of the corpus).
+- zlib mode: block symbols in their own 16-bit buffer instead of bytes overlaid on the output buffer, which the compiler had to assume aliased the deflater's state ([f3cfc60](https://github.com/ufoym/vio/commit/f3cfc60)): zlib-mode encoding +7% at level 1, +2% at level 6 (Apple M4, 1/8 of the corpus).
 
 ## Building and testing
 
