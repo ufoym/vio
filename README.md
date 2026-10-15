@@ -4,8 +4,9 @@ Header-only C++20 image I/O.  The JPEG codec supports sequential,
 progressive, arithmetic-coded and lossless JPEG with 8- to 16-bit samples,
 lossless transforms, and SIMD acceleration for x86 (MMX through AVX2), Arm
 NEON, PowerPC AltiVec, Loongson MMI and RISC-V Vector.  It is faster than
-libjpeg-turbo in every configuration measured (see
-[Performance](#performance)).
+libjpeg-turbo in every configuration measured.  The PNG codec, with its own
+DEFLATE implementation, decodes faster than image-png and encodes faster
+than fpnge (see [Performance](#performance)).
 
 ## Using the library
 
@@ -73,6 +74,51 @@ compiler.
 ¹ GCC only. ² Little-endian only. ³ GCC ≥ 14 or Clang ≥ 17.
 ⁴ A separate build of the library (8- or 12-bit, not both).
 ⁵ NASM or Yasm for the x86 SIMD code.
+
+PNG features, compared with libpng 1.6 (with zlib), the reference PNG
+library:
+
+| Feature                                                          | vio | libpng |
+| ---------------------------------------------------------------- | :-: | :----: |
+| Decoding: all color types and bit depths (1- to 16-bit)          |  ✓  |   ✓    |
+| Decoding: Adam7 interlaced images                                |  ✓  |   ✓    |
+| Decoding: PLTE, tRNS, iCCP                                       |  ✓  |   ✓    |
+| Decoding: other ancillary chunks (gAMA, cHRM, sRGB, cICP, mDCV, cLLI, bKGD, hIST, pHYs, sBIT, sPLT, oFFs, pCAL, sCAL, tIME, eXIf, text) | ✗¹ | ✓ |
+| Decoding: unknown chunks kept for the application                |  ✗  |   ✓    |
+| Decoding: CRC-32 and Adler-32 verification                       |  ✓  |   ✓    |
+| Decoding: configurable CRC error handling                        |  ✗  |   ✓    |
+| Decoding: progressive (push) input                               |  ✗  |   ✓    |
+| Decoding: row by row, without holding the whole image            |  ✗  |   ✓    |
+| Decoding: image size limits                                      |  ✓  |   ✓    |
+| Transforms: palette and grayscale to RGB, sample depth scaling   | ✓²  |   ✓    |
+| Transforms: gamma, alpha compositing and modes, RGB to gray, quantization, filler, swaps | ✗ | ✓ |
+| Encoding: all color types and bit depths                         |  ✓  |   ✓    |
+| Encoding: Adam7 interlaced images                                |  ✗  |   ✓    |
+| Encoding: PLTE, tRNS, iCCP                                       |  ✓  |   ✓    |
+| Encoding: other ancillary and custom chunks                      |  ✗  |   ✓    |
+| Encoding: adaptive filter selection                              |  ✓  |   ✓    |
+| Encoding: choice of zlib level, strategy and filters             | ✗³  |   ✓    |
+| Encoding: single-pass fast mode                                  |  ✓  |   ✗    |
+| APNG (animation)                                                 |  ✗  |   ✗    |
+| SIMD: reconstruction filters when decoding                       | ✓⁴  |   ✓⁵   |
+| SIMD: DEFLATE decoding, CRC-32, Adler-32                         | ✓⁴  |   ✗⁶   |
+| SIMD: filter selection and Huffman coding when encoding          | ✓⁴  |   ✗    |
+| Simplified API (whole images in a few calls)                     |  ✓  |   ✓    |
+| Error reporting                                                  | C++ exceptions | setjmp/longjmp |
+| Integration: header-only, no build step                          |  ✓  |   ✗    |
+| Integration: no external zlib                                    |  ✓  |   ✗    |
+| Integration: C API                                               |  ✗  |   ✓    |
+
+¹ Skipped (a malformed one is ignored, as libpng does after a warning).
+² Through `png::Reader`, for 8- and 16-bit images.
+³ Two modes: the fast encoder (default) and zlib level 6 with libspng's
+filter choice (byte-identical files).
+⁴ x86 SSE2/SSSE3/SSE4.1/PCLMUL/AVX2 and Arm NEON/CRC32/PMULL, chosen at run
+time.
+⁵ Unfiltering only: NEON, SSE2, MIPS MSA/MMI, PowerPC VSX, LoongArch LSX,
+RISC-V RVV.
+⁶ zlib's portable code (Arm CRC32 instructions only when compiled for them);
+zlib-ng and Chromium's zlib add SIMD.
 
 ## Performance
 
@@ -254,36 +300,64 @@ Throughput gain of each change over the build before it (A/B on the same machine
 Single-threaded throughput on the 2848 images of the
 [QOI benchmark corpus](https://qoiformat.org/benchmark/) (icons, photos,
 textures, screenshots of games and web pages), the corpus image-png's own
-benchmark uses.  Each figure is the geometric mean, over the images, of
-megapixels per second, each image timed as the fastest of 3 runs.  Decoding
-produces the image's own sample layout (`png::Decoder`; image-png 0.18.1
-with `Transformations::IDENTITY`, built by `cargo --release`); checksums are
-verified, except Adler-32 by image-png, which skips it by default.  The
-benchmark is `tests/png-bench/` (`png_bench.py run`, then `report`).
+benchmark uses, compared with the fastest decoder and encoder available and
+with libpng 1.6.59 (with zlib 1.3.2, its SIMD filter code enabled as in its
+default build), the most widely used PNG library.  Each figure is the
+geometric mean over the images of the speed-up in megapixels per second,
+each image timed as the fastest of 3 runs.
 
-PNG decoding, vio vs image-png:
+- Decoding produces the image's own sample layout (`png::Decoder`; image-png
+  0.18.1 with `Transformations::IDENTITY`, built by `cargo --release`;
+  libpng without transformations).  Checksums are verified, except Adler-32
+  by image-png, which skips it by default.
+- Encoding starts from 8-bit RGB or RGBA (`png::Encoder`, default fast mode;
+  fpnge at its default level, x86 only; libpng at its defaults: zlib level 6,
+  adaptive filters).  In parentheses, the size of vio's files relative to
+  the other's.
 
-| Platform       | CPU         | vio MP/s | image-png MP/s | vs image-png |
-| -------------- | ----------- | -------: | -------------: | -----------: |
-| macOS AArch64  | Apple M4    |      391 |            366 |          +7% |
+All libraries are built from source with the same compiler; the benchmark
+is `tests/png-bench/` (`png_bench.py run`, then `report` or `compare`;
+`.github/workflows/bench-png.yml` runs it on the GitHub-hosted runners).
 
-By image category (Apple M4; number of images in parentheses):
+PNG decoding:
 
-| Category                  | vio MP/s | image-png MP/s | vs image-png |
-| ------------------------- | -------: | -------------: | -----------: |
-| icon_512 (214)            |      495 |            442 |         +12% |
-| icon_64 (214)             |      248 |            233 |          +7% |
-| photo_kodak (25)          |      188 |            184 |          +2% |
-| photo_tecnick (101)       |      232 |            253 |          -8% |
-| photo_wikipedia (50)      |      173 |            178 |          -3% |
-| pngimg (189)              |      352 |            329 |          +7% |
-| screenshot_game (619)     |      421 |            378 |         +11% |
-| screenshot_web (15)       |     1030 |            549 |         +88% |
-| textures_photo (21)       |      163 |            171 |          -5% |
-| textures_pk (1004)        |      555 |            538 |          +3% |
-| textures_pk01 (115)       |      243 |            223 |          +9% |
-| textures_pk02 (237)       |      210 |            187 |         +12% |
-| textures_plants (61)      |      276 |            254 |          +9% |
+| Platform       | CPU                        | vs image-png | vs libpng |
+| -------------- | -------------------------- | -----------: | --------: |
+| macOS AArch64  | Apple M4                   |          +7% |     +148% |
+| Windows x86-64 | Core Ultra 9 285K, clang-cl¹ |          —² |     +134% |
+| Windows x86-64 | Core Ultra 9 285K, MSVC¹   |          —² |     +129% |
+
+PNG encoding:
+
+| Platform       | CPU                        | vs fpnge          | vs libpng           |
+| -------------- | -------------------------- | ----------------: | ------------------: |
+| macOS AArch64  | Apple M4                   |               —³ | +3733% (+10% size) |
+| Windows x86-64 | Core Ultra 9 285K, clang-cl¹ | +13% (−4% size) | +3171% (+8% size)  |
+| Windows x86-64 | Core Ultra 9 285K, MSVC¹   | +40% (−4% size)   | +2945% (+8% size)  |
+
+¹ 1 image in 8 of the corpus (379 images); P-cores.
+² Pending (the hosted-runner benchmark includes it).
+³ fpnge has no Arm code.  Against image-png's fpnge-inspired fast mode:
++48% (−4% size).
+
+By image category, number of images in the corpus in parentheses (decoding on the Apple
+M4, encoding on the Core Ultra 9 285K with clang-cl, 1 image in 8):
+
+| Category              | dec. vs image-png | dec. vs libpng | enc. vs fpnge   | enc. vs libpng     |
+| --------------------- | ----------------: | -------------: | --------------: | -----------------: |
+| icon_512 (214)        |              +12% |          +216% | +69% (−17% size) | +1537% (+32% size) |
+| icon_64 (214)         |               +4% |          +126% | +35% (−17% size) | +1099% (+15% size) |
+| photo_kodak (25)      |               +4% |          +114% | +26% (−3% size) |  +7685% (+8% size) |
+| photo_tecnick (101)   |               -7% |          +173% |  +9% (−2% size) |  +8301% (+3% size) |
+| photo_wikipedia (50)  |               -4% |          +118% |  +3% (−7% size) |  +5603% (+5% size) |
+| pngimg (189)          |               +8% |          +168% | +45% (−2% size) |  +3373% (+3% size) |
+| screenshot_game (619) |              +11% |          +161% | +32% (−5% size) | +3317% (+10% size) |
+| screenshot_web (15)   |              +92% |          +419% | +45% (−4% size) | +3016% (+10% size) |
+| textures_photo (21)   |               -3% |           +96% |  +4% (−0% size) | +5556% (+25% size) |
+| textures_pk (1004)    |               +3% |          +132% | -13% (−6% size) |  +2756% (+6% size) |
+| textures_pk01 (115)   |               +9% |          +156% | +14% (−6% size) | +3966% (+30% size) |
+| textures_pk02 (237)   |              +12% |          +132% | +16% (−3% size) | +7430% (+27% size) |
+| textures_plants (61)  |               +8% |          +148% | +54% (−6% size) |  +3577% (+1% size) |
 
 ### PNG optimization log
 
@@ -291,6 +365,7 @@ Throughput gain of each change over the build before it (A/B on the same
 machine, geometric mean over the corpus or the stated subset).
 
 - Inflate into the image buffer with an 11-bit literal/length table whose entries hold two literals, three table lookups per bit-buffer refill and 16-byte match copies; rows reconstructed in place with NEON/SSE2 filters; CRC-32 by carry-less multiplication and SIMD Adler-32 ([4a01186](https://github.com/ufoym/vio/commit/4a01186)): decoding +170% (Apple M4, 1/8 of the corpus).
+- Single-pass encoder: filters chosen by the smallest sum of absolute residuals, one Huffman code per image from sampled rows, runs of zero residuals as distance-1 matches, structured literal codes coded 32 at a time with AVX2 ([80db3a4](https://github.com/ufoym/vio/commit/80db3a4)): encoding +4100% over the zlib-level-6 encoder (Apple M4), files 5% larger.
 
 ## Building and testing
 

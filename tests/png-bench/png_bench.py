@@ -6,13 +6,18 @@
                [--libpng]
                [--modes decode,encode]
   png_bench.py report RESULTS... [--by-category]
+  png_bench.py compare RESULTS... --mode decode|encode --vs IMPL [--vs IMPL]
+               [--by-category]
 
 `run` lists the corpus's PNG files (sorted; --sample N keeps a deterministic
 1-in-N subset), runs every implementation on them and appends the per-file
 lines to RESULTS.  `report` prints, per mode and implementation, the mean
 and geometric-mean throughput in megapixels per second over the files that
 every implementation of that mode handled, the size of the encoded output
-in bits per pixel, and the throughput relative to vio.
+in bits per pixel, and the throughput relative to vio.  `compare` prints
+Markdown table cells: how much faster vio is than each IMPL (geometric
+means over the files both handled), and for encoding the relative size of
+vio's output.
 """
 import argparse
 import collections
@@ -113,6 +118,30 @@ def report(args):
                 print(line)
 
 
+def compare(args):
+    data = load(args.results)
+    vio = data[(args.mode, "vio")]
+    groups = {"all": sorted(vio)}
+    if args.by_category:
+        for f in sorted(vio):
+            groups.setdefault(category(f), []).append(f)
+    for g, files in groups.items():
+        cells = []
+        for impl in args.vs:
+            other = data.get((args.mode, impl))
+            if not other:
+                cells.append("—")
+                continue
+            common = [f for f in files if f in other]
+            _, gv, bv = summarize(vio, common)
+            _, go, bo = summarize(other, common)
+            cell = f"{100 * (gv / go - 1):+.0f}%"
+            if args.mode == "encode":
+                cell += f" ({100 * (bv / bo - 1):+.0f}% size)"
+            cells.append(cell)
+        print(f"| {g:<22} | " + " | ".join(cells) + " |")
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -129,8 +158,13 @@ def main():
     p = sub.add_parser("report")
     p.add_argument("results", nargs="+")
     p.add_argument("--by-category", action="store_true")
+    c = sub.add_parser("compare")
+    c.add_argument("results", nargs="+")
+    c.add_argument("--mode", required=True)
+    c.add_argument("--vs", action="append", required=True)
+    c.add_argument("--by-category", action="store_true")
     a = ap.parse_args()
-    run(a) if a.cmd == "run" else report(a)
+    {"run": run, "report": report, "compare": compare}[a.cmd](a)
 
 
 if __name__ == "__main__":
