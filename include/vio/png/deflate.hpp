@@ -176,8 +176,10 @@ class Deflater {
     pending_store_.assign(static_cast<std::size_t>(lit_bufsize) * 4, 0);
     pending_buf = pending_store_.data();
     pending_buf_size = static_cast<unsigned long>(lit_bufsize) * 4;
-    sym_buf = pending_buf + lit_bufsize;
-    sym_end = (lit_bufsize - 1) * 3;
+    // (zlib overlays the symbols on pending_buf; kept apart here, and as
+    // 16-bit fields, so that their stores do not alias the state.)
+    syms_.assign(lit_bufsize, {});
+    sym_end = lit_bufsize - 1;
     this->level = level;
     this->strategy = strategy;
     reset();
@@ -821,18 +823,14 @@ class Deflater {
   }
 
   bool tally_lit(unsigned c) {
-    sym_buf[sym_next++] = 0;
-    sym_buf[sym_next++] = 0;
-    sym_buf[sym_next++] = static_cast<std::uint8_t>(c);
+    syms_[sym_next++] = {0, static_cast<std::uint16_t>(c)};
     dyn_ltree[c].fc++;
     return sym_next == sym_end;
   }
   bool tally_dist(unsigned distance, unsigned length) {
     std::uint8_t len = static_cast<std::uint8_t>(length);
     std::uint16_t dist = static_cast<std::uint16_t>(distance);
-    sym_buf[sym_next++] = static_cast<std::uint8_t>(dist);
-    sym_buf[sym_next++] = static_cast<std::uint8_t>(dist >> 8);
-    sym_buf[sym_next++] = len;
+    syms_[sym_next++] = {dist, len};
     dist--;
     dyn_ltree[detail::tables.length_code[len] + detail::LITERALS + 1].fc++;
     dyn_dtree[d_code(dist)].fc++;
@@ -1129,9 +1127,9 @@ class Deflater {
         n -= 32;
       }
     };
-    for (unsigned sx = 0; sx < sym_next; sx += 3) {
-      unsigned dist = sym_buf[sx] | static_cast<unsigned>(sym_buf[sx + 1]) << 8;
-      unsigned lc = sym_buf[sx + 2];
+    for (unsigned sx = 0; sx < sym_next; sx++) {
+      unsigned dist = syms_[sx].dist;
+      unsigned lc = syms_[sx].lc;
       if (dist == 0) {
         put(ltree[lc].fc, ltree[lc].dl);
       } else {
@@ -1219,8 +1217,11 @@ class Deflater {
   int heap[2 * detail::L_CODES + 1]{};
   int heap_len = 0, heap_max = 0;
   std::uint8_t depth[2 * detail::L_CODES + 1]{};
-  std::uint8_t* sym_buf = nullptr;
-  unsigned lit_bufsize = 0, sym_next = 0, sym_end = 0;
+  struct Sym {
+    std::uint16_t dist, lc;  // distance (0 for a literal), literal or length - MIN_MATCH
+  };
+  std::vector<Sym> syms_;
+  unsigned lit_bufsize = 0, sym_next = 0, sym_end = 0;  // (counts of symbols)
   unsigned long opt_len = 0, static_len = 0;
   unsigned matches = 0, insert = 0;
   std::uint16_t bi_buf = 0;
