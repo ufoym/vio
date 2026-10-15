@@ -2,8 +2,10 @@
 //
 //   png-bench <impl> <mode> [reps] < file-list
 //
-// impl: vio, or fpnge when built with VIO_FPNGE_SOURCE_DIR (x86 only).
-// mode: decode   decode to the PNG's own sample layout (vio only)
+// impl: vio; fpnge when built with VIO_FPNGE_SOURCE_DIR (x86 only, encode
+//       only); libpng when built with VIO_LIBPNG_SOURCE_DIR and
+//       VIO_ZLIB_SOURCE_DIR.
+// mode: decode   decode to the PNG's own sample layout
 //       encode   decode to 8-bit RGB or RGBA (RGBA when the file has alpha or
 //                tRNS), then time encoding that buffer at the default effort
 //
@@ -25,6 +27,9 @@
 
 #ifdef VIO_BENCH_FPNGE
 #include "fpnge.h"
+#endif
+#ifdef VIO_BENCH_LIBPNG
+#include <png.h>
 #endif
 
 namespace {
@@ -124,10 +129,7 @@ std::vector<std::uint8_t> encode_vio(const Rgb8& img) {
   e.header.height = img.height;
   e.header.bit_depth = 8;
   e.header.color_type = img.channels == 4 ? vio::png::kTruecolorAlpha : vio::png::kTruecolor;
-  e.begin();
-  const std::size_t stride = std::size_t(img.width) * img.channels;
-  for (std::uint32_t y = 0; y < img.height; y++) e.write_row(img.px.data() + y * stride);
-  return e.finish();
+  return e.encode(img.px.data(), std::size_t(img.width) * img.channels);
 }
 
 #ifdef VIO_BENCH_FPNGE
@@ -138,6 +140,71 @@ std::vector<std::uint8_t> encode_fpnge(const Rgb8& img) {
   std::size_t n = FPNGEEncode(1, img.channels, img.px.data(), img.width,
                               std::size_t(img.width) * img.channels, img.height, out.data(), &opt);
   out.resize(n);
+  return out;
+}
+#endif
+
+#ifdef VIO_BENCH_LIBPNG
+// Decodes to the PNG's own sample layout (16-bit samples big-endian),
+// libpng's defaults otherwise (CRC and Adler-32 checked).
+std::size_t decode_libpng(const std::vector<std::uint8_t>& file, double& mp) {
+  png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
+  png_infop info = png_create_info_struct(png);
+  struct Src {
+    const std::uint8_t* p;
+    std::size_t left;
+  } src{file.data(), file.size()};
+  std::vector<std::uint8_t> px;
+  std::vector<png_bytep> rows;
+  if (setjmp(png_jmpbuf(png))) {
+    png_destroy_read_struct(&png, &info, nullptr);
+    throw std::runtime_error("libpng error");
+  }
+  png_set_read_fn(png, &src, [](png_structp p, png_bytep out, png_size_t n) {
+    auto* s = static_cast<Src*>(png_get_io_ptr(p));
+    if (n > s->left) png_error(p, "end of data");
+    std::memcpy(out, s->p, n);
+    s->p += n;
+    s->left -= n;
+  });
+  png_set_user_limits(png, 0x7fffffff, 0x7fffffff);
+  png_read_info(png, info);
+  png_set_interlace_handling(png);
+  png_read_update_info(png, info);
+  const std::uint32_t w = png_get_image_width(png, info), h = png_get_image_height(png, info);
+  const std::size_t rb = png_get_rowbytes(png, info);
+  px.resize(rb * h);
+  rows.resize(h);
+  for (std::uint32_t y = 0; y < h; y++) rows[y] = px.data() + y * rb;
+  png_read_image(png, rows.data());
+  png_read_end(png, nullptr);
+  png_destroy_read_struct(&png, &info, nullptr);
+  mp = double(w) * h * 1e-6;
+  return px.size();
+}
+
+// libpng's default compression (zlib level 6, adaptive filters).
+std::vector<std::uint8_t> encode_libpng(const Rgb8& img) {
+  png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
+  png_infop info = png_create_info_struct(png);
+  std::vector<std::uint8_t> out;
+  if (setjmp(png_jmpbuf(png))) {
+    png_destroy_write_struct(&png, &info);
+    throw std::runtime_error("libpng error");
+  }
+  png_set_write_fn(png, &out, [](png_structp p, png_bytep data, png_size_t n) {
+    auto* o = static_cast<std::vector<std::uint8_t>*>(png_get_io_ptr(p));
+    o->insert(o->end(), data, data + n);
+  }, [](png_structp) {});
+  png_set_IHDR(png, info, img.width, img.height, 8,
+               img.channels == 4 ? PNG_COLOR_TYPE_RGB_ALPHA : PNG_COLOR_TYPE_RGB,
+               PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
+  png_write_info(png, info);
+  const std::size_t stride = std::size_t(img.width) * img.channels;
+  for (std::uint32_t y = 0; y < img.height; y++)
+    png_write_row(png, const_cast<png_bytep>(img.px.data() + y * stride));
+  png_write_end(png, nullptr);
+  png_destroy_write_struct(&png, &info);
   return out;
 }
 #endif
@@ -174,8 +241,16 @@ int main(int argc, char** argv) {
         continue;
       }
       if (mode == "decode") {
-        if (impl != "vio") throw std::runtime_error("decode: vio only");
         for (int r = 0; r < reps; r++) {
+#ifdef VIO_BENCH_LIBPNG
+          if (impl == "libpng") {
+            auto t0 = Clock::now();
+            bytes = decode_libpng(file, mp);
+            best = std::min(best, std::chrono::duration<double>(Clock::now() - t0).count());
+            continue;
+          }
+#endif
+          if (impl != "vio") throw std::runtime_error("decode: unknown implementation");
           auto t0 = Clock::now();
           vio::png::Decoder d;
           d.decode(file);
@@ -192,6 +267,10 @@ int main(int argc, char** argv) {
           auto t0 = Clock::now();
 #ifdef VIO_BENCH_FPNGE
           if (impl == "fpnge") out = encode_fpnge(img);
+          else
+#endif
+#ifdef VIO_BENCH_LIBPNG
+          if (impl == "libpng") out = encode_libpng(img);
           else
 #endif
           out = encode_vio(img);

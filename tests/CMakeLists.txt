@@ -119,8 +119,9 @@ set(WITH_ARITH_ENC 1)
 set(WITH_ARITH_DEC 1)
 include(libjpeg-turbo.cmake)
 
-# PNG benchmark (png-bench/): vio, and optionally fpnge built from a source
-# tree with the same compiler (x86 only; it needs SSE4.1, PCLMUL and AVX2).
+# PNG benchmark (png-bench/): vio, and optionally fpnge (x86 only; it needs
+# SSE4.1, PCLMUL and AVX2) and libpng with zlib, built from source trees with
+# the same compiler.
 add_executable(png-bench png-bench/png_bench.cpp)
 target_link_libraries(png-bench PRIVATE vio)
 set(VIO_FPNGE_SOURCE_DIR "" CACHE PATH
@@ -136,4 +137,45 @@ if(VIO_FPNGE_SOURCE_DIR)
     set_source_files_properties(${VIO_FPNGE_SOURCE_DIR}/fpnge.cc PROPERTIES
       COMPILE_OPTIONS "-march=haswell;-w")
   endif()
+endif()
+set(VIO_LIBPNG_SOURCE_DIR "" CACHE PATH
+  "libpng 1.6 source tree; adds libpng to png-bench (with VIO_ZLIB_SOURCE_DIR)")
+set(VIO_ZLIB_SOURCE_DIR "" CACHE PATH "zlib source tree for libpng in png-bench")
+if(VIO_LIBPNG_SOURCE_DIR AND VIO_ZLIB_SOURCE_DIR)
+  set(ZLIB_SOURCES adler32 compress crc32 deflate infback inffast inflate
+    inftrees trees uncompr zutil)
+  list(TRANSFORM ZLIB_SOURCES PREPEND ${VIO_ZLIB_SOURCE_DIR}/)
+  list(TRANSFORM ZLIB_SOURCES APPEND .c)
+  add_library(bench-zlib STATIC ${ZLIB_SOURCES})
+  target_include_directories(bench-zlib PUBLIC ${VIO_ZLIB_SOURCE_DIR})
+  set(LIBPNG_SOURCES png pngerror pngget pngmem pngpread pngread pngrio
+    pngrtran pngrutil pngset pngtrans pngwio pngwrite pngwtran pngwutil)
+  list(TRANSFORM LIBPNG_SOURCES PREPEND ${VIO_LIBPNG_SOURCE_DIR}/)
+  list(TRANSFORM LIBPNG_SOURCES APPEND .c)
+  # libpng's default build: its SIMD filters for the target.
+  if(VIO_TARGET_ARCH MATCHES "^(arm64|aarch64|ARM64)$")
+    list(APPEND LIBPNG_SOURCES ${VIO_LIBPNG_SOURCE_DIR}/arm/arm_init.c
+      ${VIO_LIBPNG_SOURCE_DIR}/arm/filter_neon_intrinsics.c
+      ${VIO_LIBPNG_SOURCE_DIR}/arm/palette_neon_intrinsics.c)
+    set(LIBPNG_DEFS PNG_ARM_NEON_OPT=2)
+  elseif(VIO_TARGET_ARCH MATCHES "^(x86_64|AMD64|amd64|i[3-6]86|x86)$")
+    list(APPEND LIBPNG_SOURCES ${VIO_LIBPNG_SOURCE_DIR}/intel/intel_init.c
+      ${VIO_LIBPNG_SOURCE_DIR}/intel/filter_sse2_intrinsics.c)
+    set(LIBPNG_DEFS PNG_INTEL_SSE_OPT=1)
+  else()
+    set(LIBPNG_DEFS PNG_ARM_NEON_OPT=0)
+  endif()
+  configure_file(${VIO_LIBPNG_SOURCE_DIR}/scripts/pnglibconf.h.prebuilt
+    ${CMAKE_CURRENT_BINARY_DIR}/libpng/pnglibconf.h COPYONLY)
+  add_library(bench-libpng STATIC ${LIBPNG_SOURCES})
+  target_include_directories(bench-libpng PUBLIC ${VIO_LIBPNG_SOURCE_DIR}
+    ${CMAKE_CURRENT_BINARY_DIR}/libpng)
+  target_compile_definitions(bench-libpng PRIVATE ${LIBPNG_DEFS})
+  target_link_libraries(bench-libpng PUBLIC bench-zlib)
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(bench-zlib PRIVATE -w)
+    target_compile_options(bench-libpng PRIVATE -w)
+  endif()
+  target_link_libraries(png-bench PRIVATE bench-libpng)
+  target_compile_definitions(png-bench PRIVATE VIO_BENCH_LIBPNG)
 endif()

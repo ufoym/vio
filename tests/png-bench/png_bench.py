@@ -3,6 +3,7 @@
 
   png_bench.py run --corpus DIR --out RESULTS [--sample N] [--reps R]
                [--vio build/native/png-bench] [--image-png PATH] [--fpnge]
+               [--libpng]
                [--modes decode,encode]
   png_bench.py report RESULTS... [--by-category]
 
@@ -45,6 +46,8 @@ def run(args):
             jobs.append([args.image_png, mode, str(args.reps)])
         if args.fpnge and mode == "encode":
             jobs.append([args.vio, "fpnge", mode, str(args.reps)])
+        if args.libpng:
+            jobs.append([args.vio, "libpng", mode, str(args.reps)])
     with open(args.out, "a") as out:
         for cmd in jobs:
             print("running:", " ".join(cmd), f"({len(files)} files)", file=sys.stderr)
@@ -121,6 +124,7 @@ def main():
     r.add_argument("--vio", default="build/native/png-bench")
     r.add_argument("--image-png")
     r.add_argument("--fpnge", action="store_true")
+    r.add_argument("--libpng", action="store_true")
     r.add_argument("--modes", default="decode,encode")
     p = sub.add_parser("report")
     p.add_argument("results", nargs="+")

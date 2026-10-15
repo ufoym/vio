@@ -228,6 +228,7 @@ class Writer : public ImageWriter<T> {
         rescale_[static_cast<std::size_t>(v)] =
             static_cast<PngSample>((v * ((1L << kBitDepth) - 1) + half) / maxval_);
     }
+    writer_.mode = png::Encoder::Mode::kZlib;
     writer_.begin();
   }
 

@@ -1,0 +1,1032 @@
+// vio::png - single-pass PNG image data encoder.
+//
+// FastEncoder turns rows of PNG samples (big-endian 16-bit samples) into
+// the zlib stream of an image's IDAT data, trading some compression for
+// speed:
+//   - each row's filter is the one whose residuals have the smallest sum of
+//     absolute values, the five candidates being computed with SIMD;
+//   - one DEFLATE block holds the whole image, with a Huffman code built
+//     from the residuals of a sample of rows spread over the image;
+//   - the only matches are runs of zero residuals (distance 1).
+#pragma once
+
+#include <algorithm>
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <memory>
+#include <vector>
+
+#include "../jpeg/config.hpp"
+#include "../jpeg/simd/cpu.hpp"
+#include "checksum.hpp"
+#include "filter.hpp"
+
+#if VIO_SIMD_NEON
+#include <arm_neon.h>
+#endif
+#if VIO_SIMD_X86
+#include <immintrin.h>
+#endif
+
+namespace vio::png::detail {
+
+// ---------------------------------------------------------------------------
+// Filters and filter selection
+// ---------------------------------------------------------------------------
+
+// Rows are kept with kRowPad zero bytes before their first sample, so that
+// the left neighbors of the first pixel read as zero.
+inline constexpr std::size_t kRowPad = 16;
+
+// Computes the residuals of all five filters for one row and returns the
+// filter whose residuals have the smallest sum of absolute values (as
+// signed bytes).  cur and up point at padded rows (up is all zeros for the
+// first row).
+inline unsigned choose_filter_scalar(const std::uint8_t* cur, const std::uint8_t* up,
+                                     std::size_t n, unsigned bpp) {
+  std::uint64_t cost[5] = {};
+  for (std::size_t i = 0; i < n; i++) {
+    std::uint8_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp];
+    std::uint8_t r[5] = {x, static_cast<std::uint8_t>(x - a), static_cast<std::uint8_t>(x - b),
+                         static_cast<std::uint8_t>(x - ((a + b) >> 1)),
+                         static_cast<std::uint8_t>(x - paeth(a, b, c))};
+    for (int f = 0; f < 5; f++) cost[f] += r[f] < 128 ? r[f] : 256 - r[f];
+  }
+  unsigned best = 0;
+  for (unsigned f = 1; f < 5; f++)
+    if (cost[f] < cost[best]) best = f;
+  return best;
+}
+
+inline void apply_filter_scalar(unsigned filter, std::uint8_t* out, const std::uint8_t* cur,
+                                const std::uint8_t* up, std::size_t n, unsigned bpp) {
+  for (std::size_t i = 0; i < n; i++) {
+    std::uint8_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp], p = 0;
+    switch (filter) {
+      case kFilterSub: p = a; break;
+      case kFilterUp: p = b; break;
+      case kFilterAvg: p = static_cast<std::uint8_t>((a + b) >> 1); break;
+      case kFilterPaeth: p = paeth(a, b, c); break;
+      default: break;
+    }
+    out[i] = static_cast<std::uint8_t>(x - p);
+  }
+}
+
+#if VIO_SIMD_NEON
+// Paeth predictor for 16 lanes.
+VIO_INLINE uint8x16_t paeth_predict_neon(uint8x16_t a, uint8x16_t b, uint8x16_t c) {
+  uint8x16_t pa = vabdq_u8(b, c), pb = vabdq_u8(a, c);
+  uint8x16_t diff_sign = veorq_u8(vcltq_u8(a, c), vcltq_u8(b, c));
+  uint8x16_t pc = vbslq_u8(diff_sign, vabdq_u8(pa, pb), vqaddq_u8(pa, pb));
+  uint8x16_t use_a = vandq_u8(vcleq_u8(pa, pb), vcleq_u8(pa, pc));
+  uint8x16_t use_b = vcleq_u8(pb, pc);
+  return vbslq_u8(use_a, a, vbslq_u8(use_b, b, c));
+}
+
+VIO_INLINE uint8x16_t abs_residual_neon(uint8x16_t r) {
+  return vreinterpretq_u8_s8(vabsq_s8(vreinterpretq_s8_u8(r)));
+}
+
+inline unsigned choose_filter_neon(const std::uint8_t* cur, const std::uint8_t* up,
+                                   std::size_t n, unsigned bpp) {
+  uint32x4_t total[5];
+  for (auto& t : total) t = vdupq_n_u32(0);
+  std::size_t i = 0;
+  while (i + 16 <= n) {
+    // 16-bit accumulators for at most 64 vectors (each lane gains <= 256
+    // per vector), then widened.
+    uint16x8_t acc[5];
+    for (auto& a : acc) a = vdupq_n_u16(0);
+    std::size_t end = std::min(n & ~std::size_t(15), i + 64 * 16);
+    for (; i < end; i += 16) {
+      uint8x16_t x = vld1q_u8(cur + i), a = vld1q_u8(cur + i - bpp), b = vld1q_u8(up + i),
+                 c = vld1q_u8(up + i - bpp);
+      acc[0] = vpadalq_u8(acc[0], abs_residual_neon(x));
+      acc[1] = vpadalq_u8(acc[1], abs_residual_neon(vsubq_u8(x, a)));
+      acc[2] = vpadalq_u8(acc[2], abs_residual_neon(vsubq_u8(x, b)));
+      acc[3] = vpadalq_u8(acc[3], abs_residual_neon(vsubq_u8(x, vhaddq_u8(a, b))));
+      acc[4] = vpadalq_u8(acc[4], abs_residual_neon(vsubq_u8(x, paeth_predict_neon(a, b, c))));
+    }
+    for (int f = 0; f < 5; f++) total[f] = vpadalq_u16(total[f], acc[f]);
+  }
+  std::uint64_t cost[5];
+  for (int f = 0; f < 5; f++) cost[f] = vaddlvq_u32(total[f]);
+  for (; i < n; i++) {
+    std::uint8_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp];
+    std::uint8_t r[5] = {x, static_cast<std::uint8_t>(x - a), static_cast<std::uint8_t>(x - b),
+                         static_cast<std::uint8_t>(x - ((a + b) >> 1)),
+                         static_cast<std::uint8_t>(x - paeth(a, b, c))};
+    for (int f = 0; f < 5; f++) cost[f] += r[f] < 128 ? r[f] : 256 - r[f];
+  }
+  unsigned best = 0;
+  for (unsigned f = 1; f < 5; f++)
+    if (cost[f] < cost[best]) best = f;
+  return best;
+}
+
+inline void apply_filter_neon(unsigned filter, std::uint8_t* out, const std::uint8_t* cur,
+                              const std::uint8_t* up, std::size_t n, unsigned bpp) {
+  std::size_t i = 0;
+  switch (filter) {
+    case kFilterNone:
+      std::memcpy(out, cur, n);
+      return;
+    case kFilterSub:
+      for (; i + 16 <= n; i += 16) vst1q_u8(out + i, vsubq_u8(vld1q_u8(cur + i), vld1q_u8(cur + i - bpp)));
+      break;
+    case kFilterUp:
+      for (; i + 16 <= n; i += 16) vst1q_u8(out + i, vsubq_u8(vld1q_u8(cur + i), vld1q_u8(up + i)));
+      break;
+    case kFilterAvg:
+      for (; i + 16 <= n; i += 16)
+        vst1q_u8(out + i, vsubq_u8(vld1q_u8(cur + i), vhaddq_u8(vld1q_u8(cur + i - bpp), vld1q_u8(up + i))));
+      break;
+    case kFilterPaeth:
+      for (; i + 16 <= n; i += 16)
+        vst1q_u8(out + i, vsubq_u8(vld1q_u8(cur + i),
+                                   paeth_predict_neon(vld1q_u8(cur + i - bpp), vld1q_u8(up + i),
+                                                      vld1q_u8(up + i - bpp))));
+      break;
+  }
+  apply_filter_scalar(filter, out + i, cur + i, up + i, n - i, bpp);
+}
+#endif
+
+#if VIO_SIMD_X86
+VIO_TARGET_PUSH_SSE2()
+VIO_INLINE __m128i loadu_sse2(const std::uint8_t* p) {
+  return _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+}
+// floor((a + b) / 2)
+VIO_INLINE __m128i avg_floor_sse2(__m128i a, __m128i b) {
+  return _mm_sub_epi8(_mm_avg_epu8(a, b), _mm_and_si128(_mm_xor_si128(a, b), _mm_set1_epi8(1)));
+}
+// Paeth predictor: with lo = min(a, b) and hi = max(a, b), the prediction is
+// lo, hi or c depending on where c lies (equal to the definition, which
+// prefers a, then b, then c on ties).
+VIO_INLINE __m128i paeth_predict_sse2(__m128i a, __m128i b, __m128i c) {
+  __m128i pa = absdiff_sse2(b, c), pb = absdiff_sse2(a, c);
+  __m128i a_lt = _mm_andnot_si128(le_sse2(c, a), _mm_set1_epi8(-1));
+  __m128i b_lt = _mm_andnot_si128(le_sse2(c, b), _mm_set1_epi8(-1));
+  __m128i pc = select_sse2(_mm_xor_si128(a_lt, b_lt), absdiff_sse2(pa, pb), _mm_adds_epu8(pa, pb));
+  __m128i use_a = _mm_and_si128(le_sse2(pa, pb), le_sse2(pa, pc));
+  __m128i use_b = le_sse2(pb, pc);
+  return select_sse2(use_a, a, select_sse2(use_b, b, c));
+}
+// Sum of absolute values of signed bytes, in the two 64-bit lanes.
+VIO_INLINE __m128i abs_sum_sse2(__m128i r) {
+  return _mm_sad_epu8(_mm_min_epu8(r, _mm_sub_epi8(_mm_setzero_si128(), r)), _mm_setzero_si128());
+}
+
+inline unsigned choose_filter_sse2(const std::uint8_t* cur, const std::uint8_t* up,
+                                   std::size_t n, unsigned bpp) {
+  __m128i acc[5];
+  for (auto& a : acc) a = _mm_setzero_si128();
+  std::size_t i = 0;
+  for (; i + 16 <= n; i += 16) {
+    __m128i x = loadu_sse2(cur + i), a = loadu_sse2(cur + i - bpp), b = loadu_sse2(up + i),
+            c = loadu_sse2(up + i - bpp);
+    acc[0] = _mm_add_epi64(acc[0], abs_sum_sse2(x));
+    acc[1] = _mm_add_epi64(acc[1], abs_sum_sse2(_mm_sub_epi8(x, a)));
+    acc[2] = _mm_add_epi64(acc[2], abs_sum_sse2(_mm_sub_epi8(x, b)));
+    acc[3] = _mm_add_epi64(acc[3], abs_sum_sse2(_mm_sub_epi8(x, avg_floor_sse2(a, b))));
+    acc[4] = _mm_add_epi64(acc[4], abs_sum_sse2(_mm_sub_epi8(x, paeth_predict_sse2(a, b, c))));
+  }
+  std::uint64_t cost[5];
+  for (int f = 0; f < 5; f++) {
+    alignas(16) std::uint64_t v[2];
+    _mm_store_si128(reinterpret_cast<__m128i*>(v), acc[f]);
+    cost[f] = v[0] + v[1];
+  }
+  for (; i < n; i++) {
+    std::uint8_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp];
+    std::uint8_t r[5] = {x, static_cast<std::uint8_t>(x - a), static_cast<std::uint8_t>(x - b),
+                         static_cast<std::uint8_t>(x - ((a + b) >> 1)),
+                         static_cast<std::uint8_t>(x - paeth(a, b, c))};
+    for (int f = 0; f < 5; f++) cost[f] += r[f] < 128 ? r[f] : 256 - r[f];
+  }
+  unsigned best = 0;
+  for (unsigned f = 1; f < 5; f++)
+    if (cost[f] < cost[best]) best = f;
+  return best;
+}
+
+inline void apply_filter_sse2(unsigned filter, std::uint8_t* out, const std::uint8_t* cur,
+                              const std::uint8_t* up, std::size_t n, unsigned bpp) {
+  std::size_t i = 0;
+  auto store = [](std::uint8_t* p, __m128i v) { _mm_storeu_si128(reinterpret_cast<__m128i*>(p), v); };
+  switch (filter) {
+    case kFilterNone:
+      std::memcpy(out, cur, n);
+      return;
+    case kFilterSub:
+      for (; i + 16 <= n; i += 16) store(out + i, _mm_sub_epi8(loadu_sse2(cur + i), loadu_sse2(cur + i - bpp)));
+      break;
+    case kFilterUp:
+      for (; i + 16 <= n; i += 16) store(out + i, _mm_sub_epi8(loadu_sse2(cur + i), loadu_sse2(up + i)));
+      break;
+    case kFilterAvg:
+      for (; i + 16 <= n; i += 16)
+        store(out + i, _mm_sub_epi8(loadu_sse2(cur + i),
+                                    avg_floor_sse2(loadu_sse2(cur + i - bpp), loadu_sse2(up + i))));
+      break;
+    case kFilterPaeth:
+      for (; i + 16 <= n; i += 16)
+        store(out + i, _mm_sub_epi8(loadu_sse2(cur + i),
+                                    paeth_predict_sse2(loadu_sse2(cur + i - bpp), loadu_sse2(up + i),
+                                                       loadu_sse2(up + i - bpp))));
+      break;
+  }
+  apply_filter_scalar(filter, out + i, cur + i, up + i, n - i, bpp);
+}
+VIO_TARGET_POP()
+#endif
+
+inline unsigned choose_filter(const std::uint8_t* cur, const std::uint8_t* up, std::size_t n,
+                              unsigned bpp) {
+#if VIO_SIMD_NEON_A64
+  return choose_filter_neon(cur, up, n, bpp);
+#elif VIO_SIMD_X86_64
+  return choose_filter_sse2(cur, up, n, bpp);
+#else
+  return choose_filter_scalar(cur, up, n, bpp);
+#endif
+}
+
+inline void apply_filter(unsigned filter, std::uint8_t* out, const std::uint8_t* cur,
+                         const std::uint8_t* up, std::size_t n, unsigned bpp) {
+#if VIO_SIMD_NEON_A64
+  apply_filter_neon(filter, out, cur, up, n, bpp);
+#elif VIO_SIMD_X86_64
+  apply_filter_sse2(filter, out, cur, up, n, bpp);
+#else
+  apply_filter_scalar(filter, out, cur, up, n, bpp);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Huffman codes
+// ---------------------------------------------------------------------------
+
+// Code lengths for `n` <= 286 symbols with the given frequencies (all
+// nonzero frequencies get a code), limited to max_len bits: a Huffman tree
+// built from the symbols sorted by frequency, then, if it is too deep, the
+// number of codes of each length adjusted as zlib does, the most frequent
+// symbols getting the shortest codes.
+inline void huffman_lengths(const std::uint64_t* freq, int n, int max_len, std::uint8_t* len) {
+  std::uint64_t key[286];  // frequency << 9 | symbol, sorted
+  // Symbols with the smallest frequency (often most of them) are already in
+  // order; only the others are sorted, then the two lists merged.
+  std::uint64_t fmin = ~std::uint64_t(0);
+  for (int i = 0; i < n; i++)
+    if (freq[i] && freq[i] < fmin) fmin = freq[i];
+  std::uint64_t rest[286];
+  int m = 0, nrest = 0;
+  for (int i = 0; i < n; i++) {
+    len[i] = 0;
+    if (freq[i] == fmin) key[m++] = fmin << 9 | static_cast<unsigned>(i);
+    else if (freq[i]) rest[nrest++] = freq[i] << 9 | static_cast<unsigned>(i);
+  }
+  if (m + nrest == 0) return;
+  if (m + nrest == 1) {
+    len[(m ? key[0] : rest[0]) & 511] = 1;
+    return;
+  }
+  std::sort(rest, rest + nrest);
+  std::memcpy(key + m, rest, nrest * sizeof(std::uint64_t));  // all larger than fmin
+  m += nrest;
+  // Two-queue merge: leaves 0..m-1 in order, internal nodes m.. in creation
+  // order (their weights do not decrease).
+  std::uint64_t weight[2 * 286];
+  std::int16_t parent[2 * 286];
+  for (int i = 0; i < m; i++) weight[i] = key[i] >> 9;
+  int leaf = 0, inner = m, next = m;
+  auto pop = [&]() {
+    if (inner >= next || (leaf < m && weight[leaf] <= weight[inner])) return leaf++;
+    return inner++;
+  };
+  while (next < 2 * m - 1) {
+    int x = pop(), y = pop();
+    weight[next] = weight[x] + weight[y];
+    parent[x] = parent[y] = static_cast<std::int16_t>(next);
+    next++;
+  }
+  // Depths from the root (the last node) down; count leaves per length.
+  std::uint8_t depth[2 * 286];
+  depth[next - 1] = 0;
+  unsigned count[64] = {};
+  for (int k = next - 2; k >= 0; k--) {
+    depth[k] = static_cast<std::uint8_t>(depth[parent[k]] + 1);
+    if (k < m) count[std::min<int>(depth[k], max_len)]++;
+  }
+  // Clamping to max_len may over-subscribe the code.  Each step moves a
+  // leaf one level down, next to a leaf taken from the bottom level, which
+  // lowers the Kraft sum by 2^-max_len.
+  std::uint64_t kraft = 0;
+  for (int l = 1; l <= max_len; l++) kraft += std::uint64_t(count[l]) << (max_len - l);
+  for (; kraft > (std::uint64_t(1) << max_len); kraft--) {
+    int bits = max_len - 1;
+    while (count[bits] == 0) bits--;
+    count[bits]--;
+    count[bits + 1] += 2;
+    count[max_len]--;
+  }
+  // Most frequent symbols (end of key[]) get the shortest codes.
+  int k = m - 1;
+  for (int l = 1; l <= max_len; l++)
+    for (unsigned c = 0; c < count[l]; c++) len[key[k--] & 511] = static_cast<std::uint8_t>(l);
+}
+
+// Canonical codes (bit-reversed, ready to be sent least significant bit
+// first) for the given lengths.
+inline void canonical_codes(const std::uint8_t* len, int n, std::uint16_t* code,
+                            std::uint16_t* msb = nullptr) {
+  unsigned count[16] = {}, next[16] = {};
+  for (int i = 0; i < n; i++) count[len[i]]++;
+  count[0] = 0;
+  unsigned c = 0;
+  for (int l = 1; l < 16; l++) {
+    c = (c + count[l - 1]) << 1;
+    next[l] = c;
+  }
+  static constexpr auto rev8 = [] {
+    std::array<std::uint8_t, 256> t{};
+    for (unsigned i = 0; i < 256; i++) {
+      unsigned r = 0;
+      for (int b = 0; b < 8; b++) r |= ((i >> b) & 1u) << (7 - b);
+      t[i] = static_cast<std::uint8_t>(r);
+    }
+    return t;
+  }();
+  for (int i = 0; i < n; i++) {
+    code[i] = 0;
+    if (msb) msb[i] = 0;
+    if (!len[i]) continue;
+    unsigned v = next[len[i]]++;
+    if (msb) msb[i] = static_cast<std::uint16_t>(v);
+    unsigned r = static_cast<unsigned>(rev8[v & 255]) << 8 | rev8[v >> 8];  // 16-bit reversal
+    code[i] = static_cast<std::uint16_t>(r >> (16 - len[i]));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Bit writer
+// ---------------------------------------------------------------------------
+
+// Writes up to 56 bits per put(); the output must have 8 bytes of slack.
+struct BitWriter {
+  std::uint8_t* out;
+  std::uint64_t buf = 0;
+  unsigned n = 0;
+
+  VIO_INLINE void put(std::uint64_t bits, unsigned len) {
+    buf |= bits << n;
+    n += len;
+    std::uint64_t v = buf;
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    v = __builtin_bswap64(v);
+#endif
+    std::memcpy(out, &v, 8);
+    out += n >> 3;
+    buf >>= n & ~7u;
+    n &= 7;
+  }
+  // Pads to a byte boundary.
+  void align() {
+    if (n) put(0, 8 - n);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// The encoder
+// ---------------------------------------------------------------------------
+
+// Growable byte buffer that is not zero-filled, written through raw
+// pointers; keeps 16 bytes of slack past its capacity for wide stores.
+class ByteBuffer {
+ public:
+  std::uint8_t* data() { return data_.get(); }
+  std::size_t size() const { return size_; }
+  std::uint8_t* end() { return data_.get() + size_; }
+  void set_end(std::uint8_t* p) { size_ = static_cast<std::size_t>(p - data_.get()); }
+  std::size_t room(const std::uint8_t* p) const {
+    return cap_ - static_cast<std::size_t>(p - data_.get());
+  }
+  void reserve(std::size_t n) {
+    if (n <= cap_) return;
+    std::size_t cap = std::max(n, cap_ + cap_ / 2);
+    std::unique_ptr<std::uint8_t[]> d(new std::uint8_t[cap + 16]);
+    if (size_) std::memcpy(d.get(), data_.get(), size_);
+    data_ = std::move(d);
+    cap_ = cap;
+  }
+  // Makes room for n more bytes after p (a write position); returns the
+  // write position in the (possibly moved) buffer.
+  std::uint8_t* grow(std::uint8_t* p, std::size_t n) {
+    std::size_t pos = static_cast<std::size_t>(p - data_.get());
+    std::size_t old = size_;
+    size_ = pos;  // keep the bytes written so far
+    reserve(pos + n);
+    size_ = old;
+    return data_.get() + pos;
+  }
+  void append(const void* p, std::size_t n) {
+    reserve(size_ + n);
+    std::memcpy(data_.get() + size_, p, n);
+    size_ += n;
+  }
+  std::vector<std::uint8_t> to_vector() const { return {data_.get(), data_.get() + size_}; }
+
+ private:
+  std::unique_ptr<std::uint8_t[]> data_;
+  std::size_t size_ = 0, cap_ = 0;
+};
+
+// Length symbol (0..28) and extra bits of match lengths 3..258.
+inline constexpr std::uint8_t kLenExtra[29] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2,
+                                               2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
+inline constexpr std::uint16_t kLenBase[29] = {3,  4,  5,  6,  7,  8,  9,  10,  11,  13,
+                                               15, 17, 19, 23, 27, 31, 35, 43,  51,  59,
+                                               67, 83, 99, 115, 131, 163, 195, 227, 258};
+inline unsigned length_symbol(unsigned len) {
+  unsigned s = 28;
+  while (kLenBase[s] > len) s--;
+  return s;
+}
+
+// Splits the m zeros that follow a literal zero into matches of lengths
+// 3..258: calls fn(length) for each; returns the 0..2 zeros left over.
+template <class Fn>
+std::size_t for_run_matches(std::size_t m, Fn&& fn) {
+  while (m >= 3) {
+    std::size_t l = m > 258 ? 258 : m;
+    if (m - l == 1 || m - l == 2) l = m - 3;
+    fn(static_cast<unsigned>(l));
+    m -= l;
+  }
+  return m;
+}
+
+inline unsigned ctz32(std::uint32_t v) {
+#if defined(_MSC_VER) && !defined(__clang__)
+  unsigned long r;
+  _BitScanForward(&r, v);
+  return static_cast<unsigned>(r);
+#else
+  return static_cast<unsigned>(__builtin_ctz(v));
+#endif
+}
+inline unsigned clz32(std::uint32_t v) {
+#if defined(_MSC_VER) && !defined(__clang__)
+  unsigned long r;
+  _BitScanReverse(&r, v);
+  return 31 - static_cast<unsigned>(r);
+#else
+  return static_cast<unsigned>(__builtin_clz(v));
+#endif
+}
+inline unsigned ctz64(std::uint64_t v) {
+#if defined(_MSC_VER) && !defined(__clang__)
+  unsigned long r;
+  _BitScanForward64(&r, v);
+  return static_cast<unsigned>(r);
+#else
+  return static_cast<unsigned>(__builtin_ctzll(v));
+#endif
+}
+
+// The image's Huffman code.  Literal codes have the structure that the
+// vector coders rely on: residuals 0..15 and 240..255 have codes of their
+// own, and residuals 16 * h .. 16 * h + 15 (h = 1..14) share one length.
+// All literal codes are at most 14 bits long.
+struct CodeTables {
+  std::uint8_t len[286];
+  std::uint16_t code[286];      // bit-reversed
+  std::uint32_t lit[256];       // code | length << 16
+  std::uint32_t run_bits[259];  // match of length l, distance 1
+  std::uint8_t run_len[259];
+  std::size_t min_run = 259;    // shortest run of zeros coded as a match
+  // For the vector coders: residuals 0..15 / 240..255 (index lo | top << 4)
+  alignas(32) std::uint8_t near_len[32];
+  alignas(32) std::uint8_t near_lo[32];  // bit-reversed code, low byte
+  alignas(32) std::uint8_t near_hi[32];  // high byte
+  // residuals with high nibble h = 1..14: length, first code (most
+  // significant bit first), 2^length
+  alignas(16) std::uint8_t grp_len[16];
+  alignas(16) std::uint8_t grp_base_lo[16];
+  alignas(16) std::uint8_t grp_base_hi[16];
+  alignas(16) std::uint8_t grp_pow_lo[16];
+  alignas(16) std::uint8_t grp_pow_hi[16];
+};
+
+// Symbol statistics of filtered data, with runs of zeros as the coders code
+// them (assuming that runs of 8 or more become matches).
+struct Histogram {
+  std::uint32_t lit[4][256] = {};
+  std::uint64_t len[29] = {};
+  std::uint64_t zeros = 0;  // literal zeros from runs
+
+  void add_run(std::size_t r) {
+    if (r < 8) {
+      zeros += r;
+      return;
+    }
+    zeros += 1 + for_run_matches(r - 1, [&](unsigned l) { len[length_symbol(l)]++; });
+  }
+  void count(const std::uint8_t* p, std::size_t n) {
+    std::size_t i = 0, run = 0;
+    for (; i + 8 <= n; i += 8) {
+      std::uint64_t v;
+      std::memcpy(&v, p + i, 8);
+      if (v == 0) {
+        run += 8;
+        continue;
+      }
+      if (VIO_LIKELY(run == 0)) {
+        const std::uint8_t* q = p + i;
+        lit[0][q[0]]++;
+        lit[1][q[1]]++;
+        lit[2][q[2]]++;
+        lit[3][q[3]]++;
+        lit[0][q[4]]++;
+        lit[1][q[5]]++;
+        lit[2][q[6]]++;
+        lit[3][q[7]]++;
+        continue;
+      }
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+      unsigned k = static_cast<unsigned>(__builtin_clzll(v)) / 8;
+#else
+      unsigned k = ctz64(v) / 8;
+#endif
+      add_run(run + k);
+      run = 0;
+      for (; k < 8; k++) lit[k & 3][p[i + k]]++;
+    }
+    for (; i < n; i++) {
+      if (p[i] == 0) {
+        run++;
+      } else {
+        if (run) add_run(run);
+        run = 0;
+        lit[0][p[i]]++;
+      }
+    }
+    if (run) add_run(run);
+  }
+};
+
+inline void build_code_tables(const Histogram& h, CodeTables& t) {
+  // Every literal and length symbol gets a code (a sample may miss some);
+  // the counts are scaled up so that this matters little.
+  std::uint64_t freq[286];
+  for (int i = 0; i < 256; i++)
+    freq[i] = std::uint64_t(h.lit[0][i]) + h.lit[1][i] + h.lit[2][i] + h.lit[3][i];
+  freq[0] += h.zeros;
+  for (int i = 0; i < 29; i++) freq[257 + i] = h.len[i];
+  for (int i = 0; i < 286; i++) freq[i] = freq[i] * 16 + 1;
+  freq[256] = 1;
+  // Code lengths over a reduced alphabet: 32 single residuals, 14 groups of
+  // 16, end of block and the length symbols; limited to 10 bits so that
+  // group members (4 more bits) stay within 14.
+  std::uint64_t rf[76];
+  for (int i = 0; i < 16; i++) {
+    rf[i] = freq[i];
+    rf[16 + i] = freq[240 + i];
+  }
+  for (int g = 0; g < 14; g++) {
+    std::uint64_t sum = 0;
+    for (int i = 0; i < 16; i++) sum += freq[16 * (g + 1) + i];
+    rf[32 + g] = sum;
+  }
+  for (int i = 0; i < 30; i++) rf[46 + i] = freq[256 + i];
+  std::uint8_t rl[76];
+  huffman_lengths(rf, 76, 10, rl);
+  for (int i = 0; i < 16; i++) {
+    t.len[i] = rl[i];
+    t.len[240 + i] = rl[16 + i];
+  }
+  for (int g = 0; g < 14; g++)
+    for (int i = 0; i < 16; i++) t.len[16 * (g + 1) + i] = static_cast<std::uint8_t>(rl[32 + g] + 4);
+  for (int i = 0; i < 30; i++) t.len[256 + i] = rl[46 + i];
+  std::uint16_t msb[286];
+  canonical_codes(t.len, 286, t.code, msb);
+  for (unsigned s = 0; s < 29; s++) {
+    for (unsigned e = 0; e < (1u << kLenExtra[s]); e++) {
+      unsigned l = kLenBase[s] + e;
+      t.run_bits[l] = static_cast<std::uint32_t>(t.code[257 + s] | e << t.len[257 + s]);
+      t.run_len[l] = static_cast<std::uint8_t>(t.len[257 + s] + kLenExtra[s] + 1);
+    }
+  }
+  for (int i = 0; i < 256; i++)
+    t.lit[i] = static_cast<std::uint32_t>(t.code[i]) | static_cast<std::uint32_t>(t.len[i]) << 16;
+  t.min_run = 259;
+  for (unsigned r = 4; r <= 258; r++) {
+    unsigned cost = t.len[0];
+    std::size_t left = for_run_matches(r - 1, [&](unsigned l) { cost += t.run_len[l]; });
+    cost += static_cast<unsigned>(left) * t.len[0];
+    if (cost < r * t.len[0]) {
+      t.min_run = r;
+      break;
+    }
+  }
+  for (int i = 0; i < 32; i++) {
+    int sym = i < 16 ? i : 224 + i;
+    t.near_len[i] = t.len[sym];
+    t.near_lo[i] = static_cast<std::uint8_t>(t.code[sym]);
+    t.near_hi[i] = static_cast<std::uint8_t>(t.code[sym] >> 8);
+  }
+  for (int g = 0; g < 16; g++) {
+    bool mid = g >= 1 && g <= 14;
+    unsigned l = mid ? t.len[16 * g] : 0, base = mid ? msb[16 * g] : 0, pow = mid ? 1u << l : 0;
+    t.grp_len[g] = static_cast<std::uint8_t>(l);
+    t.grp_base_lo[g] = static_cast<std::uint8_t>(base);
+    t.grp_base_hi[g] = static_cast<std::uint8_t>(base >> 8);
+    t.grp_pow_lo[g] = static_cast<std::uint8_t>(pow);
+    t.grp_pow_hi[g] = static_cast<std::uint8_t>(pow >> 8);
+  }
+}
+
+inline void emit_run(BitWriter& w, const CodeTables& t, std::size_t run) {
+  const std::uint32_t zero = t.lit[0];
+  if (run < t.min_run) {
+    for (std::size_t i = 0; i < run; i++) w.put(zero & 0xffff, zero >> 16);
+    return;
+  }
+  w.put(zero & 0xffff, zero >> 16);
+  std::size_t m = for_run_matches(run - 1, [&](unsigned l) { w.put(t.run_bits[l], t.run_len[l]); });
+  for (std::size_t i = 0; i < m; i++) w.put(zero & 0xffff, zero >> 16);
+}
+
+VIO_INLINE void emit_literals(BitWriter& w, const CodeTables& t, const std::uint8_t* p,
+                              std::size_t n) {
+  for (std::size_t i = 0; i < n; i++) w.put(t.lit[p[i]] & 0xffff, t.lit[p[i]] >> 16);
+}
+
+VIO_INLINE void emit8(BitWriter& w, const std::uint32_t* lit, const std::uint8_t* q) {
+  // Groups of three and two codes of up to 14 bits per put().
+  std::uint32_t e0 = lit[q[0]], e1 = lit[q[1]], e2 = lit[q[2]];
+  w.put((e0 & 0xffff) | (e1 & 0xffff) << (e0 >> 16) | (e2 & 0xffffull) << ((e0 >> 16) + (e1 >> 16)),
+        (e0 >> 16) + (e1 >> 16) + (e2 >> 16));
+  e0 = lit[q[3]], e1 = lit[q[4]], e2 = lit[q[5]];
+  w.put((e0 & 0xffff) | (e1 & 0xffff) << (e0 >> 16) | (e2 & 0xffffull) << ((e0 >> 16) + (e1 >> 16)),
+        (e0 >> 16) + (e1 >> 16) + (e2 >> 16));
+  e0 = lit[q[6]], e1 = lit[q[7]];
+  w.put((e0 & 0xffff) | (e1 & 0xffff) << (e0 >> 16), (e0 >> 16) + (e1 >> 16));
+}
+
+// Huffman-codes n bytes, continuing a run of `run` zeros from before;
+// returns the run of zeros at the end (not yet written).  Runs start at
+// 8-byte words that are all zero and extend over the zero bytes that begin
+// the next word.
+inline std::size_t encode_bytes_scalar(BitWriter& writer, const CodeTables& t,
+                                       const std::uint8_t* p, std::size_t n, std::size_t run) {
+  // A local copy of the writer stays in registers: stores through the
+  // output pointer could alias it otherwise.
+  BitWriter w = writer;
+  std::size_t i = 0;
+  for (; i + 8 <= n; i += 8) {
+    std::uint64_t v;
+    std::memcpy(&v, p + i, 8);
+    if (v == 0) {
+      run += 8;
+      continue;
+    }
+    if (VIO_LIKELY(run == 0)) {
+      emit8(w, t.lit, p + i);
+      continue;
+    }
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    unsigned lead = static_cast<unsigned>(__builtin_clzll(v)) / 8;
+#else
+    unsigned lead = ctz64(v) / 8;
+#endif
+    writer = w;
+    emit_run(writer, t, run + lead);
+    w = writer;
+    run = 0;
+    emit_literals(w, t, p + i + lead, 8 - lead);
+  }
+  for (; i < n; i++) {
+    if (p[i] == 0) {
+      run++;
+    } else {
+      if (run) {
+        writer = w;
+        emit_run(writer, t, run);
+        w = writer;
+      }
+      run = 0;
+      w.put(t.lit[p[i]] & 0xffff, t.lit[p[i]] >> 16);
+    }
+  }
+  writer = w;
+  return run;
+}
+
+#if VIO_SIMD_AVX2
+VIO_TARGET_PUSH_("avx2,bmi,bmi2")
+// Codes for 32 residuals: in each 64-bit lane of *code the codes of four
+// consecutive residuals, their total length in the same lane of *len.  The
+// lanes come in this order: lo[0], lo[1], hi[0], hi[1], lo[2], lo[3],
+// hi[2], hi[3] (residuals 0-3, 4-7, 8-11, ...).  Residuals whose byte of
+// `keep` is zero get no code.
+VIO_INLINE void code32_avx2(const CodeTables& t, __m256i b, __m256i keep, __m256i& code_lo,
+                            __m256i& len_lo, __m256i& code_hi, __m256i& len_hi) {
+  auto bcast = [](const std::uint8_t* p) {
+    return _mm256_broadcastsi128_si256(_mm_load_si128(reinterpret_cast<const __m128i*>(p)));
+  };
+  const __m256i nib = _mm256_set1_epi8(0x0f);
+  const __m256i lo = _mm256_and_si256(b, nib);
+  const __m256i hi = _mm256_and_si256(_mm256_srli_epi16(b, 4), nib);
+  const __m256i top = _mm256_cmpgt_epi8(_mm256_setzero_si256(), b);  // residual >= 128
+  auto near = [&](const std::uint8_t* tab) {
+    return _mm256_blendv_epi8(_mm256_shuffle_epi8(bcast(tab), lo), _mm256_shuffle_epi8(bcast(tab + 16), lo),
+                              top);
+  };
+  const __m256i nlen = near(t.near_len), nlo = near(t.near_lo), nhi = near(t.near_hi);
+  const __m256i mid = _mm256_and_si256(_mm256_cmpgt_epi8(hi, _mm256_setzero_si256()),
+                                       _mm256_cmpgt_epi8(_mm256_set1_epi8(15), hi));
+  const __m256i glen = _mm256_shuffle_epi8(bcast(t.grp_len), hi);
+  const __m256i gblo = _mm256_shuffle_epi8(bcast(t.grp_base_lo), hi);
+  const __m256i gbhi = _mm256_shuffle_epi8(bcast(t.grp_base_hi), hi);
+  const __m256i gplo = _mm256_shuffle_epi8(bcast(t.grp_pow_lo), hi);
+  const __m256i gphi = _mm256_shuffle_epi8(bcast(t.grp_pow_hi), hi);
+  const __m256i len8 = _mm256_and_si256(_mm256_blendv_epi8(nlen, glen, mid), keep);
+  // Bit reversal of the bytes of 16-bit values, then byte swap: reverses
+  // each 16-bit lane.
+  const __m256i rev4 = _mm256_setr_epi8(0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15, 0,
+                                        8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15);
+  const __m256i rev4hi = _mm256_slli_epi16(rev4, 4);  // within bytes: values < 16
+  const __m256i swap = _mm256_setr_epi8(1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14, 1,
+                                        0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14);
+  auto half = [&](auto unpack, __m256i& code64, __m256i& len64) VIO_LAMBDA_INLINE {
+    const __m256i z = _mm256_setzero_si256();
+    // mid codes: reverse(base + lo) >> (16 - length) = reverse(..) * 2^length >> 16
+    __m256i v = _mm256_add_epi16(unpack(gblo, gbhi), unpack(lo, z));
+    __m256i vl = _mm256_and_si256(v, nib), vh = _mm256_and_si256(_mm256_srli_epi16(v, 4), nib);
+    __m256i rb = _mm256_or_si256(_mm256_shuffle_epi8(rev4hi, vl), _mm256_shuffle_epi8(rev4, vh));
+    __m256i mc = _mm256_mulhi_epu16(_mm256_shuffle_epi8(rb, swap), unpack(gplo, gphi));
+    __m256i m16 = unpack(mid, mid);
+    __m256i c16 = _mm256_blendv_epi8(unpack(nlo, nhi), mc, m16);
+    __m256i l16 = unpack(len8, z);
+    c16 = _mm256_and_si256(c16, _mm256_cmpgt_epi16(l16, z));  // no bits for dropped residuals
+    // pairs -> 32-bit lanes
+    const __m256i m16lo = _mm256_set1_epi32(0xffff);
+    __m256i le = _mm256_and_si256(l16, m16lo);
+    __m256i c32 = _mm256_or_si256(_mm256_and_si256(c16, m16lo), _mm256_sllv_epi32(_mm256_srli_epi32(c16, 16), le));
+    __m256i l32 = _mm256_add_epi32(le, _mm256_srli_epi32(l16, 16));
+    // pairs -> 64-bit lanes
+    const __m256i m32lo = _mm256_set1_epi64x(0xffffffff);
+    __m256i le2 = _mm256_and_si256(l32, m32lo);
+    code64 = _mm256_or_si256(_mm256_and_si256(c32, m32lo), _mm256_sllv_epi64(_mm256_srli_epi64(c32, 32), le2));
+    len64 = _mm256_add_epi64(le2, _mm256_srli_epi64(l32, 32));
+  };
+  half([](__m256i a, __m256i b2) { return _mm256_unpacklo_epi8(a, b2); }, code_lo, len_lo);
+  half([](__m256i a, __m256i b2) { return _mm256_unpackhi_epi8(a, b2); }, code_hi, len_hi);
+}
+
+// encode_bytes_scalar() with 32 residuals per step; runs start at 32-byte
+// blocks that are all zero.  p must have 32 readable bytes past n.
+inline std::size_t encode_bytes_avx2(BitWriter& writer, const CodeTables& t,
+                                     const std::uint8_t* p, std::size_t n, std::size_t run) {
+  BitWriter w = writer;
+  const __m256i z = _mm256_setzero_si256();
+  const __m256i lane = _mm256_setr_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+                                        18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31);
+  for (std::size_t i = 0; i < n; i += 32) {
+    const __m256i b = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p + i));
+    const std::size_t avail = n - i;
+    const unsigned valid = avail >= 32 ? 0xffffffffu : (1u << avail) - 1;
+    const unsigned zero = static_cast<unsigned>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(b, z))) & valid;
+    if (zero == valid) {
+      run += avail >= 32 ? 32 : avail;
+      continue;
+    }
+    __m256i keep = _mm256_set1_epi8(-1);
+    unsigned first = 0;
+    if (run) {
+      first = ctz32(~zero);
+      writer = w;
+      emit_run(writer, t, run + first);
+      w = writer;
+      run = 0;
+    }
+    unsigned end = avail >= 32 ? 32 : static_cast<unsigned>(avail);
+    // Eight or more zeros at the end start a run.
+    const unsigned nonzero = ~zero & valid;
+    const unsigned trail = end - 32 + clz32(nonzero);
+    if (trail >= 8) {
+      end -= trail;
+      run = trail;
+    }
+    if (first || end < 32)
+      keep = _mm256_and_si256(_mm256_cmpgt_epi8(lane, _mm256_set1_epi8(static_cast<char>(first - 1))),
+                              _mm256_cmpgt_epi8(_mm256_set1_epi8(static_cast<char>(end)), lane));
+    __m256i clo, llo, chi, lhi;
+    code32_avx2(t, b, keep, clo, llo, chi, lhi);
+    alignas(32) std::uint64_t c[2][4], l[2][4];
+    _mm256_store_si256(reinterpret_cast<__m256i*>(c[0]), clo);
+    _mm256_store_si256(reinterpret_cast<__m256i*>(c[1]), chi);
+    _mm256_store_si256(reinterpret_cast<__m256i*>(l[0]), llo);
+    _mm256_store_si256(reinterpret_cast<__m256i*>(l[1]), lhi);
+    w.put(c[0][0], static_cast<unsigned>(l[0][0]));
+    w.put(c[0][1], static_cast<unsigned>(l[0][1]));
+    w.put(c[1][0], static_cast<unsigned>(l[1][0]));
+    w.put(c[1][1], static_cast<unsigned>(l[1][1]));
+    w.put(c[0][2], static_cast<unsigned>(l[0][2]));
+    w.put(c[0][3], static_cast<unsigned>(l[0][3]));
+    w.put(c[1][2], static_cast<unsigned>(l[1][2]));
+    w.put(c[1][3], static_cast<unsigned>(l[1][3]));
+  }
+  writer = w;
+  return run;
+}
+VIO_TARGET_POP()
+#endif
+
+class FastEncoder {
+ public:
+  // Writes a zlib stream holding the filtered rows of an image with `height`
+  // rows of `row_bytes` bytes and `bpp` bytes per complete pixel (1 for
+  // sub-byte depths), appending it to `out`.  load_row(y, dst) stores row
+  // y's samples at dst (big-endian 16-bit samples).  `filter` selects
+  // adaptive filtering (else filter type 0 throughout).
+  template <class RowFn>
+  void encode(std::size_t row_bytes, std::uint32_t height, unsigned bpp, bool filter,
+              RowFn&& load_row, ByteBuffer& out) {
+    rb_ = row_bytes;
+    bpp_ = bpp;
+    filter_ = filter;
+#if VIO_SIMD_AVX2
+    avx2_ = (jpeg::simd::cpu_flags() & (jpeg::simd::kAVX2 | jpeg::simd::kBMI2)) ==
+            (jpeg::simd::kAVX2 | jpeg::simd::kBMI2);
+#endif
+    const std::size_t stride = kRowPad + ((rb_ + 15) & ~std::size_t(15)) + 16;
+    rows_.assign(2 * stride, 0);
+    const std::size_t line = rb_ + 1, total = static_cast<std::size_t>(height) * line;
+    Histogram hist;
+    std::uint32_t adler = 1;
+    std::size_t run = 0;
+    if (total <= kTwoPassBytes) {
+      // Small image: filter it all, take the statistics of all of it, then
+      // code it in one go.
+      std::unique_ptr<std::uint8_t[]> data(new std::uint8_t[total + 32]);
+      for (std::uint32_t y = 0; y < height; y++) {
+        std::uint8_t* cur = rows_.data() + kRowPad + (y & 1) * stride;
+        const std::uint8_t* up = rows_.data() + kRowPad + ((y + 1) & 1) * stride;
+        load_row(y, cur);
+        filter_row(data.get() + y * line, cur, up);
+      }
+      hist.count(data.get(), total);
+      build_code_tables(hist, t_);
+      adler = zlib::adler32(1, data.get(), total);
+      out.reserve(out.size() + 1024 + 2 * total);
+      BitWriter w{out.end()};
+      write_headers(w);
+      run = encode_bytes(w, data.get(), total, 0);
+      finish(w, run, adler, out);
+      return;
+    }
+    // Huffman code from a sample of rows.
+    filtered_.assign(line + 32, 0);
+    {
+      const std::uint32_t step = std::max<std::uint32_t>(2, height / 48);
+      std::uint8_t* cur = rows_.data() + kRowPad;
+      std::uint8_t* up = cur + stride;
+      for (std::uint32_t y = 0; y < height; y += step) {
+        load_row(y, cur);
+        if (y > 0) load_row(y - 1, up);
+        else std::memset(up, 0, rb_);
+        filter_row(filtered_.data(), cur, up);
+        hist.count(filtered_.data(), line);
+      }
+    }
+    build_code_tables(hist, t_);
+    out.reserve(out.size() + 1024 + total / 2);
+    BitWriter w{out.end()};
+    write_headers(w);
+    std::memset(rows_.data(), 0, rows_.size());
+    for (std::uint32_t y = 0; y < height; y++) {
+      std::uint8_t* cur = rows_.data() + kRowPad + (y & 1) * stride;
+      const std::uint8_t* up = rows_.data() + kRowPad + ((y + 1) & 1) * stride;
+      load_row(y, cur);
+      filter_row(filtered_.data(), cur, up);
+      adler = zlib::adler32(adler, filtered_.data(), line);
+      // Grow the output if the remaining room might not do (codes of up to
+      // 14 bits per byte).
+      if (out.room(w.out) < 2 * line + 64) w.out = out.grow(w.out, 2 * line + 64);
+      run = encode_bytes(w, filtered_.data(), line, run);
+    }
+    finish(w, run, adler, out);
+  }
+
+ private:
+  static constexpr std::size_t kTwoPassBytes = 256 * 1024;
+
+  std::size_t encode_bytes(BitWriter& w, const std::uint8_t* p, std::size_t n, std::size_t run) {
+#if VIO_SIMD_AVX2
+    if (avx2_) return encode_bytes_avx2(w, t_, p, n, run);
+#endif
+    return encode_bytes_scalar(w, t_, p, n, run);
+  }
+
+  // Filters the row at cur (above it: up) into dst (filter type byte
+  // first).
+  void filter_row(std::uint8_t* dst, const std::uint8_t* cur, const std::uint8_t* up) {
+    unsigned f = filter_ ? choose_filter(cur, up, rb_, bpp_) : kFilterNone;
+    dst[0] = static_cast<std::uint8_t>(f);
+    apply_filter(f, dst + 1, cur, up, rb_, bpp_);
+  }
+
+  void write_headers(BitWriter& w) {
+    w.put(0x78, 8);
+    w.put(0x01, 8);
+    write_block_header(w);
+  }
+
+  void finish(BitWriter& w, std::size_t run, std::uint32_t adler, ByteBuffer& out) {
+    if (run) emit_run(w, t_, run);
+    w.put(t_.code[256], t_.len[256]);
+    w.align();
+    for (int i = 0; i < 4; i++) w.out[i] = static_cast<std::uint8_t>(adler >> (24 - 8 * i));
+    out.set_end(w.out + 4);
+  }
+
+  // Dynamic block header: code lengths for 286 literal/length codes and one
+  // distance code, run-length coded.
+  void write_block_header(BitWriter& w) {
+    std::uint8_t lens[287];
+    std::memcpy(lens, t_.len, 286);
+    lens[286] = 1;  // the distance code
+    struct Sym {
+      std::uint8_t sym, extra;
+    };
+    Sym syms[287];
+    int nsyms = 0;
+    auto push = [&](int sym, int extra) {
+      syms[nsyms++] = {static_cast<std::uint8_t>(sym), static_cast<std::uint8_t>(extra)};
+    };
+    for (int i = 0; i < 287;) {
+      int j = i;
+      while (j < 287 && lens[j] == lens[i]) j++;
+      int r = j - i;
+      if (lens[i] == 0) {
+        while (r >= 11) {
+          int k = std::min(r, 138);
+          push(18, k - 11);
+          r -= k;
+        }
+        if (r >= 3) {
+          push(17, r - 3);
+          r = 0;
+        }
+      } else {
+        push(lens[i], 0);
+        r--;
+        while (r >= 3) {
+          int k = std::min(r, 6);
+          push(16, k - 3);
+          r -= k;
+        }
+      }
+      while (r-- > 0) push(lens[i], 0);
+      i = j;
+    }
+    std::uint64_t f[19] = {};
+    for (int k = 0; k < nsyms; k++) f[syms[k].sym]++;
+    std::uint8_t cl[19];
+    std::uint16_t cc[19];
+    huffman_lengths(f, 19, 7, cl);
+    canonical_codes(cl, 19, cc);
+    static constexpr std::uint8_t order[19] = {16, 17, 18, 0, 8,  7, 9,  6, 10, 5,
+                                               11, 4,  12, 3, 13, 2, 14, 1, 15};
+    int hclen = 19;
+    while (hclen > 4 && cl[order[hclen - 1]] == 0) hclen--;
+    w.put(1 | 2 << 1, 3);  // final block, dynamic codes
+    w.put(286 - 257, 5);
+    w.put(1 - 1, 5);
+    w.put(static_cast<unsigned>(hclen - 4), 4);
+    for (int i = 0; i < hclen; i++) w.put(cl[order[i]], 3);
+    static constexpr std::uint8_t extra_bits[3] = {2, 3, 7};
+    for (int k = 0; k < nsyms; k++) {
+      const Sym& s = syms[k];
+      w.put(cc[s.sym], cl[s.sym]);
+      if (s.sym >= 16) w.put(s.extra, extra_bits[s.sym - 16]);
+    }
+  }
+
+  std::size_t rb_ = 0;
+  unsigned bpp_ = 1;
+  bool filter_ = true;
+#if VIO_SIMD_AVX2
+  bool avx2_ = false;
+#endif
+  std::vector<std::uint8_t> rows_, filtered_;
+  CodeTables t_;
+};
+
+}  // namespace vio::png::detail
