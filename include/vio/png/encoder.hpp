@@ -19,6 +19,7 @@
 #include "fast_encoder.hpp"
 #include "filter.hpp"
 #include "info.hpp"
+#include "transform.hpp"
 
 namespace vio::png {
 
@@ -77,6 +78,8 @@ class Encoder {
   Info info;
   Mode mode = Mode::kFast;
   WriteOptions options;
+  // How the rows given differ from native layout (none by default).
+  WriteTransforms transforms;
   // Old names, kept as references into info.
   Header& header = info.header;
   std::vector<PaletteEntry>& palette = info.palette;
@@ -87,6 +90,13 @@ class Encoder {
 
   // Bytes per row in native layout.
   std::size_t row_bytes() const { return row_bytes_for(header.width); }
+  // Bytes per row as given (with `transforms`).
+  std::size_t input_row_bytes() const {
+    if (!transforms.any()) return row_bytes();
+    detail::WritePlan plan;
+    plan.init(header, transforms);
+    return plan.input_row_bytes(header.width);
+  }
 
   // Encodes a whole image: rows of row_bytes() bytes in native layout
   // (16-bit samples in host byte order), `stride` bytes apart.
@@ -120,7 +130,9 @@ class Encoder {
   // Writes the image data of the default image.
   void write_image(const void* pixels, std::size_t stride) {
     if (!begun_) begin();
-    write_data(static_cast<const std::uint8_t*>(pixels), stride, header.width, header.height, false);
+    std::vector<std::uint8_t> tmp;
+    const std::uint8_t* p = convert(static_cast<const std::uint8_t*>(pixels), stride, header.width, header.height, tmp);
+    write_data(p, stride, header.width, header.height, false);
     rows_done_ = header.height;
     image_done_ = true;
   }
@@ -131,6 +143,10 @@ class Encoder {
   void write_row(const void* row) {
     if (!begun_) begin();
     if (rows_done_ >= header.height) return;
+    if (transforms.any()) {
+      std::size_t stride = 0;
+      row = convert(static_cast<const std::uint8_t*>(row), stride, header.width, 1, row_tmp_);
+    }
     if (mode == Mode::kZlib && !header.interlace) {
       if (!streaming_) start_row_stream();
       stream_row(static_cast<const std::uint8_t*>(row));
@@ -155,7 +171,9 @@ class Encoder {
     if (!info.animation) fail("add_frame() without Info::animation");
     check_frame(fc);
     write_fctl(fc);
-    write_data(static_cast<const std::uint8_t*>(pixels), stride, fc.width, fc.height, true);
+    std::vector<std::uint8_t> tmp;
+    const std::uint8_t* p = convert(static_cast<const std::uint8_t*>(pixels), stride, fc.width, fc.height, tmp);
+    write_data(p, stride, fc.width, fc.height, true);
   }
 
   // Writes the chunks that follow the image data and IEND; returns the file.
@@ -170,6 +188,20 @@ class Encoder {
   }
 
  private:
+  // Rows given with `transforms` into native layout (in `tmp`; `stride`
+  // becomes that of the converted rows).
+  const std::uint8_t* convert(const std::uint8_t* pixels, std::size_t& stride, std::uint32_t w, std::uint32_t h,
+                              std::vector<std::uint8_t>& tmp) {
+    if (!transforms.any()) return pixels;
+    detail::WritePlan plan;
+    plan.init(header, transforms);
+    const std::size_t rb = row_bytes_for(w), in_rb = plan.input_row_bytes(w);
+    tmp.resize(rb * h + 8);
+    for (std::uint32_t y = 0; y < h; y++) plan.run(pixels + y * (h > 1 ? stride : in_rb), w, tmp.data() + y * rb);
+    stride = rb;
+    return tmp.data();
+  }
+
   std::size_t row_bytes_for(std::uint32_t w) const {
     return (static_cast<std::size_t>(w) * num_channels(header.color_type) * header.bit_depth + 7) / 8;
   }
@@ -726,7 +758,7 @@ class Encoder {
   detail::ByteBuffer out_;
   std::unique_ptr<std::uint8_t[]> image_;  // rows kept by write_row()
   std::unique_ptr<zlib::Deflater> deflater_;
-  std::vector<std::uint8_t> scanline_, prev_, filtered_, zbuf_;
+  std::vector<std::uint8_t> scanline_, prev_, filtered_, zbuf_, row_tmp_;
   std::size_t row_bytes_ = 0;
   unsigned bpp_ = 1, filters_ = kFilterBitsAll;
   std::uint32_t rows_done_ = 0, seq_ = 0;

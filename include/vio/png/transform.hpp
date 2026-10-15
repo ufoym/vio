@@ -123,6 +123,30 @@ struct Transforms {
   std::uint8_t user_depth = 0, user_channels = 0;
 };
 
+// Conversions of the rows given to the encoder into the image's format,
+// applied in this order: user callback, filler removal, unpacking (packed
+// least significant first, or one sample per byte), byte order, scaling up
+// from significant bits, alpha order, alpha inversion, BGR, gray inversion.
+struct WriteTransforms {
+  std::function<void(RowInfo& info, std::uint8_t* row)> user;  // first
+  std::optional<Transforms::Filler> strip_filler;  // drop a filler channel
+  bool packing = false;   // samples of 1, 2 or 4 bits one per byte
+  bool packswap = false;  // packed samples least significant first
+  ByteOrder byte_order = ByteOrder::kHost;  // of 16-bit samples
+  // Samples hold only this many bits; they are scaled to the bit depth
+  // (the high bits repeated in the low ones).
+  std::optional<SignificantBits> shift;
+  bool swap_alpha = false;    // alpha first
+  bool invert_alpha = false;  // transparency instead of opacity
+  bool bgr = false;
+  bool invert_mono = false;
+
+  bool any() const {
+    return user || strip_filler || packing || packswap || byte_order != ByteOrder::kHost || shift ||
+           swap_alpha || invert_alpha || bgr || invert_mono;
+  }
+};
+
 namespace detail {
 
 // Fixed-point (x 100000) arithmetic, rounded as the gamma code expects.
@@ -1302,6 +1326,165 @@ class TransformPlan {
   unsigned gamma_shift_ = 0;
   std::vector<std::uint8_t> palette_lookup_, quantize_index_;
   RowInfo out_;
+  std::vector<std::uint16_t> s_;
+};
+
+// Converts rows given to the encoder (in the format WriteTransforms
+// describes) into native layout: PNG sample order, 16-bit samples in host
+// byte order.
+class WritePlan {
+ public:
+  void init(const Header& h, const WriteTransforms& t) {
+    t_ = t;
+    color_type_ = h.color_type;
+    bit_depth_ = h.bit_depth;
+    channels_ = static_cast<std::uint8_t>(num_channels(h.color_type));
+    in_channels_ = channels_;
+    if (t.strip_filler && (h.color_type == kTruecolor || (h.color_type == kGray && h.bit_depth >= 8)))
+      in_channels_++;
+    in_depth_ = t.packing && h.bit_depth < 8 ? 8 : h.bit_depth;
+    shift_ = false;
+    if (t.shift) {
+      const SignificantBits& b = *t.shift;
+      const unsigned d = h.bit_depth;
+      bool ok = (h.color_type & 2) ? b.red && b.red <= d && b.green && b.green <= d && b.blue && b.blue <= d
+                                   : b.gray && b.gray <= d;
+      if (h.color_type & 4) ok = ok && b.alpha && b.alpha <= d;
+      if (h.color_type == kIndexed) ok = false;
+      shift_ = ok;
+    }
+    swap_in_ = t.byte_order == ByteOrder::kLittle;
+#if !defined(__BYTE_ORDER__) || __BYTE_ORDER__ != __ORDER_BIG_ENDIAN__
+    if (t.byte_order == ByteOrder::kHost) swap_in_ = true;
+#endif
+  }
+  // Bytes per input row of `width` pixels.
+  std::size_t input_row_bytes(std::uint32_t width) const {
+    return (static_cast<std::size_t>(width) * in_channels_ * in_depth_ + 7) / 8;
+  }
+  std::size_t row_bytes(std::uint32_t width) const {
+    return (static_cast<std::size_t>(width) * channels_ * bit_depth_ + 7) / 8;
+  }
+
+  void run(const std::uint8_t* in, std::uint32_t width, std::uint8_t* out) {
+    const std::size_t irb = input_row_bytes(width);
+    if (t_.user) {
+      buf_.assign(in, in + irb);
+      RowInfo u{width, color_type_, in_depth_, in_channels_};
+      t_.user(u, buf_.data());
+      in = buf_.data();
+    }
+    // samples
+    const std::size_t n = static_cast<std::size_t>(width) * in_channels_;
+    s_.resize(n + 4);
+    if (in_depth_ == 16) {
+      for (std::size_t i = 0; i < n; i++)
+        s_[i] = swap_in_ ? static_cast<std::uint16_t>(in[2 * i + 1] << 8 | in[2 * i])
+                         : static_cast<std::uint16_t>(in[2 * i] << 8 | in[2 * i + 1]);
+    } else if (in_depth_ == 8) {
+      for (std::size_t i = 0; i < n; i++) s_[i] = in[i];
+    } else {
+      const unsigned b = in_depth_, mask = (1u << b) - 1;
+      for (std::size_t i = 0; i < n; i++) {
+        const unsigned pos = static_cast<unsigned>((i * b) % 8);
+        s_[i] = static_cast<std::uint16_t>((in[i * b / 8] >> (t_.packswap ? pos : 8 - b - pos)) & mask);
+      }
+    }
+    unsigned ch = in_channels_;
+    if (ch != channels_) {  // drop the filler
+      const unsigned skip = t_.strip_filler->before ? 0 : ch - 1;
+      std::size_t d = 0;
+      for (std::size_t x = 0; x < width; x++)
+        for (unsigned c = 0; c < ch; c++)
+          if (c != skip) s_[d++] = s_[x * ch + c];
+      ch = channels_;
+    }
+    if (in_depth_ != bit_depth_) {
+      // one sample per byte: 1-bit samples are set if nonzero, others keep
+      // their low bits
+      for (std::size_t i = 0, k = static_cast<std::size_t>(width) * ch; i < k; i++)
+        s_[i] = bit_depth_ == 1 ? (s_[i] != 0) : static_cast<std::uint16_t>(s_[i] & ((1u << bit_depth_) - 1));
+    }
+    if (shift_) scale_up(width, ch);
+    const bool alpha = (color_type_ & 4) != 0;
+    if (t_.swap_alpha && alpha)
+      for (std::size_t x = 0; x < width; x++) {
+        std::uint16_t* p = &s_[x * ch];
+        const std::uint16_t a = p[0];
+        for (unsigned c = 0; c + 1 < ch; c++) p[c] = p[c + 1];
+        p[ch - 1] = a;
+      }
+    if (t_.invert_alpha && alpha) {
+      const unsigned max = (1u << bit_depth_) - 1;
+      for (std::size_t x = 0; x < width; x++) s_[x * ch + ch - 1] = static_cast<std::uint16_t>(max - s_[x * ch + ch - 1]);
+    }
+    if (t_.bgr && (color_type_ == kTruecolor || color_type_ == kTruecolorAlpha))
+      for (std::size_t x = 0; x < width; x++) std::swap(s_[x * ch], s_[x * ch + 2]);
+    if (t_.invert_mono && (color_type_ == kGray || (color_type_ == kGrayAlpha && bit_depth_ >= 8))) {
+      const unsigned max = (1u << bit_depth_) - 1;
+      for (std::size_t x = 0; x < width; x++) s_[x * ch] = static_cast<std::uint16_t>(max - s_[x * ch]);
+    }
+    // native layout
+    const std::size_t k = static_cast<std::size_t>(width) * ch;
+    if (bit_depth_ == 16) {
+      std::memcpy(out, s_.data(), k * 2);
+    } else if (bit_depth_ == 8) {
+      for (std::size_t i = 0; i < k; i++) out[i] = static_cast<std::uint8_t>(s_[i]);
+    } else {
+      pack_msb(out, k);
+    }
+  }
+
+ private:
+  void pack_msb(std::uint8_t* out, std::size_t k) const {
+    const unsigned b = bit_depth_;
+    std::memset(out, 0, (k * b + 7) / 8);
+    for (std::size_t i = 0; i < k; i++)
+      out[i * b / 8] |= static_cast<std::uint8_t>((s_[i] & ((1u << b) - 1)) << (8 - b - (i * b) % 8));
+  }
+
+  // Each sample's significant bits repeated down to fill the bit depth.
+  void scale_up(std::uint32_t width, unsigned ch) {
+    const SignificantBits& b = *t_.shift;
+    int start[4], dec[4], n = 0;
+    const int depth = bit_depth_;
+    if (color_type_ & 2) {
+      start[n] = depth - b.red, dec[n++] = b.red;
+      start[n] = depth - b.green, dec[n++] = b.green;
+      start[n] = depth - b.blue, dec[n++] = b.blue;
+    } else {
+      start[n] = depth - b.gray, dec[n++] = b.gray;
+    }
+    if (color_type_ & 4) start[n] = depth - b.alpha, dec[n++] = b.alpha;
+    if (depth < 8) {
+      // on whole bytes, as the traditional code does
+      std::vector<std::uint8_t> bytes((static_cast<std::size_t>(width) * depth + 7) / 8);
+      pack_msb(bytes.data(), width);
+      const unsigned mask = (b.gray == 1 && depth == 2) ? 0x55 : (depth == 4 && b.gray == 3) ? 0x11 : 0xff;
+      for (std::uint8_t& v8 : bytes) {
+        const unsigned v = v8;
+        unsigned o = 0;
+        for (int j = start[0]; j > -dec[0]; j -= dec[0]) o |= j > 0 ? v << j : (v >> -j) & mask;
+        v8 = static_cast<std::uint8_t>(o);
+      }
+      for (std::size_t i = 0; i < width; i++)
+        s_[i] = static_cast<std::uint16_t>((bytes[i * depth / 8] >> (8 - depth - (i * depth) % 8)) & ((1u << depth) - 1));
+      return;
+    }
+    const unsigned keep = depth == 16 ? 0xffff : 0xff;
+    for (std::size_t x = 0; x < width; x++)
+      for (unsigned c = 0; c < ch; c++) {
+        const unsigned v = s_[x * ch + c];
+        unsigned o = 0;
+        for (int j = start[c]; j > -dec[c]; j -= dec[c]) o |= j > 0 ? v << j : v >> -j;
+        s_[x * ch + c] = static_cast<std::uint16_t>(o & keep);
+      }
+  }
+
+  WriteTransforms t_;
+  std::uint8_t color_type_ = 0, bit_depth_ = 8, channels_ = 1, in_channels_ = 1, in_depth_ = 8;
+  bool shift_ = false, swap_in_ = false;
+  std::vector<std::uint8_t> buf_;
   std::vector<std::uint16_t> s_;
 };
 
