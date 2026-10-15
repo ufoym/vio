@@ -3,7 +3,7 @@
 #   libjpeg-turbo/        libjpeg-turbo 3.2.0 (git submodule): test programs,
 #                         TurboJPEG header and test images, used unchanged
 #   libjpeg-turbo.cmake   libjpeg-turbo's test definitions, adapted to vio
-#   libpng/               libpng 1.6.59 (git submodule): test images
+#   libpng/               libpng, branch libpng18 (git submodule): test images
 #   libpng.cmake          libpng's tests, adapted to vio (tools/png_test.cpp);
 #   libpng-expected.txt   the images as libpng decodes them
 #   tools/                jpeg-encode/-decode/-transform/-example: command-line

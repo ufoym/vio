@@ -1,6 +1,6 @@
 # Decoded samples of the libpng test images: FNV-1a (64-bit) of the image in
 # the PNG's own sample layout (16-bit samples big-endian, no padding bits),
-# as libpng 1.6.59 decodes them, or "error" where libpng rejects the file.
+# as libpng decodes them, or "error" where libpng rejects the file.
 contrib/pngsuite/basn0g01.png 5538fafc596569d5
 contrib/pngsuite/basn0g02.png 19c1cc5902943025
 contrib/pngsuite/basn0g04.png 38255662302bbea5

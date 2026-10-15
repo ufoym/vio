@@ -47,6 +47,7 @@ jobs:
       - name: Fetch sources and corpus
         run: |
           mkdir -p build/ref build/corpus
+          git clone -q --depth 1 -b v1.6.59 https://github.com/pnggroup/libpng.git build/ref/libpng
           git clone -q https://github.com/madler/zlib.git build/ref/zlib
           git -C build/ref/zlib checkout -q v1.3.2
           if [ "${{ matrix.fpnge }}" = true ]; then
@@ -60,7 +61,7 @@ jobs:
       - name: Build
         run: |
           args=(-DCMAKE_BUILD_TYPE=Release -DVIO_TEST_SCALAR=OFF
-                -DVIO_LIBPNG_SOURCE_DIR=$PWD/tests/libpng
+                -DVIO_LIBPNG_SOURCE_DIR=$PWD/build/ref/libpng
                 -DVIO_ZLIB_SOURCE_DIR=$PWD/build/ref/zlib)
           [ "${{ matrix.fpnge }}" = true ] && args+=(-DVIO_FPNGE_SOURCE_DIR=$PWD/build/ref/fpnge)
           [ "$RUNNER_OS" = Windows ] && args+=(-G Ninja)
