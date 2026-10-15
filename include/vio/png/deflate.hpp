@@ -11,6 +11,10 @@
 #include <stdexcept>
 #include <vector>
 
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
+
 #include "../core.hpp"
 #include "checksum.hpp"
 
@@ -441,41 +445,65 @@ class Deflater {
   unsigned longest_match(unsigned cur_match) {
     using namespace detail;
     unsigned chain_length = max_chain_length;
-    std::uint8_t* scan = window + strstart;
-    std::uint8_t* match;
-    int len;
+    const std::uint8_t* scan = window + strstart;
     int best_len = static_cast<int>(prev_length);
     int nice = nice_match;
     unsigned limit = strstart > max_dist() ? strstart - max_dist() : 0;
     const Pos* prev = prev_.data();
     unsigned wmask = w_mask;
-    std::uint8_t* strend = window + strstart + MAX_MATCH;
-    std::uint8_t scan_end1 = scan[best_len - 1];
-    std::uint8_t scan_end = scan[best_len];
     if (prev_length >= good_match) chain_length >>= 2;
     if (static_cast<unsigned>(nice) > lookahead) nice = static_cast<int>(lookahead);
+    std::uint16_t scan_start = load16(scan), scan_end = load16(scan + best_len - 1);
     do {
-      match = window + cur_match;
-      if (match[best_len] != scan_end || match[best_len - 1] != scan_end1 || *match != *scan ||
-          *++match != scan[1])
-        continue;
-      scan += 2, match++;
-      do {
-      } while (*++scan == *++match && *++scan == *++match && *++scan == *++match &&
-               *++scan == *++match && *++scan == *++match && *++scan == *++match &&
-               *++scan == *++match && *++scan == *++match && scan < strend);
-      len = MAX_MATCH - static_cast<int>(strend - scan);
-      scan = strend - MAX_MATCH;
+      const std::uint8_t* match = window + cur_match;
+      if (load16(match + best_len - 1) != scan_end || load16(match) != scan_start) continue;
+      int len = static_cast<int>(compare_from_3(scan, match));
       if (len > best_len) {
         match_start = cur_match;
         best_len = len;
         if (len >= nice) break;
-        scan_end1 = scan[best_len - 1];
-        scan_end = scan[best_len];
+        scan_end = load16(scan + best_len - 1);
       }
     } while ((cur_match = prev[cur_match & wmask]) > limit && --chain_length != 0);
     if (static_cast<unsigned>(best_len) <= lookahead) return static_cast<unsigned>(best_len);
     return lookahead;
+  }
+
+  static std::uint16_t load16(const std::uint8_t* p) {
+    std::uint16_t v;
+    std::memcpy(&v, p, 2);
+    return v;
+  }
+
+  // Length of the match of s and m whose first two bytes are equal: the
+  // third is taken as equal too (as zlib does: with equal hashes it is), the
+  // bytes from the fourth on are compared, up to MAX_MATCH.
+  static unsigned compare_from_3(const std::uint8_t* s, const std::uint8_t* m) {
+    using namespace detail;
+#if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__ && \
+     (defined(__x86_64__) || defined(__aarch64__))) ||                       \
+    (defined(_MSC_VER) && (defined(_M_X64) || defined(_M_ARM64)))
+    for (unsigned len = 3; len < static_cast<unsigned>(MAX_MATCH); len += 8) {
+      std::uint64_t a, b;
+      std::memcpy(&a, s + len, 8);
+      std::memcpy(&b, m + len, 8);
+      if (std::uint64_t x = a ^ b) {
+#if defined(_MSC_VER) && !defined(__clang__)
+        unsigned long bit;
+        _BitScanForward64(&bit, x);
+#else
+        unsigned bit = static_cast<unsigned>(__builtin_ctzll(x));
+#endif
+        len += static_cast<unsigned>(bit) >> 3;
+        return len < static_cast<unsigned>(MAX_MATCH) ? len : MAX_MATCH;
+      }
+    }
+    return MAX_MATCH;
+#else
+    unsigned len = 3;
+    while (len < static_cast<unsigned>(MAX_MATCH) && s[len] == m[len]) len++;
+    return len;
+#endif
   }
 
   // FLUSH_BLOCK_ONLY / FLUSH_BLOCK
@@ -1080,32 +1108,56 @@ class Deflater {
 
   void compress_block(const detail::CtData* ltree, const detail::CtData* dtree) {
     using namespace detail;
-    unsigned sx = 0;
-    if (sym_next != 0) do {
-        unsigned dist = sym_buf[sx++] & 0xff;
-        dist += static_cast<unsigned>(sym_buf[sx++] & 0xff) << 8;
-        int lc = sym_buf[sx++];
-        if (dist == 0) {
-          send_code(lc, ltree);
-        } else {
-          unsigned code = tables.length_code[lc];
-          send_code(static_cast<int>(code) + LITERALS + 1, ltree);
-          int extra = extra_lbits[code];
-          if (extra != 0) {
-            lc -= tables.base_length[code];
-            send_bits(lc, extra);
-          }
-          dist--;
-          code = d_code(dist);
-          send_code(static_cast<int>(code), dtree);
-          extra = extra_dbits[code];
-          if (extra != 0) {
-            dist -= static_cast<unsigned>(tables.base_dist[code]);
-            send_bits(static_cast<int>(dist), extra);
-          }
-        }
-      } while (sx < sym_next);
-    send_code(END_BLOCK, ltree);
+    // Bits gathered in 64 bits and written 32 at a time; at the end, the
+    // state send_bits() would have left (whole 16-bit words written while
+    // more than 16 bits are pending).
+    std::uint64_t acc = bi_buf;
+    unsigned n = static_cast<unsigned>(bi_valid);
+    auto put = [&](unsigned code, unsigned len) {
+      acc |= static_cast<std::uint64_t>(code) << n;
+      n += len;
+    };
+    auto spill = [&] {
+      if (n >= 32) {
+        std::uint8_t* p = pending_buf + pending;
+        p[0] = static_cast<std::uint8_t>(acc);
+        p[1] = static_cast<std::uint8_t>(acc >> 8);
+        p[2] = static_cast<std::uint8_t>(acc >> 16);
+        p[3] = static_cast<std::uint8_t>(acc >> 24);
+        pending += 4;
+        acc >>= 32;
+        n -= 32;
+      }
+    };
+    for (unsigned sx = 0; sx < sym_next; sx += 3) {
+      unsigned dist = sym_buf[sx] | static_cast<unsigned>(sym_buf[sx + 1]) << 8;
+      unsigned lc = sym_buf[sx + 2];
+      if (dist == 0) {
+        put(ltree[lc].fc, ltree[lc].dl);
+      } else {
+        unsigned code = tables.length_code[lc];
+        put(ltree[code + LITERALS + 1].fc, ltree[code + LITERALS + 1].dl);
+        // (no extra bits for code 28, whose base_length is not set)
+        if (extra_lbits[code] != 0)
+          put(lc - static_cast<unsigned>(tables.base_length[code]),
+              static_cast<unsigned>(extra_lbits[code]));
+        spill();
+        dist--;
+        code = d_code(dist);
+        put(dtree[code].fc, dtree[code].dl);
+        put(dist - static_cast<unsigned>(tables.base_dist[code]),
+            static_cast<unsigned>(extra_dbits[code]));
+      }
+      spill();
+    }
+    put(ltree[END_BLOCK].fc, ltree[END_BLOCK].dl);
+    while (n > 16) {
+      put_short(static_cast<unsigned>(acc));
+      acc >>= 16;
+      n -= 16;
+    }
+    bi_buf = static_cast<std::uint16_t>(acc);
+    bi_valid = static_cast<int>(n);
   }
 
   void tr_flush_block(const std::uint8_t* buf, unsigned long stored_len, int last) {
