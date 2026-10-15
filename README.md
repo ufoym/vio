@@ -366,6 +366,7 @@ machine, geometric mean over the corpus or the stated subset).
 
 - Inflate into the image buffer with an 11-bit literal/length table whose entries hold two literals, three table lookups per bit-buffer refill and 16-byte match copies; rows reconstructed in place with NEON/SSE2 filters; CRC-32 by carry-less multiplication and SIMD Adler-32 ([4a01186](https://github.com/ufoym/vio/commit/4a01186)): decoding +170% (Apple M4, 1/8 of the corpus).
 - Single-pass encoder: filters chosen by the smallest sum of absolute residuals, one Huffman code per image from sampled rows, runs of zero residuals as distance-1 matches, structured literal codes coded 32 at a time with AVX2 ([80db3a4](https://github.com/ufoym/vio/commit/80db3a4)): encoding +4100% over the zlib-level-6 encoder (Apple M4), files 5% larger.
+- Literal-table lookups chained through the already shifted bit buffer (one shift, mask and load per lookup) ([ed781ce](https://github.com/ufoym/vio/commit/ed781ce)): decoding +5.5% (Apple M4, 1/8 of the corpus).
 
 ## Building and testing
 
