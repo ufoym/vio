@@ -414,22 +414,22 @@ int main(void)
   TESTREAD(PNG, JPEG_MAX_DIMENSION, JPEG_MAX_DIMENSION + 1, 0, "16-bit", 16,
            -1, "Maximum supported image dimension is 65500 pixels");
   TESTREAD(PNG, JPEG_MAX_DIMENSION, JPEG_MAX_DIMENSION, 0, "16-bit", 16, -1,
-           "libspng error: end of stream");
+           "unexpected end of file");
   TESTREAD(PNG, JPEG_MAX_DIMENSION + 1, JPEG_MAX_DIMENSION, 0, "17-bit", 17,
            -1, "Unsupported JPEG data precision 17");
 
   TESTREAD(PNG, JPEG_MAX_DIMENSION, 15268L, 1000000000, "8-bit", 8, -1,
            "Maximum supported image dimension is 1000000000 pixels");
   TESTREAD(PNG, JPEG_MAX_DIMENSION, 15267L, 1000000000, "8-bit", 8, -1,
-           "libspng error: end of stream");
+           "unexpected end of file");
   TESTREAD(PNG, 1527L, JPEG_MAX_DIMENSION, 100000000, "12-bit", 12, -1,
            "Maximum supported image dimension is 100000000 pixels");
   TESTREAD(PNG, 1526L, JPEG_MAX_DIMENSION, 100000000, "12-bit", 12, -1,
-           "libspng error: end of stream");
+           "unexpected end of file");
   TESTREAD(PNG, 1000L, 1001L, 1000000, "16-bit", 16, -1,
            "Maximum supported image dimension is 1000000 pixels");
   TESTREAD(PNG, 1000L, 1000L, 1000000, "16-bit", 16, -1,
-           "libspng error: end of stream");
+           "unexpected end of file");
 
   fprintf(stderr, "\n");
 

@@ -32,12 +32,11 @@ class Reader : public ImageReader<T> {
 
  public:
   std::vector<std::uint8_t> icc_profile() override {
-    return reader_.has_icc ? reader_.icc_profile : std::vector<std::uint8_t>{};
+    return reader_.info.icc ? reader_.info.icc->data : std::vector<std::uint8_t>{};
   }
 
  protected:
   void start_input() override {
-    reader_ = Decoder();
     reader_.read_header(in_.data());
     const png::Header& h = reader_.header;
     if (h.width > kMaxDimension || h.height > kMaxDimension)
@@ -180,7 +179,7 @@ class Writer : public ImageWriter<T> {
  public:
   void set_icc_profile(std::span<const std::uint8_t> icc) override {
     if (icc.empty()) VIO_FAIL("Empty input file");
-    writer_.icc_profile.assign(icc.begin(), icc.end());
+    writer_.info.icc = IccProfile{"ICC Profile", std::vector<std::uint8_t>(icc.begin(), icc.end())};
   }
 
   void write_rows(T** rows, unsigned n) override {

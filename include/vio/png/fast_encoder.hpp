@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -40,12 +41,22 @@ namespace vio::png::detail {
 // the left neighbors of the first pixel read as zero.
 inline constexpr std::size_t kRowPad = 16;
 
+// The filter with the smallest cost among the allowed ones (bit f of
+// `allowed` for filter type f).
+inline unsigned pick_filter(const std::uint64_t* cost, unsigned allowed) {
+  unsigned best = 5;
+  for (unsigned f = 0; f < 5; f++)
+    if ((allowed >> f) & 1)
+      if (best == 5 || cost[f] < cost[best]) best = f;
+  return best == 5 ? 0 : best;
+}
+
 // Computes the residuals of all five filters for one row and returns the
 // filter whose residuals have the smallest sum of absolute values (as
 // signed bytes).  cur and up point at padded rows (up is all zeros for the
 // first row).
-inline unsigned choose_filter_scalar(const std::uint8_t* cur, const std::uint8_t* up,
-                                     std::size_t n, unsigned bpp) {
+inline unsigned choose_filter_scalar(const std::uint8_t* cur, const std::uint8_t* up, std::size_t n,
+                                  unsigned bpp, unsigned allowed = 0x1f) {
   std::uint64_t cost[5] = {};
   for (std::size_t i = 0; i < n; i++) {
     std::uint8_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp];
@@ -54,10 +65,7 @@ inline unsigned choose_filter_scalar(const std::uint8_t* cur, const std::uint8_t
                          static_cast<std::uint8_t>(x - paeth(a, b, c))};
     for (int f = 0; f < 5; f++) cost[f] += r[f] < 128 ? r[f] : 256 - r[f];
   }
-  unsigned best = 0;
-  for (unsigned f = 1; f < 5; f++)
-    if (cost[f] < cost[best]) best = f;
-  return best;
+  return pick_filter(cost, allowed);
 }
 
 inline void apply_filter_scalar(unsigned filter, std::uint8_t* out, const std::uint8_t* cur,
@@ -90,8 +98,8 @@ VIO_INLINE uint8x16_t abs_residual_neon(uint8x16_t r) {
   return vreinterpretq_u8_s8(vabsq_s8(vreinterpretq_s8_u8(r)));
 }
 
-inline unsigned choose_filter_neon(const std::uint8_t* cur, const std::uint8_t* up,
-                                   std::size_t n, unsigned bpp) {
+inline unsigned choose_filter_neon(const std::uint8_t* cur, const std::uint8_t* up, std::size_t n,
+                                  unsigned bpp, unsigned allowed = 0x1f) {
   uint32x4_t total[5];
   for (auto& t : total) t = vdupq_n_u32(0);
   std::size_t i = 0;
@@ -121,10 +129,7 @@ inline unsigned choose_filter_neon(const std::uint8_t* cur, const std::uint8_t* 
                          static_cast<std::uint8_t>(x - paeth(a, b, c))};
     for (int f = 0; f < 5; f++) cost[f] += r[f] < 128 ? r[f] : 256 - r[f];
   }
-  unsigned best = 0;
-  for (unsigned f = 1; f < 5; f++)
-    if (cost[f] < cost[best]) best = f;
-  return best;
+  return pick_filter(cost, allowed);
 }
 
 inline void apply_filter_neon(unsigned filter, std::uint8_t* out, const std::uint8_t* cur,
@@ -181,8 +186,8 @@ VIO_INLINE __m128i abs_sum_sse2(__m128i r) {
   return _mm_sad_epu8(_mm_min_epu8(r, _mm_sub_epi8(_mm_setzero_si128(), r)), _mm_setzero_si128());
 }
 
-inline unsigned choose_filter_sse2(const std::uint8_t* cur, const std::uint8_t* up,
-                                   std::size_t n, unsigned bpp) {
+inline unsigned choose_filter_sse2(const std::uint8_t* cur, const std::uint8_t* up, std::size_t n,
+                                  unsigned bpp, unsigned allowed = 0x1f) {
   __m128i acc[5];
   for (auto& a : acc) a = _mm_setzero_si128();
   std::size_t i = 0;
@@ -208,10 +213,7 @@ inline unsigned choose_filter_sse2(const std::uint8_t* cur, const std::uint8_t* 
                          static_cast<std::uint8_t>(x - paeth(a, b, c))};
     for (int f = 0; f < 5; f++) cost[f] += r[f] < 128 ? r[f] : 256 - r[f];
   }
-  unsigned best = 0;
-  for (unsigned f = 1; f < 5; f++)
-    if (cost[f] < cost[best]) best = f;
-  return best;
+  return pick_filter(cost, allowed);
 }
 
 inline void apply_filter_sse2(unsigned filter, std::uint8_t* out, const std::uint8_t* cur,
@@ -267,8 +269,8 @@ VIO_INLINE __m256i abs_sum_avx2(__m256i r) {
   return _mm256_sad_epu8(_mm256_min_epu8(r, _mm256_sub_epi8(_mm256_setzero_si256(), r)), _mm256_setzero_si256());
 }
 
-inline unsigned choose_filter_avx2(const std::uint8_t* cur, const std::uint8_t* up,
-                                   std::size_t n, unsigned bpp) {
+inline unsigned choose_filter_avx2(const std::uint8_t* cur, const std::uint8_t* up, std::size_t n,
+                                  unsigned bpp, unsigned allowed = 0x1f) {
   __m256i acc[5];
   for (auto& a : acc) a = _mm256_setzero_si256();
   std::size_t i = 0;
@@ -294,10 +296,7 @@ inline unsigned choose_filter_avx2(const std::uint8_t* cur, const std::uint8_t* 
                          static_cast<std::uint8_t>(x - paeth(a, b, c))};
     for (int f = 0; f < 5; f++) cost[f] += r[f] < 128 ? r[f] : 256 - r[f];
   }
-  unsigned best = 0;
-  for (unsigned f = 1; f < 5; f++)
-    if (cost[f] < cost[best]) best = f;
-  return best;
+  return pick_filter(cost, allowed);
 }
 
 inline void apply_filter_avx2(unsigned filter, std::uint8_t* out, const std::uint8_t* cur,
@@ -331,13 +330,13 @@ VIO_TARGET_POP()
 #endif
 
 inline unsigned choose_filter(const std::uint8_t* cur, const std::uint8_t* up, std::size_t n,
-                              unsigned bpp) {
+                              unsigned bpp, unsigned allowed = 0x1f) {
 #if VIO_SIMD_NEON_A64
-  return choose_filter_neon(cur, up, n, bpp);
+  return choose_filter_neon(cur, up, n, bpp, allowed);
 #elif VIO_SIMD_X86_64
-  return choose_filter_sse2(cur, up, n, bpp);
+  return choose_filter_sse2(cur, up, n, bpp, allowed);
 #else
-  return choose_filter_scalar(cur, up, n, bpp);
+  return choose_filter_scalar(cur, up, n, bpp, allowed);
 #endif
 }
 
@@ -935,41 +934,77 @@ VIO_TARGET_POP()
 
 class FastEncoder {
  public:
+  // A run of rows of the same length (an image, an interlace pass, an APNG
+  // frame); load(y, dst) stores row y's samples at dst (big-endian 16-bit
+  // samples).
+  struct Segment {
+    std::size_t row_bytes;
+    std::uint32_t rows;
+    std::function<void(std::uint32_t, std::uint8_t*)> load;
+  };
+
   // Writes a zlib stream holding the filtered rows of an image with `height`
   // rows of `row_bytes` bytes and `bpp` bytes per complete pixel (1 for
-  // sub-byte depths), appending it to `out`.  load_row(y, dst) stores row
-  // y's samples at dst (big-endian 16-bit samples).  `filter` selects
-  // adaptive filtering (else filter type 0 throughout).
+  // sub-byte depths), appending it to `out`.  `filters` is the set of filter
+  // types allowed (bit f for type f); the one with the smallest residuals is
+  // chosen per row.
   template <class RowFn>
-  void encode(std::size_t row_bytes, std::uint32_t height, unsigned bpp, bool filter,
+  void encode(std::size_t row_bytes, std::uint32_t height, unsigned bpp, unsigned filters,
               RowFn&& load_row, ByteBuffer& out) {
-    rb_ = row_bytes;
+    Segment seg{row_bytes, height, std::forward<RowFn>(load_row)};
+    encode(&seg, 1, bpp, filters, out);
+  }
+
+  // The same for consecutive segments in one stream.
+  void encode(const Segment* segs, std::size_t nsegs, unsigned bpp, unsigned filters,
+              ByteBuffer& out) {
     bpp_ = bpp;
-    filter_ = filter;
+    allowed_ = filters ? filters : 1;
 #if VIO_SIMD_AVX2
     avx2_ = (jpeg::simd::cpu_flags() & (jpeg::simd::kAVX2 | jpeg::simd::kBMI2)) ==
             (jpeg::simd::kAVX2 | jpeg::simd::kBMI2);
 #endif
-    const std::size_t stride = kRowPad + ((rb_ + 15) & ~std::size_t(15)) + 16;
+    std::size_t max_rb = 0, total = 0;
+    std::uint64_t rows = 0;
+    for (std::size_t k = 0; k < nsegs; k++) {
+      if (!segs[k].rows || !segs[k].row_bytes) continue;
+      max_rb = std::max(max_rb, segs[k].row_bytes);
+      total += static_cast<std::size_t>(segs[k].rows) * (segs[k].row_bytes + 1);
+      rows += segs[k].rows;
+    }
+    const std::size_t stride = kRowPad + ((max_rb + 15) & ~std::size_t(15)) + 16;
     rows_.assign(2 * stride, 0);
-    const std::size_t line = rb_ + 1, total = static_cast<std::size_t>(height) * line;
     Histogram hist;
     std::uint32_t adler = 1;
     std::size_t run = 0;
-    if (total <= kTwoPassBytes) {
-      // Small image: filter it all, take the statistics of all of it, then
-      // code it in one go.
-      std::unique_ptr<std::uint8_t[]> data(new std::uint8_t[total + 32]);
-      for (std::uint32_t y = 0; y < height; y++) {
+    // Filters every row of a segment, calling emit(filtered, length).
+    auto each_row = [&](const Segment& seg, auto&& emit) {
+      rb_ = seg.row_bytes;
+      std::memset(rows_.data(), 0, rows_.size());
+      for (std::uint32_t y = 0; y < seg.rows; y++) {
         std::uint8_t* cur = rows_.data() + kRowPad + (y & 1) * stride;
         const std::uint8_t* up = rows_.data() + kRowPad + ((y + 1) & 1) * stride;
-        load_row(y, cur);
-        filter_row(data.get() + y * line, cur, up);
+        seg.load(y, cur);
+        emit(cur, up);
       }
-      // Statistics of about 32 KiB of rows spread over the image.
+    };
+    if (total <= kTwoPassBytes) {
+      // Small image: filter it all, take the statistics of part of it, then
+      // code it in one go.
+      std::unique_ptr<std::uint8_t[]> data(new std::uint8_t[total + 32]);
+      std::size_t pos = 0;
+      for (std::size_t k = 0; k < nsegs; k++) {
+        if (!segs[k].rows || !segs[k].row_bytes) continue;
+        each_row(segs[k], [&](const std::uint8_t* cur, const std::uint8_t* up) {
+          filter_row(data.get() + pos, cur, up);
+          pos += rb_ + 1;
+        });
+      }
+      // Statistics of about 32 KiB spread over the data.
       const std::size_t step = std::max<std::size_t>(1, total / (32 * 1024));
-      for (std::uint32_t y = 0; y < height; y += static_cast<std::uint32_t>(step))
-        hist.count(data.get() + y * line, line);
+      const std::size_t piece = std::max<std::size_t>(1, total / std::max<std::uint64_t>(1, rows));
+      for (std::size_t p = 0; p < total; p += step * piece)
+        hist.count(data.get() + p, std::min(piece, total - p));
       build_code_tables(hist, t_);
       adler = zlib::adler32(1, data.get(), total);
       out.reserve(out.size() + 1024 + 2 * total);
@@ -980,34 +1015,38 @@ class FastEncoder {
       return;
     }
     // Huffman code from a sample of rows.
-    filtered_.assign(line + 32, 0);
-    {
-      const std::uint32_t step = std::max<std::uint32_t>(2, height / 48);
+    filtered_.assign(max_rb + 1 + 32, 0);
+    for (std::size_t k = 0; k < nsegs; k++) {
+      const Segment& seg = segs[k];
+      if (!seg.rows || !seg.row_bytes) continue;
+      rb_ = seg.row_bytes;
+      const std::uint32_t step = std::max<std::uint32_t>(2, static_cast<std::uint32_t>(
+          std::max<std::uint64_t>(1, rows / 48)));
       std::uint8_t* cur = rows_.data() + kRowPad;
       std::uint8_t* up = cur + stride;
-      for (std::uint32_t y = 0; y < height; y += step) {
-        load_row(y, cur);
-        if (y > 0) load_row(y - 1, up);
+      for (std::uint32_t y = 0; y < seg.rows; y += step) {
+        seg.load(y, cur);
+        if (y > 0) seg.load(y - 1, up);
         else std::memset(up, 0, rb_);
         filter_row(filtered_.data(), cur, up);
-        hist.count(filtered_.data(), line);
+        hist.count(filtered_.data(), rb_ + 1);
       }
     }
     build_code_tables(hist, t_);
     out.reserve(out.size() + 1024 + total / 2);
     BitWriter w{out.end()};
     write_headers(w);
-    std::memset(rows_.data(), 0, rows_.size());
-    for (std::uint32_t y = 0; y < height; y++) {
-      std::uint8_t* cur = rows_.data() + kRowPad + (y & 1) * stride;
-      const std::uint8_t* up = rows_.data() + kRowPad + ((y + 1) & 1) * stride;
-      load_row(y, cur);
-      filter_row(filtered_.data(), cur, up);
-      adler = zlib::adler32(adler, filtered_.data(), line);
-      // Grow the output if the remaining room might not do (codes of up to
-      // 14 bits per byte).
-      if (out.room(w.out) < 2 * line + 64) w.out = out.grow(w.out, 2 * line + 64);
-      run = encode_bytes(w, filtered_.data(), line, run);
+    for (std::size_t k = 0; k < nsegs; k++) {
+      if (!segs[k].rows || !segs[k].row_bytes) continue;
+      each_row(segs[k], [&](const std::uint8_t* cur, const std::uint8_t* up) {
+        const std::size_t line = rb_ + 1;
+        filter_row(filtered_.data(), cur, up);
+        adler = zlib::adler32(adler, filtered_.data(), line);
+        // Grow the output if the remaining room might not do (codes of up
+        // to 14 bits per byte).
+        if (out.room(w.out) < 2 * line + 64) w.out = out.grow(w.out, 2 * line + 64);
+        run = encode_bytes(w, filtered_.data(), line, run);
+      });
     }
     finish(w, run, adler, out);
   }
@@ -1025,15 +1064,17 @@ class FastEncoder {
   // Filters the row at cur (above it: up) into dst (filter type byte
   // first).
   void filter_row(std::uint8_t* dst, const std::uint8_t* cur, const std::uint8_t* up) {
+    const bool choose = (allowed_ & (allowed_ - 1)) != 0;  // more than one allowed
+    const unsigned only = choose ? 0 : ctz32(allowed_);
 #if VIO_SIMD_AVX2
     if (avx2_) {
-      unsigned f = filter_ ? choose_filter_avx2(cur, up, rb_, bpp_) : kFilterNone;
+      unsigned f = choose ? choose_filter_avx2(cur, up, rb_, bpp_, allowed_) : only;
       dst[0] = static_cast<std::uint8_t>(f);
       apply_filter_avx2(f, dst + 1, cur, up, rb_, bpp_);
       return;
     }
 #endif
-    unsigned f = filter_ ? choose_filter(cur, up, rb_, bpp_) : kFilterNone;
+    unsigned f = choose ? choose_filter(cur, up, rb_, bpp_, allowed_) : only;
     dst[0] = static_cast<std::uint8_t>(f);
     apply_filter(f, dst + 1, cur, up, rb_, bpp_);
   }
@@ -1117,7 +1158,7 @@ class FastEncoder {
 
   std::size_t rb_ = 0;
   unsigned bpp_ = 1;
-  bool filter_ = true;
+  unsigned allowed_ = 0x1f;
 #if VIO_SIMD_AVX2
   bool avx2_ = false;
 #endif

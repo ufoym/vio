@@ -72,11 +72,10 @@ std::uint64_t fnv(const std::vector<std::uint8_t>& v) {
 void check_roundtrip(Decoder& d, Encoder::Mode mode, const std::string& name) {
   Encoder e;
   e.mode = mode;
-  e.header = d.header;
-  e.header.interlace = 0;
-  e.palette = d.palette;
-  e.transparency = d.transparency;
-  if (d.has_icc) e.icc_profile = d.icc_profile;
+  e.info = d.info;
+  e.info.animation.reset();
+  e.info.frames.clear();
+  e.info.default_image_is_frame = false;
   std::vector<std::uint8_t> file = e.encode(d.pixels().data(), d.row_bytes());
   Decoder r;
   try {
@@ -91,9 +90,12 @@ void check_roundtrip(Decoder& d, Encoder::Mode mode, const std::string& name) {
     failure(name + ": header changed in " + m + " mode");
   else if (png_order(r) != png_order(d))
     failure(name + ": samples changed in " + m + " mode");
-  else if (r.palette.size() != d.palette.size() || r.transparency != d.transparency ||
-           r.icc_profile != (d.has_icc ? d.icc_profile : std::vector<std::uint8_t>{}))
-    failure(name + ": PLTE, tRNS or iCCP changed in " + m + " mode");
+  else if (r.info.palette != d.info.palette || r.info.trans_alpha != d.info.trans_alpha ||
+           r.info.trans_color != d.info.trans_color || r.info.icc != d.info.icc ||
+           r.info.gamma != d.info.gamma || r.info.text.size() != d.info.text.size() ||
+           r.info.time != d.info.time || r.info.phys != d.info.phys || r.info.sbit != d.info.sbit ||
+           r.info.background != d.info.background || r.info.chromaticities != d.info.chromaticities)
+    failure(name + ": chunks changed in " + m + " mode");
 }
 
 int cmd_check(int argc, char** argv) {
