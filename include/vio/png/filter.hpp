@@ -35,9 +35,57 @@ inline std::uint8_t paeth(std::uint8_t a, std::uint8_t b, std::uint8_t c) {
   return c;
 }
 
+// Pixels of 1 or 2 bytes (B): the previous pixel stays in registers (B
+// independent chains) instead of being reloaded from the row just stored.
+template <unsigned B>
+inline void unfilter_small(unsigned filter, std::uint8_t* dst, const std::uint8_t* src, const std::uint8_t* prev,
+                           std::size_t n) {
+  unsigned a[B] = {}, c[B] = {};
+  switch (filter) {
+    case kFilterSub:
+      for (std::size_t i = 0; i < n; i += B)
+        for (unsigned k = 0; k < B; k++) dst[i + k] = static_cast<std::uint8_t>(a[k] = (a[k] + src[i + k]) & 0xff);
+      break;
+    case kFilterAvg:
+      for (std::size_t i = 0; i < n; i += B)
+        for (unsigned k = 0; k < B; k++) {
+          const unsigned b = prev ? prev[i + k] : 0;
+          dst[i + k] = static_cast<std::uint8_t>(a[k] = (src[i + k] + ((a[k] + b) >> 1)) & 0xff);
+        }
+      break;
+    case kFilterPaeth:
+      for (std::size_t i = 0; i < n; i += B)
+        for (unsigned k = 0; k < B; k++) {
+          const int b = prev[i + k], cc = static_cast<int>(c[k]), ak = static_cast<int>(a[k]);
+          const int x = ak - cc, e = b - cc, y = x + e;
+#if !defined(__clang__)
+          // explicitly branchless (GCC and MSVC branch otherwise; the choice
+          // is data-dependent and unpredictable)
+          const int pa = (e ^ (e >> 31)) - (e >> 31), pb = (x ^ (x >> 31)) - (x >> 31),
+                    pc = (y ^ (y >> 31)) - (y >> 31);
+          const int use_a = -static_cast<int>((pa <= pb) & (pa <= pc)), use_b = -static_cast<int>(pb <= pc);
+          const int bc = cc ^ ((b ^ cc) & use_b);
+          const int pred = bc ^ ((ak ^ bc) & use_a);
+#else
+          const int pa = e < 0 ? -e : e, pb = x < 0 ? -x : x, pc = y < 0 ? -y : y;
+          const int pred = pa <= pb && pa <= pc ? ak : pb <= pc ? b : cc;
+#endif
+          dst[i + k] = static_cast<std::uint8_t>(a[k] = static_cast<unsigned>(src[i + k] + pred) & 0xff);
+          c[k] = static_cast<unsigned>(b);
+        }
+      break;
+  }
+}
+
 // Scalar reconstruction; prev == nullptr for the first row.
 inline void unfilter_row_scalar(unsigned filter, std::uint8_t* dst, const std::uint8_t* src,
                                 const std::uint8_t* prev, std::size_t n, unsigned bpp) {
+  if ((bpp == 1 || bpp == 2) && (filter == kFilterSub || filter == kFilterAvg || (filter == kFilterPaeth && prev))) {
+    // n is a multiple of bpp
+    if (bpp == 1) unfilter_small<1>(filter, dst, src, prev, n);
+    else unfilter_small<2>(filter, dst, src, prev, n);
+    return;
+  }
   switch (filter) {
     case kFilterNone:
       std::memmove(dst, src, n);
@@ -70,18 +118,39 @@ inline void unfilter_row_scalar(unsigned filter, std::uint8_t* dst, const std::u
 }
 
 #if VIO_SIMD_NEON
-// One pixel of bpp (3 or 4) bytes per step, held in the low lanes of a
-// 64-bit vector.  Loads read, and stores write, 4 bytes: the decoder's
-// buffer layout keeps the extra byte in bounds and unused.
-VIO_INLINE uint8x8_t load_px(const std::uint8_t* p) {
-  std::uint32_t v;
-  std::memcpy(&v, p, 4);
-  return vreinterpret_u8_u32(vdup_n_u32(v));
-}
-VIO_INLINE void store_px(std::uint8_t* p, uint8x8_t v) {
-  std::uint32_t w = vget_lane_u32(vreinterpret_u32_u8(v), 0);
-  std::memcpy(p, &w, 4);
-}
+// One pixel per step, in the low lanes of a 64-bit vector: pixels of 3 or 4
+// bytes through 4-byte loads and stores (one byte too many is stored for 3:
+// the next pixel's source byte it overwrites, when unfiltering in place, was
+// read already), pixels of 6 or 8 bytes through 8-byte loads and stores of
+// exactly the pixel.
+template <unsigned W>
+struct PxNeon;
+template <>
+struct PxNeon<4> {
+  VIO_INLINE static uint8x8_t load(const std::uint8_t* p) {
+    std::uint32_t v;
+    std::memcpy(&v, p, 4);
+    return vreinterpret_u8_u32(vdup_n_u32(v));
+  }
+  VIO_INLINE static void store(std::uint8_t* p, uint8x8_t v, unsigned) {
+    const std::uint32_t w = vget_lane_u32(vreinterpret_u32_u8(v), 0);
+    std::memcpy(p, &w, 4);
+  }
+};
+template <>
+struct PxNeon<8> {
+  VIO_INLINE static uint8x8_t load(const std::uint8_t* p) { return vld1_u8(p); }
+  VIO_INLINE static void store(std::uint8_t* p, uint8x8_t v, unsigned bpp) {
+    if (bpp == 8) {
+      vst1_u8(p, v);
+    } else {
+      const std::uint32_t lo = vget_lane_u32(vreinterpret_u32_u8(v), 0);
+      const std::uint16_t hi = vget_lane_u16(vreinterpret_u16_u8(v), 2);
+      std::memcpy(p, &lo, 4);
+      std::memcpy(p + 4, &hi, 2);
+    }
+  }
+};
 
 VIO_INLINE uint8x8_t paeth_neon(uint8x8_t a, uint8x8_t b, uint8x8_t c) {
   uint8x8_t pa = vabd_u8(b, c), pb = vabd_u8(a, c);
@@ -92,6 +161,49 @@ VIO_INLINE uint8x8_t paeth_neon(uint8x8_t a, uint8x8_t b, uint8x8_t c) {
   return vbsl_u8(use_a, a, vbsl_u8(use_b, b, c));
 }
 
+template <unsigned W>
+VIO_INLINE void unfilter_px_neon(unsigned filter, std::uint8_t* dst, const std::uint8_t* src,
+                                 const std::uint8_t* prev, std::size_t n, unsigned bpp) {
+  using P = PxNeon<W>;
+  uint8x8_t a = vdup_n_u8(0), c = a;
+  switch (filter) {
+    case kFilterSub:
+      for (std::size_t i = 0; i < n; i += bpp) {
+        a = vadd_u8(P::load(src + i), a);
+        P::store(dst + i, a, bpp);
+      }
+      break;
+    case kFilterAvg:
+      if (!prev) {
+        for (std::size_t i = 0; i < n; i += bpp) {
+          a = vadd_u8(P::load(src + i), vshr_n_u8(a, 1));
+          P::store(dst + i, a, bpp);
+        }
+      } else {
+        for (std::size_t i = 0; i < n; i += bpp) {
+          a = vadd_u8(P::load(src + i), vhadd_u8(a, P::load(prev + i)));
+          P::store(dst + i, a, bpp);
+        }
+      }
+      break;
+    case kFilterPaeth:
+      if (!prev) {  // b = c = 0: the prediction is a
+        for (std::size_t i = 0; i < n; i += bpp) {
+          a = vadd_u8(P::load(src + i), a);
+          P::store(dst + i, a, bpp);
+        }
+      } else {
+        for (std::size_t i = 0; i < n; i += bpp) {
+          const uint8x8_t b = P::load(prev + i);
+          a = vadd_u8(P::load(src + i), paeth_neon(a, b, c));
+          c = b;
+          P::store(dst + i, a, bpp);
+        }
+      }
+      break;
+  }
+}
+
 inline void unfilter_row_neon(unsigned filter, std::uint8_t* dst, const std::uint8_t* src,
                               const std::uint8_t* prev, std::size_t n, unsigned bpp) {
   if (filter == kFilterUp && prev) {
@@ -100,48 +212,13 @@ inline void unfilter_row_neon(unsigned filter, std::uint8_t* dst, const std::uin
     for (; i < n; i++) dst[i] = static_cast<std::uint8_t>(src[i] + prev[i]);
     return;
   }
-  if ((bpp != 3 && bpp != 4) || filter == kFilterNone || filter == kFilterUp) {
+  if (filter == kFilterNone || filter == kFilterUp || bpp < 3 || bpp == 5 || bpp == 7 || bpp > 8) {
     unfilter_row_scalar(filter, dst, src, prev, n, bpp);
     return;
   }
   // n is a multiple of bpp here.
-  uint8x8_t a = vdup_n_u8(0), c = a;
-  switch (filter) {
-    case kFilterSub:
-      for (std::size_t i = 0; i < n; i += bpp) {
-        a = vadd_u8(load_px(src + i), a);
-        store_px(dst + i, a);
-      }
-      break;
-    case kFilterAvg:
-      if (!prev) {
-        for (std::size_t i = 0; i < n; i += bpp) {
-          a = vadd_u8(load_px(src + i), vshr_n_u8(a, 1));
-          store_px(dst + i, a);
-        }
-      } else {
-        for (std::size_t i = 0; i < n; i += bpp) {
-          a = vadd_u8(load_px(src + i), vhadd_u8(a, load_px(prev + i)));
-          store_px(dst + i, a);
-        }
-      }
-      break;
-    case kFilterPaeth:
-      if (!prev) {  // b = c = 0: the prediction is a
-        for (std::size_t i = 0; i < n; i += bpp) {
-          a = vadd_u8(load_px(src + i), a);
-          store_px(dst + i, a);
-        }
-      } else {
-        for (std::size_t i = 0; i < n; i += bpp) {
-          uint8x8_t b = load_px(prev + i);
-          a = vadd_u8(load_px(src + i), paeth_neon(a, b, c));
-          c = b;
-          store_px(dst + i, a);
-        }
-      }
-      break;
-  }
+  if (bpp <= 4) unfilter_px_neon<4>(filter, dst, src, prev, n, bpp);
+  else unfilter_px_neon<8>(filter, dst, src, prev, n, bpp);
 }
 #endif
 
