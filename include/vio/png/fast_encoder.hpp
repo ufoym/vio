@@ -696,8 +696,50 @@ inline void build_code_tables(const Histogram& h, CodeTables& t) {
   for (int g = 0; g < 14; g++)
     for (int i = 0; i < 16; i++) t.len[16 * (g + 1) + i] = static_cast<std::uint8_t>(rl[32 + g] + 4);
   for (int i = 0; i < 30; i++) t.len[256 + i] = rl[46 + i];
+  // Canonical codes, assigned over the reduced alphabet in symbol order: a
+  // group's 16 symbols are consecutive, share a length and so get
+  // consecutive codes.
   std::uint16_t msb[286];
-  canonical_codes(t.len, 286, t.code, msb);
+  {
+    unsigned count[16] = {}, next[16] = {};
+    for (int i = 0; i < 76; i++) count[rl[i]] += i >= 32 && i < 46 ? 16 : 1;
+    for (int i = 32; i < 46; i++) count[rl[i]] -= 16, count[rl[i] + 4] += 16;
+    count[0] = 0;
+    unsigned c = 0;
+    for (int l = 1; l < 16; l++) {
+      c = (c + count[l - 1]) << 1;
+      next[l] = c;
+    }
+    auto one = [&](int sym, unsigned l) {
+      if (!l) {
+        msb[sym] = 0;
+        return;
+      }
+      msb[sym] = static_cast<std::uint16_t>(next[l]++);
+    };
+    for (int i = 0; i < 16; i++) one(i, rl[i]);
+    for (int g = 0; g < 14; g++) {
+      const unsigned l = rl[32 + g] + 4u;
+      const unsigned v = next[l];
+      next[l] += 16;
+      for (int i = 0; i < 16; i++) msb[16 * (g + 1) + i] = static_cast<std::uint16_t>(v + i);
+    }
+    for (int i = 0; i < 16; i++) one(240 + i, rl[16 + i]);
+    for (int i = 0; i < 30; i++) one(256 + i, rl[46 + i]);
+    static constexpr auto rev8 = [] {
+      std::array<std::uint8_t, 256> r{};
+      for (unsigned i = 0; i < 256; i++) {
+        unsigned v = 0;
+        for (int b = 0; b < 8; b++) v |= ((i >> b) & 1u) << (7 - b);
+        r[i] = static_cast<std::uint8_t>(v);
+      }
+      return r;
+    }();
+    for (int i = 0; i < 286; i++) {
+      const unsigned v = msb[i], r = static_cast<unsigned>(rev8[v & 255]) << 8 | rev8[v >> 8];
+      t.code[i] = t.len[i] ? static_cast<std::uint16_t>(r >> (16 - t.len[i])) : 0;
+    }
+  }
   for (unsigned s = 0; s < 29; s++) {
     for (unsigned e = 0; e < (1u << kLenExtra[s]); e++) {
       unsigned l = kLenBase[s] + e;
@@ -1000,8 +1042,9 @@ class FastEncoder {
           pos += rb_ + 1;
         });
       }
-      // Statistics of about 32 KiB spread over the data.
-      const std::size_t step = std::max<std::size_t>(1, total / (32 * 1024));
+      // Statistics of about 8 KiB spread over the data (more would cost
+      // small images time and barely change the code).
+      const std::size_t step = std::max<std::size_t>(1, total / (8 * 1024));
       const std::size_t piece = std::max<std::size_t>(1, total / std::max<std::uint64_t>(1, rows));
       for (std::size_t p = 0; p < total; p += step * piece)
         hist.count(data.get() + p, std::min(piece, total - p));
