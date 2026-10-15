@@ -26,6 +26,7 @@
 #include "filter.hpp"
 #include "inflate.hpp"
 #include "info.hpp"
+#include "transform.hpp"
 
 namespace vio::png {
 
@@ -218,6 +219,23 @@ class Decoder {
     decode_image(data, f.control.width, f.control.height, buf, f.row_bytes);
     f.pixels.assign(buf.get(), buf.get() + f.row_bytes * f.control.height);
     return f;
+  }
+
+  // The decoded image after `t` (decode() first): rows of `row_bytes`
+  // bytes in the format of `format`; `palette` is the palette after
+  // palette-level transformations (for palette output).
+  struct Image {
+    RowInfo format;
+    std::size_t row_bytes = 0;
+    std::vector<std::uint8_t> pixels;
+    std::vector<PaletteEntry> palette;
+    const std::uint8_t* row(std::uint32_t y) const { return pixels.data() + y * row_bytes; }
+  };
+  Image transform(const Transforms& t) {
+    return transform_rows(t, header.width, header.height, pixels_.get(), row_bytes_);
+  }
+  Image transform(const Transforms& t, const Frame& f) {
+    return transform_rows(t, f.control.width, f.control.height, f.pixels.data(), f.row_bytes);
   }
 
   // ICC profile, if any (kept for older callers).
@@ -936,6 +954,35 @@ class Decoder {
       }
     }
     if (h.bit_depth == 16) swap16(pixels.get(), rb * height);
+  }
+
+  Image transform_rows(const Transforms& t, std::uint32_t width, std::uint32_t height,
+                       const std::uint8_t* pixels, std::size_t rb) {
+    detail::TransformPlan plan;
+    plan.init(info, t, [this](const std::string& m) { warn(m); });
+    Image img;
+    img.format = plan.output();
+    img.format.width = width;
+    img.palette = plan.palette();
+    img.row_bytes = (static_cast<std::size_t>(width) * img.format.channels * img.format.bit_depth + 7) / 8;
+    img.pixels.resize(img.row_bytes * height + plan.max_row_bytes(width));
+    std::vector<std::uint8_t> in(rb), out(plan.max_row_bytes(width));
+    for (std::uint32_t y = 0; y < height; y++) {
+      const std::uint8_t* src = pixels + y * rb;
+      if (header.bit_depth == 16) {
+        // stored in host order; the transforms take PNG (big-endian) order
+        for (std::size_t i = 0; i + 1 < rb; i += 2) {
+          std::uint16_t v;
+          std::memcpy(&v, src + i, 2);
+          in[i] = static_cast<std::uint8_t>(v >> 8), in[i + 1] = static_cast<std::uint8_t>(v);
+        }
+        src = in.data();
+      }
+      plan.run(src, width, out.data());
+      std::memcpy(img.pixels.data() + y * img.row_bytes, out.data(), img.row_bytes);
+    }
+    img.pixels.resize(img.row_bytes * height);
+    return img;
   }
 
   std::span<const std::uint8_t> file_;
