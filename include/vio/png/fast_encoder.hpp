@@ -96,15 +96,16 @@ VIO_INLINE std::uint8_t paeth_select(std::uint8_t a, std::uint8_t b, std::uint8_
 VIO_INLINE std::uint8_t avg_floor(std::uint8_t a, std::uint8_t b) {
   return static_cast<std::uint8_t>((a & b) + ((a ^ b) >> 1));
 }
-VIO_INLINE unsigned abs_residual(unsigned r) {
+VIO_INLINE std::uint8_t abs_byte(std::uint8_t v) {
+  const std::uint8_t w = static_cast<std::uint8_t>(0u - v);
+  return v < w ? v : w;
+}
 #if VIO_PNG_SCALAR_INT
+VIO_INLINE unsigned abs_residual(unsigned r) {
   const unsigned v = r & 0xff;
   return v < 128 ? v : 256 - v;
-#else
-  const std::uint8_t v = static_cast<std::uint8_t>(r), w = static_cast<std::uint8_t>(0u - v);
-  return v < w ? v : w;
-#endif
 }
+#endif
 
 // Computes the residuals of all five filters for one row and returns the
 // filter whose residuals have the smallest sum of absolute values (as
@@ -125,11 +126,20 @@ inline unsigned choose_filter_scalar(const std::uint8_t* cur, const std::uint8_t
 #endif
     for (; i < end; i++) {
       const std::uint8_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp];
+#if VIO_PNG_SCALAR_INT
       c0 += abs_residual(x);
       c1 += abs_residual(x - a);
       c2 += abs_residual(x - b);
       c3 += abs_residual(x - avg_floor(a, b));
       c4 += abs_residual(x - paeth_select(a, b, c));
+#else
+      // residuals as bytes (wider types make Clang widen the vectors)
+      c0 = static_cast<std::uint16_t>(c0 + abs_byte(x));
+      c1 = static_cast<std::uint16_t>(c1 + abs_byte(static_cast<std::uint8_t>(x - a)));
+      c2 = static_cast<std::uint16_t>(c2 + abs_byte(static_cast<std::uint8_t>(x - b)));
+      c3 = static_cast<std::uint16_t>(c3 + abs_byte(static_cast<std::uint8_t>(x - avg_floor(a, b))));
+      c4 = static_cast<std::uint16_t>(c4 + abs_byte(static_cast<std::uint8_t>(x - paeth_select(a, b, c))));
+#endif
     }
     cost[0] += c0, cost[1] += c1, cost[2] += c2, cost[3] += c3, cost[4] += c4;
   }
