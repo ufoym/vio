@@ -449,6 +449,7 @@ machine, geometric mean over the corpus or the stated subset).
 - Consecutive Paeth rows in pairs, the second one pixel behind, in GCC's scalar code on AArch64 ([ce86b25](https://github.com/ufoym/vio/commit/ce86b25)): decoding without SIMD +2% (Cortex-X925, GCC, 1/8 of the corpus).
 - Scalar Paeth of 3- and 4-byte pixels by minimum, maximum and two comparisons with 3c - a - b for MSVC and Clang ([faf21b4](https://github.com/ufoym/vio/commit/faf21b4)): decoding without SIMD +12% (Core Ultra 9 285K, MSVC), +3% (Apple M4), 1/8 of the corpus.
 - GCC's scalar Paeth by the same minimum/maximum comparisons in branchless form ([ff9e269](https://github.com/ufoym/vio/commit/ff9e269)): decoding without SIMD +0.8% where rows are not paired (Cortex-X925, GCC, 1/8 of the corpus).
+- The same in GCC's paired Paeth rows ([3b7ca71](https://github.com/ufoym/vio/commit/3b7ca71)): decoding without SIMD +1% (Cortex-X925, GCC, 1/8 of the corpus).
 
 ## Building and testing
 
