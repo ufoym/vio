@@ -76,10 +76,15 @@ inline unsigned pick_filter(const std::uint64_t* cost, unsigned allowed) {
 #define VIO_PNG_SCALAR_INT 1
 #endif
 #if VIO_PNG_SCALAR_INT
+// (selections by arithmetic masks: MSVC vectorizes no loop with ?:)
+VIO_INLINE int paeth_select_int(int a, int b, int c) {
+  const int pa = std::abs(b - c), pb = std::abs(a - c), pc = std::abs(a + b - 2 * c);
+  const int use_b = ~((pc - pb) >> 31), use_a = ~((pb - pa) >> 31) & ~((pc - pa) >> 31);
+  const int bc = c ^ ((b ^ c) & use_b);
+  return bc ^ ((a ^ bc) & use_a);
+}
 VIO_INLINE std::uint8_t paeth_select(std::uint8_t a, std::uint8_t b, std::uint8_t c) {
-  const int pa = std::abs(int{b} - int{c}), pb = std::abs(int{a} - int{c}), pc = std::abs(int{a} + int{b} - 2 * int{c});
-  const std::uint8_t bc = pb <= pc ? b : c;
-  return pa <= pb && pa <= pc ? a : bc;
+  return static_cast<std::uint8_t>(paeth_select_int(a, b, c));
 }
 #else
 VIO_INLINE std::uint8_t paeth_select(std::uint8_t a, std::uint8_t b, std::uint8_t c) {
@@ -101,9 +106,27 @@ VIO_INLINE std::uint8_t abs_byte(std::uint8_t v) {
   return v < w ? v : w;
 }
 #if VIO_PNG_SCALAR_INT
-VIO_INLINE unsigned abs_residual(unsigned r) {
-  const unsigned v = r & 0xff;
-  return v < 128 ? v : 256 - v;
+// |r| of the residual r (mod 256) as a signed byte
+VIO_INLINE int abs_residual(int r) { return std::abs(static_cast<int>(static_cast<unsigned>(r) << 24) >> 24); }
+
+// Adds the sums of absolute residuals of n bytes x for the five filters
+// (a, b, c: the bytes left, above and above left) to cost[0..4]; in the
+// form MSVC vectorizes (no ?:, operands through distinct pointers).
+inline void filter_costs_int(const std::uint8_t* VIO_RESTRICT x, const std::uint8_t* VIO_RESTRICT a,
+                             const std::uint8_t* VIO_RESTRICT b, const std::uint8_t* VIO_RESTRICT c, int n,
+                             std::uint64_t* cost) {
+  int c0 = 0, c1 = 0, c2 = 0, c3 = 0, c4 = 0;  // n < 2^23
+  for (int i = 0; i < n; i++) {
+    const int xi = x[i], ai = a[i], bi = b[i], ci = c[i];
+    c0 += abs_residual(xi);
+    c1 += abs_residual(xi - ai);
+    c2 += abs_residual(xi - bi);
+    c3 += abs_residual(xi - ((ai + bi) >> 1));
+    c4 += abs_residual(xi - paeth_select_int(ai, bi, ci));
+  }
+  cost[0] += static_cast<std::uint32_t>(c0), cost[1] += static_cast<std::uint32_t>(c1);
+  cost[2] += static_cast<std::uint32_t>(c2), cost[3] += static_cast<std::uint32_t>(c3);
+  cost[4] += static_cast<std::uint32_t>(c4);
 }
 #endif
 
@@ -114,57 +137,51 @@ VIO_INLINE unsigned abs_residual(unsigned r) {
 inline unsigned choose_filter_scalar(const std::uint8_t* cur, const std::uint8_t* up, std::size_t n,
                                   unsigned bpp, unsigned allowed = 0x1f) {
   std::uint64_t cost[5] = {};
-  for (std::size_t i = 0; i < n;) {
 #if VIO_PNG_SCALAR_INT
-    // 32-bit sums over at most 2^24 bytes
-    const std::size_t end = std::min(n, i + (std::size_t(1) << 24));
-    std::uint32_t c0 = 0, c1 = 0, c2 = 0, c3 = 0, c4 = 0;
+  for (std::size_t i = 0; i < n; i += std::size_t(1) << 22) {
+    const int m = static_cast<int>(std::min(n - i, std::size_t(1) << 22));
+    filter_costs_int(cur + i, cur + i - bpp, up + i, up + i - bpp, m, cost);
+  }
 #else
+  for (std::size_t i = 0; i < n;) {
     // 16-bit sums over at most 256 bytes
     const std::size_t end = std::min(n, i + 256);
     std::uint16_t c0 = 0, c1 = 0, c2 = 0, c3 = 0, c4 = 0;
-#endif
     for (; i < end; i++) {
       const std::uint8_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp];
-#if VIO_PNG_SCALAR_INT
-      c0 += abs_residual(x);
-      c1 += abs_residual(x - a);
-      c2 += abs_residual(x - b);
-      c3 += abs_residual(x - avg_floor(a, b));
-      c4 += abs_residual(x - paeth_select(a, b, c));
-#else
       // residuals as bytes (wider types make Clang widen the vectors)
       c0 = static_cast<std::uint16_t>(c0 + abs_byte(x));
       c1 = static_cast<std::uint16_t>(c1 + abs_byte(static_cast<std::uint8_t>(x - a)));
       c2 = static_cast<std::uint16_t>(c2 + abs_byte(static_cast<std::uint8_t>(x - b)));
       c3 = static_cast<std::uint16_t>(c3 + abs_byte(static_cast<std::uint8_t>(x - avg_floor(a, b))));
       c4 = static_cast<std::uint16_t>(c4 + abs_byte(static_cast<std::uint8_t>(x - paeth_select(a, b, c))));
-#endif
     }
     cost[0] += c0, cost[1] += c1, cost[2] += c2, cost[3] += c3, cost[4] += c4;
   }
+#endif
   return pick_filter(cost, allowed);
 }
 
-inline void apply_filter_scalar(unsigned filter, std::uint8_t* out, const std::uint8_t* cur,
-                                const std::uint8_t* up, std::size_t n, unsigned bpp) {
+// (operands through distinct pointers, which lets MSVC vectorize the loops)
+inline void apply_filter_scalar(unsigned filter, std::uint8_t* VIO_RESTRICT out, const std::uint8_t* VIO_RESTRICT x,
+                                const std::uint8_t* VIO_RESTRICT b, std::size_t n, unsigned bpp) {
+  const std::uint8_t* VIO_RESTRICT a = x - bpp;
+  const std::uint8_t* VIO_RESTRICT c = b - bpp;
   switch (filter) {
     case kFilterNone:
-      std::memcpy(out, cur, n);
+      std::memcpy(out, x, n);
       break;
     case kFilterSub:
-      for (std::size_t i = 0; i < n; i++) out[i] = static_cast<std::uint8_t>(cur[i] - cur[i - bpp]);
+      for (std::size_t i = 0; i < n; i++) out[i] = static_cast<std::uint8_t>(x[i] - a[i]);
       break;
     case kFilterUp:
-      for (std::size_t i = 0; i < n; i++) out[i] = static_cast<std::uint8_t>(cur[i] - up[i]);
+      for (std::size_t i = 0; i < n; i++) out[i] = static_cast<std::uint8_t>(x[i] - b[i]);
       break;
     case kFilterAvg:
-      for (std::size_t i = 0; i < n; i++)
-        out[i] = static_cast<std::uint8_t>(cur[i] - ((cur[i - bpp] + up[i]) >> 1));
+      for (std::size_t i = 0; i < n; i++) out[i] = static_cast<std::uint8_t>(x[i] - ((a[i] + b[i]) >> 1));
       break;
     case kFilterPaeth:
-      for (std::size_t i = 0; i < n; i++)
-        out[i] = static_cast<std::uint8_t>(cur[i] - paeth_select(cur[i - bpp], up[i], up[i - bpp]));
+      for (std::size_t i = 0; i < n; i++) out[i] = static_cast<std::uint8_t>(x[i] - paeth_select(a[i], b[i], c[i]));
       break;
   }
 }
