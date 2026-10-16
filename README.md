@@ -441,6 +441,7 @@ machine, geometric mean over the corpus or the stated subset).
 - Scalar Paeth of 3- and 4-byte pixels for Clang on x86 on 16-bit lanes with t = 3c - a - b, the prediction max(a, b), min(a, b) or c by two comparisons with t, which Clang vectorizes over the pixel's bytes ([47697f5](https://github.com/ufoym/vio/commit/47697f5)): decoding without SIMD +8.5% (Core Ultra 9 285K, clang-cl, 1/8 of the corpus).
 - Encoder output buffer kept per thread for the next image, where Windows returned each large buffer to the OS and faulted every page of the next one in ([b10524b](https://github.com/ufoym/vio/commit/b10524b)): encoding +16% without SIMD, +11% with SSE2 (Core Ultra 9 285K, MSVC, 1/8 of the corpus).
 - Scalar filter selection on x86 on 16-bit values (Paeth by comparisons with 3c - a - b), which SSE2 compares and bounds natively ([175a138](https://github.com/ufoym/vio/commit/175a138)): encoding without SIMD +5% (Core Ultra 9 285K, clang-cl, 1/8 of the corpus); files unchanged.
+- NEON reconstruction of consecutive Sub, Average and Paeth rows in pairs, the second a 192-byte block behind the first, two independent dependency chains instead of one; data inflated a row past the image's start so the second row never overwrites input still to be read ([87ff9cd](https://github.com/ufoym/vio/commit/87ff9cd)): decoding +4% (Apple M4), +8% (Cortex-X925, GCC), 1/8 of the corpus.
 
 ## Building and testing
 
