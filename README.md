@@ -438,6 +438,7 @@ machine, geometric mean over the corpus or the stated subset).
 - Huffman coder's bit writer copied field by field around zero runs, where MSVC's struct copy (a 16-byte load right after 8-byte stores) stalled store forwarding ([d4abf9f](https://github.com/ufoym/vio/commit/d4abf9f)): encoding +13% (AVX2), +14% (SSE2), +11% (without SIMD) on the Core Ultra 9 285K with MSVC, 1/8 of the corpus.
 - Scalar Adler-32 on 64-bit words (byte sums by a multiply, per-position sums in 16-bit lanes) for MSVC and Clang on x86, which vectorized the per-position form poorly ([d0f39d8](https://github.com/ufoym/vio/commit/d0f39d8)): Adler-32 17 instead of 11 GB/s, decoding without SIMD +3% (Core Ultra 9 285K, MSVC, 1/8 of the corpus).
 - Braided CRC-32 in named 64-bit words instead of arrays, which MSVC kept in memory ([b3747bf](https://github.com/ufoym/vio/commit/b3747bf)): CRC-32 without PCLMULQDQ 10 instead of 5 GB/s; decoding +3% without SIMD and with SSE2, SSE2 encoding +4% (Core Ultra 9 285K, MSVC, 1/8 of the corpus).
+- Scalar Paeth of 3- and 4-byte pixels for Clang on x86 on 16-bit lanes with t = 3c - a - b, the prediction max(a, b), min(a, b) or c by two comparisons with t, which Clang vectorizes over the pixel's bytes ([47697f5](https://github.com/ufoym/vio/commit/47697f5)): decoding without SIMD +8.5% (Core Ultra 9 285K, clang-cl, 1/8 of the corpus).
 
 ## Building and testing
 
