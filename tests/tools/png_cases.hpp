@@ -32,7 +32,12 @@ struct Fnv {
     const std::uint8_t* b = static_cast<const std::uint8_t*>(p);
     for (std::size_t i = 0; i < n; i++) h = (h ^ b[i]) * 0x100000001b3ull;
   }
-  void add(std::uint64_t v) { add(&v, sizeof v); }
+  // (little-endian bytes, as the reference values were computed)
+  void add(std::uint64_t v) {
+    std::uint8_t b[8];
+    for (int i = 0; i < 8; i++) b[i] = static_cast<std::uint8_t>(v >> (8 * i));
+    add(b, sizeof b);
+  }
   void add(const std::string& s) { add(s.data(), s.size()); }
   std::string hex() const {
     char s[17];

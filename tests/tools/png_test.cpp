@@ -411,11 +411,25 @@ std::uint64_t format_read(const std::vector<std::uint8_t>& file, std::uint32_t f
     r.read(buf.data(), bg ? -samples : samples, cm.data(), bg ? &c : nullptr);
     std::vector<std::uint8_t> out(row * r.height);
     for (std::uint32_t y = 0; y < r.height; y++) std::memcpy(out.data() + y * row, buf.data() + y * stride, row);
-    f.add(out.data(), out.size());
+    // 16-bit samples are in host byte order; hashed little-endian, as the
+    // reference values were computed
+    auto add_samples = [&](const std::uint8_t* p, std::size_t n, unsigned size) {
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+      if (size == 2) {
+        std::vector<std::uint8_t> le(p, p + n);
+        for (std::size_t i = 0; i + 1 < n; i += 2) std::swap(le[i], le[i + 1]);
+        f.add(le.data(), n);
+        return;
+      }
+#endif
+      (void)size;
+      f.add(p, n);
+    };
+    add_samples(out.data(), out.size(), cs);
     const std::size_t cms = png::format_channels(fmt) * png::format_component_size(fmt);
     if (fmt & png::kFormatColormap) {
       f.add(static_cast<std::uint64_t>(r.colormap_entries));
-      f.add(cm.data(), r.colormap_entries * cms);
+      add_samples(cm.data(), r.colormap_entries * cms, png::format_component_size(fmt));
     }
     if (image) {
       image->width = r.width;
