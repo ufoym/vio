@@ -515,6 +515,7 @@ include/vio/
 │   │                                 and Huffman coding)
 │   ├── inflate.hpp                   DEFLATE decompression (whole buffer,
 │   │                                 or resumable)
+│   ├── inflate_fast.inc              its fast loop (compiled per ISA)
 │   ├── deflate.hpp                   DEFLATE compression, zlib-identical
 │   │                                 output
 │   ├── filter.hpp                    scanline filters (scalar, NEON, SSE2,
