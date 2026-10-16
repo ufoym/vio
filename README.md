@@ -446,6 +446,7 @@ machine, geometric mean over the corpus or the stated subset).
 - Inflate fast loop compiled a second time with BMI2 shifts (GCC, Clang; chosen at run time, not at the SSE2 level), one micro-op each where shifts by cl take up to three on the lookup chain ([1b7636d](https://github.com/ufoym/vio/commit/1b7636d)): decoding +1% (Core Ultra 9 285K, clang-cl, 1/8 of the corpus).
 - MSVC scalar filter selection storing the Paeth residuals as it costs them, so rows taking Paeth are not filtered again ([801d2b2](https://github.com/ufoym/vio/commit/801d2b2)): encoding without SIMD +6–8% (Core Ultra 9 285K, MSVC, 1/8 of the corpus); files unchanged.
 - NEON, SSE2 and AVX2 filter selection storing the Paeth residuals as it costs them, so rows taking Paeth are not filtered again ([75e6e3f](https://github.com/ufoym/vio/commit/75e6e3f)): encoding +2–4% (Apple M4), +3% (Cortex-X925, GCC), +4% with AVX2 and +6% with SSE2 (Core Ultra 9 285K, MSVC), 1/8 of the corpus; files unchanged.
+- Consecutive Paeth rows in pairs, the second one pixel behind, in GCC's scalar code on AArch64 ([ce86b25](https://github.com/ufoym/vio/commit/ce86b25)): decoding without SIMD +2% (Cortex-X925, GCC, 1/8 of the corpus).
 
 ## Building and testing
 
