@@ -2,7 +2,7 @@
 //
 // crc32() folds 64-byte blocks with carry-less multiplication where the CPU
 // has it (x86 PCLMULQDQ, Arm PMULL), else uses the Arm CRC32 instructions or
-// slicing-by-8 tables.  adler32() sums 32-byte blocks with SSSE3, NEON or
+// braided slicing-by-8 tables.  adler32() sums 32-byte blocks with SSSE3, NEON or
 // the generic vector kernel.
 #pragma once
 
@@ -72,6 +72,77 @@ inline std::uint32_t crc32_tables(std::uint32_t crc, const std::uint8_t* buf, st
   }
   while (len--) crc = t[0][(crc ^ *buf++) & 0xff] ^ (crc >> 8);
   return crc;
+}
+
+// Braided CRC (as in zlib 1.3): five 64-bit words at a time, each with its
+// own CRC register, the five combined over the last block.  Polynomial
+// arithmetic modulo the (bit-reflected) CRC polynomial builds the tables:
+// braid_table[k][i] advances byte i at position k of a word over the
+// remaining bytes of a five-word block.
+constexpr std::uint32_t crc_multmodp(std::uint32_t a, std::uint32_t b) {
+  std::uint32_t m = 1u << 31, p = 0;
+  for (;;) {
+    if (a & m) {
+      p ^= b;
+      if ((a & (m - 1)) == 0) break;
+    }
+    m >>= 1;
+    b = b & 1 ? (b >> 1) ^ 0xedb88320u : b >> 1;
+  }
+  return p;
+}
+// x^(8n) modulo the polynomial
+constexpr std::uint32_t crc_x8nmodp(unsigned n) {
+  std::uint32_t p = 1u << 31, x8 = 1u << 23;  // x^0, x^8
+  for (; n; n >>= 1, x8 = crc_multmodp(x8, x8))
+    if (n & 1) p = crc_multmodp(x8, p);
+  return p;
+}
+inline constexpr unsigned kBraids = 5;
+constexpr std::array<std::array<std::uint32_t, 256>, 8> make_braid_tables() {
+  std::array<std::array<std::uint32_t, 256>, 8> t{};
+  for (unsigned k = 0; k < 8; k++) {
+    const std::uint32_t p = crc_x8nmodp(kBraids * 8 + 3 - k);
+    for (std::uint32_t i = 1; i < 256; i++) t[k][i] = crc_multmodp(i << 24, p);
+  }
+  return t;
+}
+inline constexpr auto braid_tables = make_braid_tables();
+
+inline std::uint64_t crc_load_le64(const std::uint8_t* p) {
+  std::uint64_t v;
+  std::memcpy(&v, p, 8);
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+  v = __builtin_bswap64(v);
+#endif
+  return v;
+}
+// The CRC register through one 64-bit word.
+inline std::uint32_t crc_word(std::uint64_t v) {
+  for (int k = 0; k < 8; k++) v = (v >> 8) ^ crc_tables[0][v & 0xff];
+  return static_cast<std::uint32_t>(v);
+}
+
+inline std::uint32_t crc32_braided(std::uint32_t crc, const std::uint8_t* buf, std::size_t len) {
+  constexpr std::size_t kBlock = kBraids * 8;
+  std::size_t blocks = len / kBlock;
+  if (blocks >= 2) {
+    len -= blocks * kBlock;
+    const auto& t = braid_tables;
+    std::uint64_t c[kBraids] = {crc};
+    while (--blocks) {
+      std::uint64_t w[kBraids];
+      for (unsigned j = 0; j < kBraids; j++) w[j] = c[j] ^ crc_load_le64(buf + 8 * j);
+      buf += kBlock;
+      for (unsigned j = 0; j < kBraids; j++) c[j] = t[0][w[j] & 0xff];
+      for (unsigned k = 1; k < 8; k++)
+        for (unsigned j = 0; j < kBraids; j++) c[j] ^= t[k][(w[j] >> (8 * k)) & 0xff];
+    }
+    crc = 0;
+    for (unsigned j = 0; j < kBraids; j++) crc = crc_word(c[j] ^ crc_load_le64(buf + 8 * j) ^ crc);
+    buf += kBlock;
+  }
+  return crc32_tables(crc, buf, len);
 }
 
 // Folding constants for the bit-reflected CRC-32 polynomial: x^(512+32),
@@ -292,6 +363,21 @@ VIO_TARGET_POP()
 #endif
 #endif
 
+// Adler-32 sums of whole 32-byte blocks without vector intrinsics (in a
+// form that compilers vectorize): per block, s2 gains 32 * s1 plus the bytes
+// weighted 32 down to 1.
+inline void adler32_blocks(std::uint32_t& s1, std::uint32_t& s2, const std::uint8_t* p, std::size_t nblocks) {
+  for (std::size_t i = 0; i < nblocks; i++, p += 32) {
+    std::uint32_t sum = 0, weighted = 0;
+    for (unsigned k = 0; k < 32; k++) {
+      sum += p[k];
+      weighted += (32 - k) * p[k];
+    }
+    s2 += 32 * s1 + weighted;
+    s1 += sum;
+  }
+}
+
 // Adler-32 sums of whole 32-byte blocks (nblocks <= 128, which keeps the
 // per-position byte sums within signed 16 bits) with a 128-bit vector
 // interface V (AltiVec, MMI, RVV).
@@ -344,7 +430,7 @@ inline std::uint32_t crc32(std::uint32_t crc, const std::uint8_t* buf, std::size
   }
   if (simd::has(kCRC32)) return ~detail::crc32_arm(crc, buf, len);
 #endif
-  return ~detail::crc32_tables(crc, buf, len);
+  return ~detail::crc32_braided(crc, buf, len);
 }
 
 inline std::uint32_t adler32(std::uint32_t adler, const std::uint8_t* buf, std::size_t len) {
@@ -358,28 +444,28 @@ inline std::uint32_t adler32(std::uint32_t adler, const std::uint8_t* buf, std::
   const bool vec = simd::has(kNEON);
 #elif VIO_PNG_GENERIC
   const bool vec = simd::has(simd::kGenericIsa);
+#else
+  const bool vec = false;
 #endif
   while (len > 0) {
     std::size_t n = len < NMAX ? len : NMAX;
     len -= n;
-#if VIO_SIMD_X86 || VIO_SIMD_NEON || VIO_PNG_GENERIC
-    if (vec) {
+    const std::size_t blocks = n / 32;
+    if (!vec) {
+      detail::adler32_blocks(a, b, buf, blocks);
+    } else {
 #if VIO_SIMD_X86
-      const std::size_t blocks = n / 32;
       detail::adler32_ssse3(a, b, buf, blocks);
 #elif VIO_SIMD_NEON
-      const std::size_t blocks = n / 32;
       detail::adler32_neon(a, b, buf, blocks);
-#else
+#elif VIO_PNG_GENERIC
       // (at most 128 blocks at a time; NMAX bytes have 173)
-      const std::size_t blocks = n / 32;
       for (std::size_t k = 0; k < blocks; k += 128)
         detail::adler32_vec<simd::GV>(a, b, buf + k * 32, std::min<std::size_t>(128, blocks - k));
 #endif
-      buf += blocks * 32;
-      n -= blocks * 32;
     }
-#endif
+    buf += blocks * 32;
+    n -= blocks * 32;
     while (n--) {
       a += *buf++;
       b += a;

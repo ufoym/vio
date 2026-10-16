@@ -66,6 +66,28 @@ inline unsigned pick_filter(const std::uint64_t* cost, unsigned allowed) {
   return best == 5 ? 0 : best;
 }
 
+// Paeth predictor and absolute value of a signed byte residual written
+// without branches, so that the compiler can vectorize the loops below.
+// (8-bit arithmetic as in the vector kernels: pc is |pa - pb| when a - c
+// and b - c differ in sign, else pa + pb saturated)
+VIO_INLINE std::uint8_t paeth_select(std::uint8_t a, std::uint8_t b, std::uint8_t c) {
+  const std::uint8_t pa = static_cast<std::uint8_t>(b > c ? b - c : c - b);
+  const std::uint8_t pb = static_cast<std::uint8_t>(a > c ? a - c : c - a);
+  const std::uint8_t d = static_cast<std::uint8_t>(pa > pb ? pa - pb : pb - pa);
+  const std::uint8_t sum = static_cast<std::uint8_t>(pa + pb);
+  const std::uint8_t pc = (a < c) != (b < c) ? d : sum < pa ? std::uint8_t(255) : sum;
+  const std::uint8_t bc = pb <= pc ? b : c;
+  return pa <= pb && pa <= pc ? a : bc;
+}
+// floor((a + b) / 2)
+VIO_INLINE std::uint8_t avg_floor(std::uint8_t a, std::uint8_t b) {
+  return static_cast<std::uint8_t>((a & b) + ((a ^ b) >> 1));
+}
+VIO_INLINE std::uint8_t abs_residual(unsigned r) {
+  const std::uint8_t v = static_cast<std::uint8_t>(r), w = static_cast<std::uint8_t>(0u - v);
+  return v < w ? v : w;
+}
+
 // Computes the residuals of all five filters for one row and returns the
 // filter whose residuals have the smallest sum of absolute values (as
 // signed bytes).  cur and up point at padded rows (up is all zeros for the
@@ -73,28 +95,43 @@ inline unsigned pick_filter(const std::uint64_t* cost, unsigned allowed) {
 inline unsigned choose_filter_scalar(const std::uint8_t* cur, const std::uint8_t* up, std::size_t n,
                                   unsigned bpp, unsigned allowed = 0x1f) {
   std::uint64_t cost[5] = {};
-  for (std::size_t i = 0; i < n; i++) {
-    std::uint8_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp];
-    std::uint8_t r[5] = {x, static_cast<std::uint8_t>(x - a), static_cast<std::uint8_t>(x - b),
-                         static_cast<std::uint8_t>(x - ((a + b) >> 1)),
-                         static_cast<std::uint8_t>(x - paeth(a, b, c))};
-    for (int f = 0; f < 5; f++) cost[f] += r[f] < 128 ? r[f] : 256 - r[f];
+  for (std::size_t i = 0; i < n;) {
+    // 16-bit sums over at most 256 bytes
+    const std::size_t end = std::min(n, i + 256);
+    std::uint16_t c0 = 0, c1 = 0, c2 = 0, c3 = 0, c4 = 0;
+    for (; i < end; i++) {
+      const std::uint8_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp];
+      c0 += abs_residual(x);
+      c1 += abs_residual(x - a);
+      c2 += abs_residual(x - b);
+      c3 += abs_residual(x - avg_floor(a, b));
+      c4 += abs_residual(x - paeth_select(a, b, c));
+    }
+    cost[0] += c0, cost[1] += c1, cost[2] += c2, cost[3] += c3, cost[4] += c4;
   }
   return pick_filter(cost, allowed);
 }
 
 inline void apply_filter_scalar(unsigned filter, std::uint8_t* out, const std::uint8_t* cur,
                                 const std::uint8_t* up, std::size_t n, unsigned bpp) {
-  for (std::size_t i = 0; i < n; i++) {
-    std::uint8_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp], p = 0;
-    switch (filter) {
-      case kFilterSub: p = a; break;
-      case kFilterUp: p = b; break;
-      case kFilterAvg: p = static_cast<std::uint8_t>((a + b) >> 1); break;
-      case kFilterPaeth: p = paeth(a, b, c); break;
-      default: break;
-    }
-    out[i] = static_cast<std::uint8_t>(x - p);
+  switch (filter) {
+    case kFilterNone:
+      std::memcpy(out, cur, n);
+      break;
+    case kFilterSub:
+      for (std::size_t i = 0; i < n; i++) out[i] = static_cast<std::uint8_t>(cur[i] - cur[i - bpp]);
+      break;
+    case kFilterUp:
+      for (std::size_t i = 0; i < n; i++) out[i] = static_cast<std::uint8_t>(cur[i] - up[i]);
+      break;
+    case kFilterAvg:
+      for (std::size_t i = 0; i < n; i++)
+        out[i] = static_cast<std::uint8_t>(cur[i] - ((cur[i - bpp] + up[i]) >> 1));
+      break;
+    case kFilterPaeth:
+      for (std::size_t i = 0; i < n; i++)
+        out[i] = static_cast<std::uint8_t>(cur[i] - paeth_select(cur[i - bpp], up[i], up[i - bpp]));
+      break;
   }
 }
 

@@ -40,7 +40,7 @@ inline std::uint8_t paeth(std::uint8_t a, std::uint8_t b, std::uint8_t c) {
   return c;
 }
 
-// Pixels of 1 or 2 bytes (B): the previous pixel stays in registers (B
+// Pixels of B bytes (B <= 8): the previous pixel stays in registers (B
 // independent chains) instead of being reloaded from the row just stored.
 template <unsigned B>
 inline void unfilter_small(unsigned filter, std::uint8_t* dst, const std::uint8_t* src, const std::uint8_t* prev,
@@ -85,11 +85,17 @@ inline void unfilter_small(unsigned filter, std::uint8_t* dst, const std::uint8_
 // Scalar reconstruction; prev == nullptr for the first row.
 inline void unfilter_row_scalar(unsigned filter, std::uint8_t* dst, const std::uint8_t* src,
                                 const std::uint8_t* prev, std::size_t n, unsigned bpp) {
-  if ((bpp == 1 || bpp == 2) && (filter == kFilterSub || filter == kFilterAvg || (filter == kFilterPaeth && prev))) {
+  if (bpp <= 8 && (filter == kFilterSub || filter == kFilterAvg || (filter == kFilterPaeth && prev))) {
     // n is a multiple of bpp
-    if (bpp == 1) unfilter_small<1>(filter, dst, src, prev, n);
-    else unfilter_small<2>(filter, dst, src, prev, n);
-    return;
+    switch (bpp) {
+      case 1: return unfilter_small<1>(filter, dst, src, prev, n);
+      case 2: return unfilter_small<2>(filter, dst, src, prev, n);
+      case 3: return unfilter_small<3>(filter, dst, src, prev, n);
+      case 4: return unfilter_small<4>(filter, dst, src, prev, n);
+      case 6: return unfilter_small<6>(filter, dst, src, prev, n);
+      case 8: return unfilter_small<8>(filter, dst, src, prev, n);
+      default: break;
+    }
   }
   switch (filter) {
     case kFilterNone:
