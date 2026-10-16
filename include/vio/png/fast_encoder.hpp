@@ -67,9 +67,18 @@ inline unsigned pick_filter(const std::uint64_t* cost, unsigned allowed) {
 }
 
 // Paeth predictor and absolute value of a signed byte residual written
-// without branches, so that the compiler can vectorize the loops below.
-// (8-bit arithmetic as in the vector kernels: pc is |pa - pb| when a - c
-// and b - c differ in sign, else pa + pb saturated)
+// without branches, so that GCC and Clang vectorize the loops below (8-bit
+// arithmetic as in the vector kernels: pc is |pa - pb| when a - c and b - c
+// differ in sign, else pa + pb saturated).  MSVC does not vectorize them,
+// and its scalar code is faster with int arithmetic.
+#if defined(_MSC_VER) && !defined(__clang__)
+#define VIO_PNG_SCALAR_INT 1
+VIO_INLINE std::uint8_t paeth_select(std::uint8_t a, std::uint8_t b, std::uint8_t c) {
+  const int pa = std::abs(int{b} - int{c}), pb = std::abs(int{a} - int{c}), pc = std::abs(int{a} + int{b} - 2 * int{c});
+  const std::uint8_t bc = pb <= pc ? b : c;
+  return pa <= pb && pa <= pc ? a : bc;
+}
+#else
 VIO_INLINE std::uint8_t paeth_select(std::uint8_t a, std::uint8_t b, std::uint8_t c) {
   const std::uint8_t pa = static_cast<std::uint8_t>(b > c ? b - c : c - b);
   const std::uint8_t pb = static_cast<std::uint8_t>(a > c ? a - c : c - a);
@@ -79,13 +88,19 @@ VIO_INLINE std::uint8_t paeth_select(std::uint8_t a, std::uint8_t b, std::uint8_
   const std::uint8_t bc = pb <= pc ? b : c;
   return pa <= pb && pa <= pc ? a : bc;
 }
+#endif
 // floor((a + b) / 2)
 VIO_INLINE std::uint8_t avg_floor(std::uint8_t a, std::uint8_t b) {
   return static_cast<std::uint8_t>((a & b) + ((a ^ b) >> 1));
 }
-VIO_INLINE std::uint8_t abs_residual(unsigned r) {
+VIO_INLINE unsigned abs_residual(unsigned r) {
+#if VIO_PNG_SCALAR_INT
+  const unsigned v = r & 0xff;
+  return v < 128 ? v : 256 - v;
+#else
   const std::uint8_t v = static_cast<std::uint8_t>(r), w = static_cast<std::uint8_t>(0u - v);
   return v < w ? v : w;
+#endif
 }
 
 // Computes the residuals of all five filters for one row and returns the
@@ -96,9 +111,15 @@ inline unsigned choose_filter_scalar(const std::uint8_t* cur, const std::uint8_t
                                   unsigned bpp, unsigned allowed = 0x1f) {
   std::uint64_t cost[5] = {};
   for (std::size_t i = 0; i < n;) {
+#if VIO_PNG_SCALAR_INT
+    // 32-bit sums over at most 2^24 bytes
+    const std::size_t end = std::min(n, i + (std::size_t(1) << 24));
+    std::uint32_t c0 = 0, c1 = 0, c2 = 0, c3 = 0, c4 = 0;
+#else
     // 16-bit sums over at most 256 bytes
     const std::size_t end = std::min(n, i + 256);
     std::uint16_t c0 = 0, c1 = 0, c2 = 0, c3 = 0, c4 = 0;
+#endif
     for (; i < end; i++) {
       const std::uint8_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp];
       c0 += abs_residual(x);
