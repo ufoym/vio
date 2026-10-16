@@ -31,81 +31,84 @@ data.
 
 ## Features
 
-Compared with libjpeg-turbo 3.2 and IJG libjpeg 10.  All three run on any
-architecture through portable code; libjpeg, written in plain ANSI C, builds
-with the widest range of compilers and systems, while vio needs a C++20
-compiler.
+Compared with libjpeg-turbo 3.2, IJG libjpeg 10 and stb_image 2.30 (with
+stb_image_write 1.16 for encoding).  All four run on any architecture through
+portable code; libjpeg, written in plain ANSI C, builds with the widest range
+of compilers and systems, while vio needs a C++20 compiler.
 
-| Feature                                                    | vio | libjpeg-turbo | libjpeg |
-| ---------------------------------------------------------- | :-: | :-----------: | :-----: |
-| SIMD: x86-64 SSE2, AVX2                                    |  ✓  |       ✓       |    ✗    |
-| SIMD: i386 MMX, SSE, SSE2, AVX2                            |  ✓  |       ✓       |    ✗    |
-| SIMD: AArch64 NEON                                         |  ✓  |       ✓       |    ✗    |
-| SIMD: AArch32 NEON                                         |  ✓  |       ✓       |    ✗    |
-| SIMD: AArch32 NEON detected at run time                    | ✓¹  |       ✓       |    ✗    |
-| SIMD: PowerPC AltiVec                                      |  ✓  |       ✓       |    ✗    |
-| SIMD: MIPS64 Loongson MMI                                  | ✓²  |       ✓       |    ✗    |
-| SIMD: RISC-V 64 RVV 1.0                                    | ✓³  |       ✓       |    ✗    |
-| SIMD: run-time selection via `JSIMD_*` variables           |  ✓  |       ✓       |    ✗    |
-| Toolchains: Linux GCC, Clang                               |  ✓  |       ✓       |    ✓    |
-| Toolchains: macOS Apple Clang                              |  ✓  |       ✓       |    ✓    |
-| Toolchains: Windows MSVC, clang-cl                         |  ✓  |       ✓       |    ✓    |
-| Toolchains: compilers without C++20                        |  ✗  |       ✓       |    ✓    |
-| JPEG: baseline and extended sequential                     |  ✓  |       ✓       |    ✓    |
-| JPEG: progressive                                          |  ✓  |       ✓       |    ✓    |
-| JPEG: arithmetic coding                                    |  ✓  |       ✓       |    ✓    |
-| JPEG: lossless (2- to 16-bit)                              |  ✓  |       ✓       |    ✗    |
-| JPEG: 12-bit lossy                                         |  ✓  |       ✓       |   ✓⁴    |
-| JPEG: lossless transforms (rotate, flip, crop, wipe, drop) |  ✓  |       ✓       |    ✓    |
-| JPEG: lossless roll transform                              |  ✓  |       ✓       |    ✗    |
-| JPEG: lossless negate transform                            |  ✗  |       ✗       |    ✓    |
-| JPEG: SmartScale (non-standard DCT block sizes)            |  ✗  |       ✗       |    ✓    |
-| JPEG: scaled decoding                                      |  ✓  |       ✓       |    ✓    |
-| JPEG: partial decoding (crop, skip rows)                   |  ✓  |       ✓       |    ✗    |
-| JPEG: raw (planar YCbCr) input and output                  |  ✓  |       ✓       |    ✓    |
-| JPEG: saved markers                                        |  ✓  |       ✓       |    ✓    |
-| JPEG: ICC profile read/write API                           |  ✓  |       ✓       |    ✗    |
-| JPEG: color quantization and dithering                     |  ✓  |       ✓       |    ✓    |
-| Integration: header-only, no build step                    |  ✓  |       ✗       |    ✗    |
-| Integration: no assembler needed                           |  ✓  |      ✗⁵       |    ✓    |
-| Integration: C++ API                                       |  ✓  |       ✗       |    ✗    |
-| Integration: libjpeg C API                                 |  ✗  |       ✓       |    ✓    |
-| Integration: TurboJPEG C API                               |  ✗  |       ✓       |    ✗    |
-| Integration: Java binding                                  |  ✗  |       ✓       |    ✗    |
+| Feature                                                    | vio | libjpeg-turbo | libjpeg | stb_image |
+| ---------------------------------------------------------- | :-: | :-----------: | :-----: | :-------: |
+| SIMD: x86-64 SSE2, AVX2                                    |  ✓  |       ✓       |    ✗    |     ◐⁶    |
+| SIMD: i386 MMX, SSE, SSE2, AVX2                            |  ✓  |       ✓       |    ✗    |     ◐⁶    |
+| SIMD: AArch64 NEON                                         |  ✓  |       ✓       |    ✗    |     ✓     |
+| SIMD: AArch32 NEON                                         |  ✓  |       ✓       |    ✗    |     ✓     |
+| SIMD: AArch32 NEON detected at run time                    |  ✓¹ |       ✓       |    ✗    |     ✗     |
+| SIMD: PowerPC AltiVec                                      |  ✓  |       ✓       |    ✗    |     ✗     |
+| SIMD: MIPS64 Loongson MMI                                  |  ✓² |       ✓       |    ✗    |     ✗     |
+| SIMD: RISC-V 64 RVV 1.0                                    |  ✓³ |       ✓       |    ✗    |     ✗     |
+| SIMD: run-time selection via `JSIMD_*` variables           |  ✓  |       ✓       |    ✗    |     ✗     |
+| Toolchains: Linux GCC, Clang                               |  ✓  |       ✓       |    ✓    |     ✓     |
+| Toolchains: macOS Apple Clang                              |  ✓  |       ✓       |    ✓    |     ✓     |
+| Toolchains: Windows MSVC, clang-cl                         |  ✓  |       ✓       |    ✓    |     ✓     |
+| Toolchains: compilers without C++20                        |  ✗  |       ✓       |    ✓    |     ✓     |
+| JPEG: baseline and extended sequential                     |  ✓  |       ✓       |    ✓    |     ✓     |
+| JPEG: progressive                                          |  ✓  |       ✓       |    ✓    |     ◐⁷    |
+| JPEG: arithmetic coding                                    |  ✓  |       ✓       |    ✓    |     ✗     |
+| JPEG: lossless (2- to 16-bit)                              |  ✓  |       ✓       |    ✗    |     ✗     |
+| JPEG: 12-bit lossy                                         |  ✓  |       ✓       |    ✓⁴   |     ✗     |
+| JPEG: lossless transforms (rotate, flip, crop, wipe, drop) |  ✓  |       ✓       |    ✓    |     ✗     |
+| JPEG: lossless roll transform                              |  ✓  |       ✓       |    ✗    |     ✗     |
+| JPEG: lossless negate transform                            |  ✗  |       ✗       |    ✓    |     ✗     |
+| JPEG: SmartScale (non-standard DCT block sizes)            |  ✗  |       ✗       |    ✓    |     ✗     |
+| JPEG: scaled decoding                                      |  ✓  |       ✓       |    ✓    |     ✗     |
+| JPEG: partial decoding (crop, skip rows)                   |  ✓  |       ✓       |    ✗    |     ✗     |
+| JPEG: raw (planar YCbCr) input and output                  |  ✓  |       ✓       |    ✓    |     ✗     |
+| JPEG: saved markers                                        |  ✓  |       ✓       |    ✓    |     ✗     |
+| JPEG: ICC profile read/write API                           |  ✓  |       ✓       |    ✗    |     ✗     |
+| JPEG: color quantization and dithering                     |  ✓  |       ✓       |    ✓    |     ✗     |
+| Integration: header-only, no build step                    |  ✓  |       ✗       |    ✗    |     ✓     |
+| Integration: no assembler needed                           |  ✓  |       ✗⁵      |    ✓    |     ✓     |
+| Integration: C++ API                                       |  ✓  |       ✗       |    ✗    |     ✗     |
+| Integration: libjpeg C API                                 |  ✗  |       ✓       |    ✓    |     ✗     |
+| Integration: TurboJPEG C API                               |  ✗  |       ✓       |    ✗    |     ✗     |
+| Integration: Java binding                                  |  ✗  |       ✓       |    ✗    |     ✗     |
 
 ¹ GCC only. ² Little-endian only. ³ GCC ≥ 14 or Clang ≥ 17.
 ⁴ A separate build of the library (8- or 12-bit, not both).
 ⁵ NASM or Yasm for the x86 SIMD code.
+⁶ SSE2 only (IDCT, color conversion, upsampling), detected at run time.
+⁷ Decoding only; stb_image_write encodes baseline JPEG.
 
-PNG features, compared with libpng 1.8 (the libpng18 branch, with zlib),
-the reference PNG library.  The tests run libpng's test suite (same names,
-images and checks, see [Building and testing](#building-and-testing)); read
-transformations and format conversions give libpng's results bit for bit.
+PNG features, compared with libpng 1.8 (the libpng18 branch, with zlib), the
+reference PNG library, libspng 0.7.4, image-png 0.18.1 (Rust) and stb_image
+2.30 with stb_image_write 1.16; ◐ marks partial support.  The tests run
+libpng's test suite (same names, images and checks, see [Building and
+testing](#building-and-testing)); read transformations and format conversions
+give libpng's results bit for bit.
 
-| Feature                                                          | vio | libpng |
-| ---------------------------------------------------------------- | :-: | :----: |
-| Decoding: all color types and bit depths (1- to 16-bit)          |  ✓  |   ✓    |
-| Decoding: Adam7 interlaced images                                |  ✓  |   ✓    |
-| Decoding: every standard chunk (PLTE, tRNS, gAMA, cHRM, sRGB, iCCP, cICP, mDCV, cLLI, bKGD, hIST, pHYs, sBIT, sPLT, oFFs, pCAL, sCAL, tIME, eXIf, tEXt, zTXt, iTXt) | ✓ | ✓ |
-| Decoding: unknown chunks kept per rule, or passed to a callback  |  ✓  |   ✓    |
-| Decoding: CRC-32 and Adler-32 verification, configurable CRC error handling | ✓ | ✓ |
-| Decoding: recoverable errors as warnings or errors; size and chunk limits | ✓ | ✓ |
-| Decoding: progressive (push) input, rows as they arrive          |  ✓  |   ✓    |
-| Read transformations: palette, gray and tRNS expansion, 16↔8 bits, gray↔RGB, RGB to gray, gamma, alpha modes, background compositing, quantization, sBIT shift, packing, filler, BGR, alpha and byte order, inversion, user callback | ✓ | ✓ |
-| Encoding: all color types and bit depths, Adam7 interlacing      |  ✓  |   ✓    |
-| Encoding: every standard chunk, text (compressed or not), custom chunks before or after the image data | ✓ | ✓ |
-| Write transformations: filler removal, packing, sBIT scaling, BGR, alpha and byte order, inversion, user callback | ✓ | ✓ |
-| Encoding: adaptive filter selection; zlib level, strategy, window, memory level, filters, IDAT size | ✓ | ✓ |
-| Encoding: single-pass fast mode                                  |  ✓  |   ✗    |
-| APNG (animation): reading, progressive reading and writing       |  ✓  |   ✓    |
-| Format conversion (simplified API): gray/GA/RGB/RGBA, BGR, alpha first, 8-bit sRGB or 16-bit linear, colormaps, alpha removal, any row stride | ✓ | ✓ |
-| SIMD: reconstruction filters when decoding                       | ✓¹  |   ✓²   |
-| SIMD: DEFLATE decoding, CRC-32, Adler-32                         | ✓¹  |   ✗³   |
-| SIMD: filter selection and Huffman coding when encoding          | ✓¹  |   ✗    |
-| Error reporting                                                  | C++ exceptions | setjmp/longjmp |
-| Integration: header-only, no build step                          |  ✓  |   ✗    |
-| Integration: no external zlib                                    |  ✓  |   ✗    |
-| Integration: C API                                               |  ✗  |   ✓    |
+| Feature                                            |    vio     |  libpng | libspng | image-png | stb_image |
+| -------------------------------------------------- | :--------: | :-----: | :-----: | :-------: | :-------: |
+| Decoding: all color types and bit depths           |     ✓      |    ✓    |    ✓    |     ✓     |     ✓     |
+| Decoding: Adam7 interlacing                        |     ✓      |    ✓    |    ✓    |     ✓     |     ✓     |
+| Decoding: all standard chunks                      |     ✓      |    ✓    |    ◐    |     ◐     |     ✗     |
+| Decoding: unknown-chunk handling                   |     ✓      |    ✓    |    ✓    |     ✗     |     ✗     |
+| Decoding: CRC-32 and Adler-32 checks               |     ✓      |    ✓    |    ✓    |     ✓     |     ✗     |
+| Decoding: configurable errors and limits           |     ✓      |    ✓    |    ✓    |     ✓     |     ✗     |
+| Decoding: progressive (push) input                 |     ✓      |    ✓    |    ✗⁴   |     ✓     |     ✗     |
+| Decoding: read transformations                     |     ✓      |    ✓    |    ◐    |     ◐     |     ◐     |
+| Encoding: all color types, bit depths, interlacing |     ✓      |    ✓    |    ✓    |     ◐     |     ◐     |
+| Encoding: all standard and custom chunks           |     ✓      |    ✓    |    ◐    |     ◐     |     ✗     |
+| Encoding: write transformations                    |     ✓      |    ✓    |    ✗    |     ✗     |     ✗     |
+| Encoding: adaptive filters, zlib tuning            |     ✓      |    ✓    |    ✓    |     ◐     |     ◐     |
+| Encoding: single-pass fast mode                    |     ✓      |    ✗    |    ✗    |     ✓     |     ✗     |
+| APNG: reading and writing                          |     ✓      |    ✓    |    ✗    |     ✓     |     ✗     |
+| Format conversion (simplified API)                 |     ✓      |    ✓    |    ◐    |     ✗     |     ◐     |
+| SIMD: decoding filters                             |     ✓¹     |    ✓²   |    ✓⁵   |     ✗⁶    |     ✗     |
+| SIMD: inflate, CRC-32, Adler-32                    |     ✓¹     |    ✗³   |    ✗³   |     ◐⁶    |     ✗     |
+| SIMD: encoding                                     |     ✓¹     |    ✗    |    ✗    |     ✗     |     ✗     |
+| Integration: header-only, no build step            |     ✓      |    ✗    |    ✗    |     ✗     |     ✓     |
+| Integration: no external zlib                      |     ✓      |    ✗    |    ✗    |     ✓     |     ✓     |
+| Integration: C API                                 |     ✗      |    ✓    |    ✓    |     ✗     |     ✓     |
 
 ¹ x86 SSE2/SSSE3/SSE4.1/PCLMUL/AVX2, Arm NEON/CRC32/PMULL (AArch64; NEON
 on AArch32), PowerPC AltiVec, Loongson MMI and RISC-V RVV, chosen at run time
@@ -114,6 +117,10 @@ and restricted by the same `JSIMD_*` variables as the JPEG codec.
 RISC-V RVV.
 ³ zlib's portable code (Arm CRC32 instructions only when compiled for them);
 zlib-ng and Chromium's zlib add SIMD.
+⁴ Rows are decoded one at a time, but input is pulled through a read callback.
+⁵ Unfiltering only: SSE2 (SSSE3/SSE4.1 chosen at build time), AArch64 NEON.
+⁶ CRC-32 and Adler-32 only (the crc32fast and simd-adler32 crates); filters
+rely on compiler auto-vectorization.
 
 ## Performance
 
@@ -389,9 +396,10 @@ Clang, does not vectorize vio's scalar loops, hence the Windows scalar row.
 The fast mode's files are also about the size of libpng's at level 1 (1%
 smaller), which it writes 11 to 18 times as fast with AVX2 or NEON.
 
-By image category, number of images in parentheses (Linux x86-64, AMD EPYC 7763, GCC, AVX2):
+By image category, number of images in parentheses (Linux x86-64, AMD EPYC
+7763, GCC, AVX2); dec.: decoding, enc.: encoding.
 
-| Category | dec. vs image-png | dec. vs libpng | zlib mode vs libpng level 6 | fast mode vs fpnge |
+| Category | dec. vs image-png | dec. vs libpng | enc. vs libpng¹ | enc. vs fpnge² |
 | --- | ---: | ---: | ---: | ---: |
 | icon_512 (213) | +29% | +289% | +93% | +14% (−16% size) |
 | icon_64 (213) | +27% | +190% | +55% | +65% (−17% size) |
@@ -406,6 +414,8 @@ By image category, number of images in parentheses (Linux x86-64, AMD EPYC 7763,
 | textures_pk01 (113) | +23% | +178% | +29% | +12% (−3% size) |
 | textures_pk02 (235) | +24% | +150% | +26% | +11% (−3% size) |
 | textures_plants (60) | +21% | +201% | +45% | +16% (−3% size) |
+
+¹ zlib mode, level 6. ² Fast mode.
 
 Measured at [f61b56d](https://github.com/ufoym/vio/commit/f61b56d) on the
 GitHub-hosted runners (one run; one job per platform and SIMD level, whose
