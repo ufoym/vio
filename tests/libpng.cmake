@@ -39,7 +39,7 @@ set(STRIDE_PNGS
 
 foreach(variant ${VIO_VARIANTS})
   set(sfx ${VIO_SUFFIX_${variant}})
-  set(t $<TARGET_FILE:png-test${sfx}>)
+  set(t png-test${sfx})  # (a target name: CMake adds the cross-compiling emulator)
   set(e ${LIBPNG_EXPECTED})
 
   add_test(NAME pngtest-all${sfx}

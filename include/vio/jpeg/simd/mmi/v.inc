@@ -168,7 +168,10 @@ struct V {
   // Unsigned bytes (PNG filters); avg_u8 rounds up.
   static VIO_INLINE T sub_8(T a, T b) { return map(a, b, [](U8 x, U8 y) { return psubb_u(x, y); }); }
   static VIO_INLINE T avg_u8(T a, T b) { return map(a, b, [](U8 x, U8 y) { return pavgb(x, y); }); }
-  static VIO_INLINE T min_u8(T a, T b) { return map(a, b, [](U8 x, U8 y) { return pminub(x, y); }); }
+  // a - (a - b saturated), not pminub, which QEMU emulates on 4 bytes only
+  static VIO_INLINE T min_u8(T a, T b) {
+    return map(a, b, [](U8 x, U8 y) { return psubb_u(x, psubusb(x, y)); });
+  }
   static VIO_INLINE T adds_u8(T a, T b) { return map(a, b, [](U8 x, U8 y) { return paddusb(x, y); }); }
   static VIO_INLINE T subs_u8(T a, T b) { return map(a, b, [](U8 x, U8 y) { return psubusb(x, y); }); }
   static VIO_INLINE T cmpeq_8(T a, T b) { return map(a, b, [](U8 x, U8 y) { return pcmpeqb_u(x, y); }); }

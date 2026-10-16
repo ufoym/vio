@@ -730,10 +730,13 @@ std::size_t for_run_matches(std::size_t m, Fn&& fn) {
 }
 
 inline unsigned ctz64(std::uint64_t v) {
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER) && !defined(__clang__) && (defined(_M_X64) || defined(_M_ARM64))
   unsigned long r;
   _BitScanForward64(&r, v);
   return static_cast<unsigned>(r);
+#elif defined(_MSC_VER) && !defined(__clang__)
+  const std::uint32_t lo = static_cast<std::uint32_t>(v);
+  return lo ? ctz32(lo) : 32 + ctz32(static_cast<std::uint32_t>(v >> 32));
 #else
   return static_cast<unsigned>(__builtin_ctzll(v));
 #endif
