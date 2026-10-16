@@ -342,68 +342,68 @@ PNG decoding:
 
 | Platform, CPU       | SIMD   | vs libpng | vs image-png |
 | ------------------- | ------ | --------: | -----------: |
-| Linux, EPYC 9V45    | AVX2   |     +184% |         +27% |
-| Linux, EPYC 7763    | SSE2   |     +150% |         +12% |
-| Linux, EPYC 9V74    | scalar |     +120% |         −11% |
-| Windows, EPYC 9V74  | AVX2   |     +214% |         +22% |
-| Windows, EPYC 7763  | SSE2   |     +189% |         +14% |
-| Windows, EPYC 7763  | scalar |     +134% |         −17% |
-| macOS, i7-8700B     | AVX2   |     +259% |         +22% |
-| macOS, i7-8700B     | SSE2   |     +208% |         +10% |
-| macOS, i7-8700B     | scalar |     +202% |          +0% |
-| Linux, Neoverse-N2  | NEON   |     +152% |         +18% |
-| Linux, Neoverse-N2  | scalar |     +121% |          −2% |
-| macOS, M1 (virtual) | NEON   |     +195% |         +28% |
-| macOS, M1 (virtual) | scalar |     +174% |          +7% |
+| Linux, EPYC 7763    | AVX2   |     +183% |         +26% |
+| Linux, EPYC 7763    | SSE2   |     +151% |         +13% |
+| Linux, EPYC 9V74    | scalar |     +126% |          −9% |
+| Windows, Xeon 8370C | AVX2   |     +200% |         +32% |
+| Windows, EPYC 7763  | SSE2   |     +190% |         +12% |
+| Windows, EPYC 9V45  | scalar |     +166% |         +11% |
+| macOS, i7-8700B     | AVX2   |     +278% |         +17% |
+| macOS, i7-8700B     | SSE2   |     +206% |          +2% |
+| macOS, i7-8700B     | scalar |     +202% |          +4% |
+| Linux, Neoverse-N2  | NEON   |     +152% |         +17% |
+| Linux, Neoverse-N2  | scalar |     +120% |          −2% |
+| macOS, M1 (virtual) | NEON   |     +168% |         +19% |
+| macOS, M1 (virtual) | scalar |     +186% |         +12% |
 
 PNG encoding: vio's zlib mode vs libpng at levels 1 and 6 (L1, L6); vio's
 fast mode vs fpnge and vs image-png's fast mode.
 
 | Platform, CPU       | SIMD   | vs libpng L1 | vs libpng L6 | vs fpnge | vs image-png |
 | ------------------- | ------ | -----------: | -----------: | -------: | -----------: |
-| Linux, EPYC 9V45    | AVX2   |        +115% |         +53% |      +9% |         +71% |
-| Linux, EPYC 7763    | SSE2   |        +114% |         +49% |     +38% |         +29% |
-| Linux, EPYC 9V74    | scalar |        +104% |         +45% |        — |         −15% |
-| Windows, EPYC 9V74  | AVX2   |        +120% |         +47% |    +127% |         +77% |
-| Windows, EPYC 7763  | SSE2   |        +109% |         +42% |     +93% |         +19% |
-| Windows, EPYC 7763  | scalar |         +81% |         +38% |        — |         −33% |
-| macOS, i7-8700B     | AVX2   |        +174% |         +68% |     +48% |         +95% |
-| macOS, i7-8700B     | SSE2   |        +130% |         +66% |     +42% |          +8% |
-| macOS, i7-8700B     | scalar |        +118% |         +50% |        — |         −20% |
-| Linux, Neoverse-N2  | NEON   |        +111% |         +45% |        — |         +92% |
-| Linux, Neoverse-N2  | scalar |         +93% |         +42% |        — |         +33% |
-| macOS, M1 (virtual) | NEON   |        +123% |         +59% |        — |         +63% |
-| macOS, M1 (virtual) | scalar |        +106% |         +57% |        — |         +56% |
+| Linux, EPYC 7763    | AVX2   |        +123% |         +51% |     +28% |         +82% |
+| Linux, EPYC 7763    | SSE2   |        +113% |         +48% |     +34% |         +29% |
+| Linux, EPYC 9V74    | scalar |         +94% |         +44% |        — |         −12% |
+| Windows, Xeon 8370C | AVX2   |        +105% |         +53% |    +105% |         +86% |
+| Windows, EPYC 7763  | SSE2   |        +111% |         +45% |     +90% |         +19% |
+| Windows, EPYC 9V45  | scalar |         +79% |         +47% |        — |         −38% |
+| macOS, i7-8700B     | AVX2   |        +171% |         +58% |      +7% |         +78% |
+| macOS, i7-8700B     | SSE2   |        +120% |         +72% |     +41% |          +5% |
+| macOS, i7-8700B     | scalar |         +96% |         +59% |        — |         −20% |
+| Linux, Neoverse-N2  | NEON   |        +111% |         +46% |        — |         +92% |
+| Linux, Neoverse-N2  | scalar |         +94% |         +42% |        — |         +33% |
+| macOS, M1 (virtual) | NEON   |        +116% |         +59% |        — |         +95% |
+| macOS, M1 (virtual) | scalar |        +119% |         +61% |        — |         +57% |
 
 In the scalar rows image-png keeps its SIMD (CRC-32 by carry-less
 multiplication, and the loops rustc vectorizes) and does not check
 Adler-32, while vio checks both checksums without SIMD; libpng is the
 like-for-like comparison there.
 The fast mode's files are also about the size of libpng's at level 1 (1%
-smaller), which it writes 12 to 19 times as fast with AVX2 or NEON.
+smaller), which it writes 12 to 17 times as fast with AVX2 or NEON.
 
 By image category, number of images in parentheses (Linux x86-64, AMD EPYC
-9V45, GCC, AVX2); dec.: decoding, enc.: encoding.
+7763, GCC, AVX2); dec.: decoding, enc.: encoding.
 
 | Category | dec. vs image-png | dec. vs libpng | enc. vs libpng¹ | enc. vs fpnge² |
 | --- | ---: | ---: | ---: | ---: |
-| icon_512 (213) | +54% | +321% | +96% | +13% (−16% size) |
-| icon_64 (213) | +39% | +176% | +67% | +51% (−17% size) |
-| photo_kodak (24) | +26% | +148% | +31% | −11% (−3% size) |
-| photo_tecnick (100) | +10% | +185% | +42% | −14% (−2% size) |
-| photo_wikipedia (49) | +17% | +158% | +41% | −16% (−3% size) |
-| pngimg (187) | +36% | +247% | +63% | −4% (−4% size) |
-| screenshot_game (618) | +44% | +237% | +76% | +3% (−6% size) |
-| screenshot_web (14) | +81% | +299% | +84% | +44% (−11% size) |
-| textures_photo (20) | +14% | +122% | +23% | −2% (−8% size) |
-| textures_pk (1002) | +11% | +131% | +40% | +20% (−8% size) |
-| textures_pk01 (113) | +32% | +198% | +35% | −12% (−3% size) |
-| textures_pk02 (235) | +29% | +156% | +30% | −11% (−3% size) |
-| textures_plants (60) | +30% | +224% | +47% | +3% (−3% size) |
+| icon_512 (213) | +35% | +308% | +99% | +13% (−16% size) |
+| icon_64 (213) | +27% | +194% | +57% | +71% (−17% size) |
+| photo_kodak (24) | +26% | +130% | +25% | +15% (−3% size) |
+| photo_tecnick (100) | +18% | +164% | +33% | +8% (−2% size) |
+| photo_wikipedia (49) | +29% | +141% | +32% | +12% (−3% size) |
+| pngimg (187) | +27% | +239% | +60% | +13% (−4% size) |
+| screenshot_game (618) | +36% | +220% | +74% | +12% (−6% size) |
+| screenshot_web (14) | +76% | +258% | +86% | +44% (−11% size) |
+| textures_photo (20) | +30% | +121% | +22% | +28% (−8% size) |
+| textures_pk (1002) | +18% | +139% | +38% | +48% (−8% size) |
+| textures_pk01 (113) | +26% | +200% | +31% | +13% (−3% size) |
+| textures_pk02 (235) | +27% | +161% | +29% | +9% (−3% size) |
+| textures_plants (60) | +25% | +214% | +49% | +16% (−3% size) |
 
 ¹ zlib mode, level 6. ² Fast mode.
 
-Measured at [415663f](https://github.com/ufoym/vio/commit/415663f) on the
+Measured at [c787eac](https://github.com/ufoym/vio/commit/c787eac) on the
 GitHub-hosted runners (one run; one job per platform and SIMD level, whose
 CPUs vary from job to job).  fpnge has no Arm code; image-png's fast mode is
 its fpnge-inspired encoder.
