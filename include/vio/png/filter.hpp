@@ -217,6 +217,34 @@ inline void unfilter_small(unsigned filter, std::uint8_t* dst, const std::uint8_
   }
 }
 
+#if defined(__GNUC__) && !defined(__clang__) && defined(__aarch64__)
+// GCC on AArch64 without NEON: two Paeth rows together (see unfilter_pair),
+// the second one pixel behind the first, B independent chains each.
+#define VIO_PNG_SCALAR_PAETH_PAIRS 1
+template <unsigned B>
+inline void paeth_pair_scalar(std::uint8_t* d0, const std::uint8_t* s0, const std::uint8_t* p0, std::uint8_t* d1,
+                              const std::uint8_t* s1, std::size_t n) {
+  int a0[B] = {}, c0[B] = {}, a1[B] = {}, c1[B] = {};
+  const auto step = [](int& a, int& c, int b, int x) VIO_LAMBDA_INLINE {
+    const int ax = a - c, e = b - c, y = ax + e;
+    const int pa = (e ^ (e >> 31)) - (e >> 31), pb = (ax ^ (ax >> 31)) - (ax >> 31), pc = (y ^ (y >> 31)) - (y >> 31);
+    const int use_a = -static_cast<int>((pa <= pb) & (pa <= pc)), use_b = -static_cast<int>(pb <= pc);
+    const int bc = c ^ ((b ^ c) & use_b);
+    a = (x + (bc ^ ((a ^ bc) & use_a))) & 0xff;
+    c = b;
+    return a;
+  };
+  for (unsigned k = 0; k < B; k++) d0[k] = static_cast<std::uint8_t>(step(a0[k], c0[k], p0[k], s0[k]));
+  for (std::size_t i = B; i < n; i += B) {
+    for (unsigned k = 0; k < B; k++) d0[i + k] = static_cast<std::uint8_t>(step(a0[k], c0[k], p0[i + k], s0[i + k]));
+    const std::size_t j = i - B;
+    for (unsigned k = 0; k < B; k++) d1[j + k] = static_cast<std::uint8_t>(step(a1[k], c1[k], d0[j + k], s1[j + k]));
+  }
+  const std::size_t j = n - B;
+  for (unsigned k = 0; k < B; k++) d1[j + k] = static_cast<std::uint8_t>(step(a1[k], c1[k], d0[j + k], s1[j + k]));
+}
+#endif
+
 // Scalar reconstruction; prev == nullptr for the first row.
 inline void unfilter_row_scalar(unsigned filter, std::uint8_t* dst, const std::uint8_t* src,
                                 const std::uint8_t* prev, std::size_t n, unsigned bpp) {
@@ -808,10 +836,13 @@ inline void unfilter_row(unsigned filter, std::uint8_t* dst, const std::uint8_t*
 inline bool can_unfilter_pair(unsigned f0, unsigned f1, unsigned bpp) {
   const auto chain = [](unsigned f) { return f == kFilterSub || f == kFilterAvg || f == kFilterPaeth; };
   if (!chain(f0) || !chain(f1) || !(bpp == 3 || bpp == 4 || bpp == 6 || bpp == 8)) return false;
-  // (NEON only: no gain with SSE2, whose Paeth chain is short already, nor
-  // in the scalar code)
+  // (NEON, and Paeth rows in GCC's scalar code on AArch64: no gain with
+  // SSE2, whose Paeth chain is short already, nor in other scalar code)
 #if VIO_SIMD_NEON
-  return simd::has(jpeg::simd::kNEON);
+  if (simd::has(jpeg::simd::kNEON)) return true;
+#endif
+#if VIO_PNG_SCALAR_PAETH_PAIRS
+  return f0 == kFilterPaeth && f1 == kFilterPaeth && bpp <= 4;
 #else
   return false;
 #endif
@@ -825,11 +856,17 @@ inline bool can_unfilter_pair(unsigned f0, unsigned f1, unsigned bpp) {
 inline void unfilter_pair(unsigned f0, unsigned f1, std::uint8_t* d0, const std::uint8_t* s0, const std::uint8_t* p0,
                           std::uint8_t* d1, const std::uint8_t* s1, std::size_t n, unsigned bpp) {
 #if VIO_SIMD_NEON
-  if (bpp <= 4) unfilter_pair_neon<4>(f0, f1, d0, s0, p0, d1, s1, n, bpp);
-  else unfilter_pair_neon<8>(f0, f1, d0, s0, p0, d1, s1, n, bpp);
-#else
-  (void)f0, (void)f1, (void)d0, (void)s0, (void)p0, (void)d1, (void)s1, (void)n, (void)bpp;
+  if (simd::has(jpeg::simd::kNEON)) {
+    if (bpp <= 4) unfilter_pair_neon<4>(f0, f1, d0, s0, p0, d1, s1, n, bpp);
+    else unfilter_pair_neon<8>(f0, f1, d0, s0, p0, d1, s1, n, bpp);
+    return;
+  }
 #endif
+#if VIO_PNG_SCALAR_PAETH_PAIRS
+  if (bpp == 3) paeth_pair_scalar<3>(d0, s0, p0, d1, s1, n);
+  else paeth_pair_scalar<4>(d0, s0, p0, d1, s1, n);
+#endif
+  (void)f0, (void)f1, (void)d0, (void)s0, (void)p0, (void)d1, (void)s1, (void)n, (void)bpp;
 }
 
 }  // namespace vio::png::detail
