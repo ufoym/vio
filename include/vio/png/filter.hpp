@@ -232,11 +232,10 @@ inline void paeth_pair_scalar(std::uint8_t* d0, const std::uint8_t* s0, const st
                               const std::uint8_t* s1, std::size_t n) {
   int a0[B] = {}, c0[B] = {}, a1[B] = {}, c1[B] = {};
   const auto step = [](int& a, int& c, int b, int x) VIO_LAMBDA_INLINE {
-    const int ax = a - c, e = b - c, y = ax + e;
-    const int pa = (e ^ (e >> 31)) - (e >> 31), pb = (ax ^ (ax >> 31)) - (ax >> 31), pc = (y ^ (y >> 31)) - (y >> 31);
-    const int use_a = -static_cast<int>((pa <= pb) & (pa <= pc)), use_b = -static_cast<int>(pb <= pc);
-    const int bc = c ^ ((b ^ c) & use_b);
-    a = (x + (bc ^ ((a ^ bc) & use_a))) & 0xff;
+    const int t = 3 * c - b - a, d = a - b;
+    const int lo = b + (d & (d >> 31)), hi = a + b - lo;
+    const int t0 = c ^ ((lo ^ c) & ~((t - hi) >> 31));
+    a = (x + (t0 ^ ((hi ^ t0) & ~((lo - t) >> 31)))) & 0xff;
     c = b;
     return a;
   };
