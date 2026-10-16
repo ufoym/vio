@@ -302,13 +302,40 @@ VIO_INLINE void copy_match(std::uint8_t* out, std::size_t dist, unsigned len, [[
   }
 }
 
+// The state of the fast loop (inflate_fast.inc).
+struct FastState {
+  const std::uint8_t* in;
+  std::uint8_t* out;
+  std::uint64_t bitbuf;
+  unsigned bitcnt;
+  const std::uint8_t* in_fast_end;
+  std::uint8_t* out_fast_end;
+  const std::uint8_t* out_begin;
+  bool pattern_simd;
+};
+[[noreturn]] inline void inflate_fail(const char* msg) { VIO_FAIL("zlib: %s", msg); }
+
+#define VIO_PNG_INFLATE_FAST inflate_fast
+#include "inflate_fast.inc"
+#undef VIO_PNG_INFLATE_FAST
+// The same, with BMI2 shifts (shlx, shrx: one micro-op each, unlike shifts
+// by cl) where the CPU has them (not at the JSIMD_FORCESSE2 level).
+#if VIO_SIMD_X86_64 && (defined(__GNUC__) || defined(__clang__))
+#define VIO_PNG_INFLATE_BMI2 1
+VIO_TARGET_PUSH_("bmi,bmi2")
+#define VIO_PNG_INFLATE_FAST inflate_fast_bmi2
+#include "inflate_fast.inc"
+#undef VIO_PNG_INFLATE_FAST
+VIO_TARGET_POP()
+#endif
+
 }  // namespace detail
 
 class Inflater {
  public:
   // raw = true decodes a bare DEFLATE stream (no zlib header/trailer).
   explicit Inflater(bool raw = false, bool verify_adler = true)
-      : raw_(raw), verify_adler_(verify_adler) {}
+      : raw_(raw), verify_adler_(verify_adler), bmi2_(simd::has(jpeg::simd::kBMI2)) {}
 
   // An inflater kept per thread (its tables are large to allocate for
   // every small image), set up for a new stream.
@@ -502,117 +529,19 @@ class Inflater {
     using namespace detail;
     constexpr std::uint64_t kLitMask = (1u << kLitBits) - 1, kDistMask = (1u << kDistBits) - 1;
     // Fast loop: enough input for 8-byte refills and enough output room for
-    // a maximal match plus a 16-byte overrun.
+    // a maximal match plus a 16-byte overrun (two refills per iteration).
     if (in_end_ - in_ >= 32 && out_end_ - out_ >= 258 + 32) {
-      const std::uint8_t* in = in_;
-      std::uint8_t* out = out_;
-      const std::uint8_t* const in_fast_end = in_end_ - 16;  // two refills per iteration
-      std::uint8_t* const out_fast_end = out_end_ - (258 + 32);
-      std::uint64_t bitbuf = bitbuf_;
-      unsigned bitcnt = static_cast<unsigned>(bitcnt_);
-      auto refill = [&]() VIO_LAMBDA_INLINE {
-        bitbuf |= load_le64(in) << bitcnt;
-        in += (63 - bitcnt) >> 3;
-        bitcnt |= 56;
-      };
-      bool end_of_block = false;
-      const bool pattern_simd = simd::has(jpeg::simd::kNEON);
-      refill();
-      std::uint32_t e = lit[bitbuf & kLitMask];
-      while (in < in_fast_end && out < out_fast_end) {
-        // Up to three literal entries (each one or two literals) per
-        // refill.  The lookups for the second and third are made before it
-        // is known whether the first ones are literals.
-        if (e & kEntLiteral) {
-          // Each lookup shifts the bits left by the one before it, keeping
-          // the dependency chain to a shift, a mask and a load.
-          const std::uint64_t b1 = bitbuf >> (e & 63);
-          const std::uint32_t e2 = lit[b1 & kLitMask];
-          const std::uint64_t b2 = b1 >> (e2 & 63);
-          const std::uint32_t e3 = lit[b2 & kLitMask];
-          out[0] = static_cast<std::uint8_t>(e >> 16);
-          out[1] = static_cast<std::uint8_t>(e >> 24);
-          out += 1 + ((e >> 14) & 1);
-          if (e2 & kEntLiteral) {
-            out[0] = static_cast<std::uint8_t>(e2 >> 16);
-            out[1] = static_cast<std::uint8_t>(e2 >> 24);
-            out += 1 + ((e2 >> 14) & 1);
-            if (e3 & kEntLiteral) {
-              const std::uint64_t b3 = b2 >> (e3 & 63);
-              const std::uint32_t e4 = lit[b3 & kLitMask];
-              out[0] = static_cast<std::uint8_t>(e3 >> 16);
-              out[1] = static_cast<std::uint8_t>(e3 >> 24);
-              out += 1 + ((e3 >> 14) & 1);
-              bitbuf = b3;
-              bitcnt -= (e & 63) + (e2 & 63) + (e3 & 63);
-              refill();
-              e = e4;
-              continue;
-            }
-            bitbuf = b2;
-            bitcnt -= (e & 63) + (e2 & 63);
-            e = e3;
-          } else {
-            bitbuf = b1;
-            bitcnt -= e & 63;
-            e = e2;
-          }
-          refill();
-        }
-        if (VIO_UNLIKELY(e & kEntExceptional)) {
-          if (e & kEntSecond) {
-            e = lit[(e >> 16) + ((bitbuf >> kLitBits) & ((1u << ((e >> 8) & 15)) - 1))];
-            if (e & kEntLiteral) {
-              *out++ = static_cast<std::uint8_t>(e >> 16);
-              bitbuf >>= e & 63;
-              bitcnt -= e & 63;
-              refill();
-              e = lit[bitbuf & kLitMask];
-              continue;
-            }
-          }
-          if (e & kEntExceptional) {
-            if (e & kEntEndOfBlock) {
-              bitbuf >>= e & 63;
-              bitcnt -= e & 63;
-              end_of_block = true;
-              break;
-            }
-            fail("invalid literal/length code");
-          }
-        }
-        std::uint64_t saved = bitbuf;
-        bitbuf >>= e & 63;
-        bitcnt -= e & 63;
-        unsigned len = (e >> 16) +
-                       static_cast<unsigned>((saved & ((1ull << (e & 63)) - 1)) >> ((e >> 8) & 31));
-        std::uint32_t d = dist[bitbuf & kDistMask];
-        if (VIO_UNLIKELY(d & kEntExceptional)) {
-          if (d & kEntSecond)
-            d = dist[(d >> 16) + ((bitbuf >> kDistBits) & ((1u << ((d >> 8) & 15)) - 1))];
-          if (d & kEntExceptional) fail("invalid distance code");
-        }
-        saved = bitbuf;
-        bitbuf >>= d & 63;
-        bitcnt -= d & 63;
-        std::size_t distance =
-            (d >> 16) + static_cast<std::size_t>((saved & ((1ull << (d & 63)) - 1)) >> ((d >> 8) & 31));
-        if (VIO_UNLIKELY(distance > static_cast<std::size_t>(out - out_begin_)))
-          fail("invalid distance too far back");
-        refill();
-        e = lit[bitbuf & kLitMask];
-        copy_match(out, distance, len, pattern_simd);
-        out += len;
-      }
-      // Give back whole bytes not yet consumed so that the careful loop
-      // continues from an exact position.
-      in -= bitcnt >> 3;
-      bitcnt &= 7;
-      bitbuf &= (1ull << bitcnt) - 1;
-      in_ = in;
-      out_ = out;
-      bitbuf_ = bitbuf;
-      bitcnt_ = static_cast<int>(bitcnt);
+      FastState fs{in_, out_, bitbuf_, static_cast<unsigned>(bitcnt_), in_end_ - 16, out_end_ - (258 + 32),
+                   out_begin_, simd::has(jpeg::simd::kNEON)};
+#if VIO_PNG_INFLATE_BMI2
+      const bool end_of_block = bmi2_ ? inflate_fast_bmi2(lit, dist, fs) : inflate_fast(lit, dist, fs);
+#else
+      const bool end_of_block = inflate_fast(lit, dist, fs);
+#endif
+      in_ = fs.in;
+      out_ = fs.out;
+      bitbuf_ = fs.bitbuf;
+      bitcnt_ = static_cast<int>(fs.bitcnt);
       if (end_of_block) return true;
     }
     // Careful loop: one symbol at a time with bounds checks.
@@ -672,7 +601,7 @@ class Inflater {
     }
   }
 
-  bool raw_, verify_adler_;
+  bool raw_, verify_adler_, bmi2_;
   bool stream_end_ = false;
   const std::uint8_t* in_ = nullptr;
   const std::uint8_t* in_begin_ = nullptr;
