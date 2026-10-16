@@ -323,12 +323,15 @@ VIO_INLINE __m128i avg_floor_sse2(__m128i a, __m128i b) {
 // lo, hi or c depending on where c lies (equal to the definition, which
 // prefers a, then b, then c on ties).
 VIO_INLINE __m128i paeth_predict_sse2(__m128i a, __m128i b, __m128i c) {
-  __m128i pa = absdiff_sse2(b, c), pb = absdiff_sse2(a, c);
-  __m128i a_lt = _mm_andnot_si128(le_sse2(c, a), _mm_set1_epi8(-1));
-  __m128i b_lt = _mm_andnot_si128(le_sse2(c, b), _mm_set1_epi8(-1));
-  __m128i pc = select_sse2(_mm_xor_si128(a_lt, b_lt), absdiff_sse2(pa, pb), _mm_adds_epu8(pa, pb));
-  __m128i use_a = _mm_and_si128(le_sse2(pa, pb), le_sse2(pa, pc));
-  __m128i use_b = le_sse2(pb, pc);
+  const __m128i z = _mm_setzero_si128();
+  const __m128i ca = _mm_subs_epu8(c, a), cb = _mm_subs_epu8(c, b);
+  const __m128i pa = _mm_or_si128(_mm_subs_epu8(b, c), cb), pb = _mm_or_si128(_mm_subs_epu8(a, c), ca);
+  // a < c differs from b < c (x < c where c - x does not saturate to 0)
+  const __m128i diff_sign = _mm_xor_si128(_mm_cmpeq_epi8(ca, z), _mm_cmpeq_epi8(cb, z));
+  const __m128i pc = select_sse2(diff_sign, absdiff_sse2(pa, pb), _mm_adds_epu8(pa, pb));
+  const __m128i m = _mm_min_epu8(pb, pc);
+  const __m128i use_a = _mm_cmpeq_epi8(_mm_min_epu8(pa, m), pa);  // pa <= pb and pa <= pc
+  const __m128i use_b = _mm_cmpeq_epi8(m, pb);                     // pb <= pc
   return select_sse2(use_a, a, select_sse2(use_b, b, c));
 }
 // Sum of absolute values of signed bytes, in the two 64-bit lanes.
@@ -405,11 +408,15 @@ VIO_INLINE __m256i loadu_avx2(const std::uint8_t* p) {
 VIO_INLINE __m256i paeth_predict_avx2(__m256i a, __m256i b, __m256i c) {
   auto absdiff = [](__m256i x, __m256i y) { return _mm256_or_si256(_mm256_subs_epu8(x, y), _mm256_subs_epu8(y, x)); };
   auto le = [](__m256i x, __m256i y) { return _mm256_cmpeq_epi8(_mm256_min_epu8(x, y), x); };
-  __m256i pa = absdiff(b, c), pb = absdiff(a, c);
-  __m256i diff_sign = _mm256_xor_si256(le(c, a), le(c, b));  // a < c differs from b < c
-  __m256i pc = _mm256_blendv_epi8(_mm256_adds_epu8(pa, pb), absdiff(pa, pb), diff_sign);
-  __m256i use_a = _mm256_and_si256(le(pa, pb), le(pa, pc));
-  __m256i use_b = le(pb, pc);
+  const __m256i z = _mm256_setzero_si256();
+  const __m256i ca = _mm256_subs_epu8(c, a), cb = _mm256_subs_epu8(c, b);
+  const __m256i pa = _mm256_or_si256(_mm256_subs_epu8(b, c), cb), pb = _mm256_or_si256(_mm256_subs_epu8(a, c), ca);
+  // a < c differs from b < c (x < c where c - x does not saturate to 0)
+  const __m256i diff_sign = _mm256_xor_si256(_mm256_cmpeq_epi8(ca, z), _mm256_cmpeq_epi8(cb, z));
+  const __m256i pc = _mm256_blendv_epi8(_mm256_adds_epu8(pa, pb), absdiff(pa, pb), diff_sign);
+  const __m256i m = _mm256_min_epu8(pb, pc);
+  const __m256i use_a = le(pa, m);                  // pa <= pb and pa <= pc
+  const __m256i use_b = _mm256_cmpeq_epi8(m, pb);  // pb <= pc
   return _mm256_blendv_epi8(_mm256_blendv_epi8(c, b, use_b), a, use_a);
 }
 VIO_INLINE __m256i avg_floor_avx2(__m256i a, __m256i b) {

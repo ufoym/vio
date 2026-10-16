@@ -718,10 +718,14 @@ struct VecFilter {
   static VIO_INLINE T le(T x, T y) { return V::cmpeq_8(V::min_u8(x, y), x); }
   static VIO_INLINE T select(T m, T x, T y) { return V::or_(V::and_(m, x), V::andnot(m, y)); }
   static VIO_INLINE T paeth(T a, T b, T c) {
-    const T pa = absdiff(b, c), pb = absdiff(a, c);
-    const T diff_sign = V::xor_(le(c, a), le(c, b));  // a < c differs from b < c
+    const T z = V::zero();
+    const T ca = V::subs_u8(c, a), cb = V::subs_u8(c, b);
+    const T pa = V::or_(V::subs_u8(b, c), cb), pb = V::or_(V::subs_u8(a, c), ca);
+    // a < c differs from b < c (x < c where c - x does not saturate to 0)
+    const T diff_sign = V::xor_(V::cmpeq_8(ca, z), V::cmpeq_8(cb, z));
     const T pc = select(diff_sign, absdiff(pa, pb), V::adds_u8(pa, pb));
-    const T use_a = V::and_(le(pa, pb), le(pa, pc)), use_b = le(pb, pc);
+    const T m = V::min_u8(pb, pc);
+    const T use_a = le(pa, m), use_b = V::cmpeq_8(m, pb);  // pa <= pb and pa <= pc; pb <= pc
     return select(use_a, a, select(use_b, b, c));
   }
 
