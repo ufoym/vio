@@ -64,6 +64,19 @@ struct V {
   static VIO_INLINE T cmpeq_16(T a, T b) { return _mm_cmpeq_epi16(a, b); }
   static VIO_INLINE T cmpgt_16(T a, T b) { return _mm_cmpgt_epi16(a, b); }
 
+  // Unsigned bytes (PNG filters); avg_u8 rounds up.
+  static VIO_INLINE T sub_8(T a, T b) { return _mm_sub_epi8(a, b); }
+  static VIO_INLINE T avg_u8(T a, T b) { return _mm_avg_epu8(a, b); }
+  static VIO_INLINE T min_u8(T a, T b) { return _mm_min_epu8(a, b); }
+  static VIO_INLINE T adds_u8(T a, T b) { return _mm_adds_epu8(a, b); }
+  static VIO_INLINE T subs_u8(T a, T b) { return _mm_subs_epu8(a, b); }
+  static VIO_INLINE T cmpeq_8(T a, T b) { return _mm_cmpeq_epi8(a, b); }
+  static VIO_INLINE T loadl_32(const void* p) {
+    int x;
+    std::memcpy(&x, p, 4);
+    return _mm_cvtsi32_si128(x);
+  }
+
   static VIO_INLINE T mulhi_u16(T a, T b) { return _mm_mulhi_epu16(a, b); }
   // Low 8 / 4 bytes.
   static VIO_INLINE T loadl_64(const void* p) { return _mm_loadl_epi64(static_cast<const T*>(p)); }

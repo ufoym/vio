@@ -19,14 +19,10 @@
 #include <memory>
 #include <vector>
 
-#include "../jpeg/config.hpp"
-#include "../jpeg/simd/cpu.hpp"
 #include "checksum.hpp"
 #include "filter.hpp"
+#include "simd.hpp"
 
-#if VIO_SIMD_NEON
-#include <arm_neon.h>
-#endif
 #if VIO_SIMD_X86
 #include <immintrin.h>
 #endif
@@ -103,6 +99,9 @@ inline void apply_filter_scalar(unsigned filter, std::uint8_t* out, const std::u
 }
 
 #if VIO_SIMD_NEON
+#if VIO_SIMD_NEON_RUNTIME
+VIO_TARGET_PUSH_("fpu=neon")
+#endif
 // Paeth predictor for 16 lanes.
 VIO_INLINE uint8x16_t paeth_predict_neon(uint8x16_t a, uint8x16_t b, uint8x16_t c) {
   uint8x16_t pa = vabdq_u8(b, c), pb = vabdq_u8(a, c);
@@ -140,7 +139,10 @@ inline unsigned choose_filter_neon(const std::uint8_t* cur, const std::uint8_t* 
     for (int f = 0; f < 5; f++) total[f] = vpadalq_u16(total[f], acc[f]);
   }
   std::uint64_t cost[5];
-  for (int f = 0; f < 5; f++) cost[f] = vaddlvq_u32(total[f]);
+  for (int f = 0; f < 5; f++) {
+    const uint64x2_t t = vpaddlq_u32(total[f]);
+    cost[f] = vgetq_lane_u64(t, 0) + vgetq_lane_u64(t, 1);
+  }
   for (; i < n; i++) {
     std::uint8_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp];
     std::uint8_t r[5] = {x, static_cast<std::uint8_t>(x - a), static_cast<std::uint8_t>(x - b),
@@ -177,6 +179,9 @@ inline void apply_filter_neon(unsigned filter, std::uint8_t* out, const std::uin
   }
   apply_filter_scalar(filter, out + i, cur + i, up + i, n - i, bpp);
 }
+#if VIO_SIMD_NEON_RUNTIME
+VIO_TARGET_POP()
+#endif
 #endif
 
 #if VIO_SIMD_X86
@@ -348,45 +353,145 @@ inline void apply_filter_avx2(unsigned filter, std::uint8_t* out, const std::uin
 VIO_TARGET_POP()
 #endif
 
-inline unsigned choose_filter(const std::uint8_t* cur, const std::uint8_t* up, std::size_t n,
-                              unsigned bpp, unsigned allowed = 0x1f) {
-#if VIO_SIMD_NEON_A64
-  return choose_filter_neon(cur, up, n, bpp, allowed);
-#elif VIO_SIMD_X86_64
-  return choose_filter_sse2(cur, up, n, bpp, allowed);
-#else
-  return choose_filter_scalar(cur, up, n, bpp, allowed);
+// Generic kernels for a 128-bit vector interface V (AltiVec, MMI, RVV).
+template <class V>
+struct VecFilterSelect {
+  using F = VecFilter<V>;
+  using T = typename V::T;
+
+  // Absolute values of the signed bytes of r, summed in pairs into 16-bit
+  // lanes.
+  static VIO_INLINE T abs_pairs(T r) {
+    const T m = V::min_u8(r, V::sub_8(V::zero(), r));
+    return V::add_16(V::widenlo_u8(m), V::widenhi_u8(m));
+  }
+
+  static unsigned choose(const std::uint8_t* cur, const std::uint8_t* up, std::size_t n, unsigned bpp,
+                         unsigned allowed) {
+    std::uint64_t cost[5] = {};
+    std::size_t i = 0;
+    while (i + 16 <= n) {
+      // 16-bit sums of at most 64 vectors (each lane gains <= 256 per
+      // vector), then added up in pairs as 32 bits.
+      T acc[5];
+      for (auto& a : acc) a = V::zero();
+      const std::size_t end = std::min(n & ~std::size_t(15), i + 64 * 16);
+      for (; i < end; i += 16) {
+        const T x = V::loadu(cur + i), a = V::loadu(cur + i - bpp), b = V::loadu(up + i),
+                c = V::loadu(up + i - bpp);
+        acc[0] = V::add_16(acc[0], abs_pairs(x));
+        acc[1] = V::add_16(acc[1], abs_pairs(V::sub_8(x, a)));
+        acc[2] = V::add_16(acc[2], abs_pairs(V::sub_8(x, b)));
+        acc[3] = V::add_16(acc[3], abs_pairs(V::sub_8(x, F::avg_floor(a, b))));
+        acc[4] = V::add_16(acc[4], abs_pairs(V::sub_8(x, F::paeth(a, b, c))));
+      }
+      for (int f = 0; f < 5; f++) {
+        std::int32_t s[4];
+        V::storeu(s, V::madd_16(acc[f], V::set1_16(1)));
+        cost[f] += static_cast<std::uint64_t>(s[0]) + s[1] + s[2] + s[3];
+      }
+    }
+    for (; i < n; i++) {
+      std::uint8_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp];
+      std::uint8_t r[5] = {x, static_cast<std::uint8_t>(x - a), static_cast<std::uint8_t>(x - b),
+                           static_cast<std::uint8_t>(x - ((a + b) >> 1)),
+                           static_cast<std::uint8_t>(x - paeth(a, b, c))};
+      for (int f = 0; f < 5; f++) cost[f] += r[f] < 128 ? r[f] : 256 - r[f];
+    }
+    return pick_filter(cost, allowed);
+  }
+
+  static void apply(unsigned filter, std::uint8_t* out, const std::uint8_t* cur, const std::uint8_t* up,
+                    std::size_t n, unsigned bpp) {
+    std::size_t i = 0;
+    switch (filter) {
+      case kFilterNone:
+        std::memcpy(out, cur, n);
+        return;
+      case kFilterSub:
+        for (; i + 16 <= n; i += 16) V::storeu(out + i, V::sub_8(V::loadu(cur + i), V::loadu(cur + i - bpp)));
+        break;
+      case kFilterUp:
+        for (; i + 16 <= n; i += 16) V::storeu(out + i, V::sub_8(V::loadu(cur + i), V::loadu(up + i)));
+        break;
+      case kFilterAvg:
+        for (; i + 16 <= n; i += 16)
+          V::storeu(out + i, V::sub_8(V::loadu(cur + i), F::avg_floor(V::loadu(cur + i - bpp), V::loadu(up + i))));
+        break;
+      case kFilterPaeth:
+        for (; i + 16 <= n; i += 16)
+          V::storeu(out + i, V::sub_8(V::loadu(cur + i), F::paeth(V::loadu(cur + i - bpp), V::loadu(up + i),
+                                                                   V::loadu(up + i - bpp))));
+        break;
+    }
+    apply_filter_scalar(filter, out + i, cur + i, up + i, n - i, bpp);
+  }
+};
+
+// The filter kernels in use, chosen once per image.
+enum class FilterIsa : unsigned char { kScalar, kSse2, kAvx2, kNeon, kVec };
+
+inline FilterIsa filter_isa() {
+  using namespace jpeg::simd;
+#if VIO_SIMD_AVX2
+  if (simd::has(kAVX2) && simd::has(kBMI2)) return FilterIsa::kAvx2;
 #endif
+#if VIO_SIMD_X86
+  if (simd::has(kSSE2)) return FilterIsa::kSse2;
+#elif VIO_SIMD_NEON
+  if (simd::has(kNEON)) return FilterIsa::kNeon;
+#elif VIO_PNG_GENERIC
+  if (simd::has(simd::kGenericIsa)) return FilterIsa::kVec;
+#endif
+  return FilterIsa::kScalar;
 }
 
-inline void apply_filter(unsigned filter, std::uint8_t* out, const std::uint8_t* cur,
-                         const std::uint8_t* up, std::size_t n, unsigned bpp) {
-#if VIO_SIMD_NEON_A64
-  apply_filter_neon(filter, out, cur, up, n, bpp);
-#elif VIO_SIMD_X86_64
-  apply_filter_sse2(filter, out, cur, up, n, bpp);
-#else
-  apply_filter_scalar(filter, out, cur, up, n, bpp);
+inline unsigned choose_filter(const std::uint8_t* cur, const std::uint8_t* up, std::size_t n, unsigned bpp,
+                              unsigned allowed, FilterIsa isa) {
+  switch (isa) {
+#if VIO_SIMD_AVX2
+    case FilterIsa::kAvx2: return choose_filter_avx2(cur, up, n, bpp, allowed);
 #endif
+#if VIO_SIMD_X86
+    case FilterIsa::kSse2: return choose_filter_sse2(cur, up, n, bpp, allowed);
+#endif
+#if VIO_SIMD_NEON
+    case FilterIsa::kNeon: return choose_filter_neon(cur, up, n, bpp, allowed);
+#endif
+#if VIO_PNG_GENERIC
+    case FilterIsa::kVec: return VecFilterSelect<simd::GV>::choose(cur, up, n, bpp, allowed);
+#endif
+    default: return choose_filter_scalar(cur, up, n, bpp, allowed);
+  }
+}
+
+inline void apply_filter(unsigned filter, std::uint8_t* out, const std::uint8_t* cur, const std::uint8_t* up,
+                         std::size_t n, unsigned bpp, FilterIsa isa) {
+  switch (isa) {
+#if VIO_SIMD_AVX2
+    case FilterIsa::kAvx2: return apply_filter_avx2(filter, out, cur, up, n, bpp);
+#endif
+#if VIO_SIMD_X86
+    case FilterIsa::kSse2: return apply_filter_sse2(filter, out, cur, up, n, bpp);
+#endif
+#if VIO_SIMD_NEON
+    case FilterIsa::kNeon: return apply_filter_neon(filter, out, cur, up, n, bpp);
+#endif
+#if VIO_PNG_GENERIC
+    case FilterIsa::kVec: return VecFilterSelect<simd::GV>::apply(filter, out, cur, up, n, bpp);
+#endif
+    default: return apply_filter_scalar(filter, out, cur, up, n, bpp);
+  }
 }
 
 // Filters the padded row at cur (above it: up) into dst, the filter type
 // byte first: the one allowed filter, or the best of those allowed.
 inline void filter_row(std::uint8_t* dst, const std::uint8_t* cur, const std::uint8_t* up,
-                       std::size_t n, unsigned bpp, unsigned allowed, [[maybe_unused]] bool avx2) {
+                       std::size_t n, unsigned bpp, unsigned allowed, FilterIsa isa) {
   const bool choose = (allowed & (allowed - 1)) != 0;  // more than one allowed
-  const unsigned only = choose ? 0 : ctz32(allowed);
-#if VIO_SIMD_AVX2
-  if (avx2) {
-    unsigned f = choose ? choose_filter_avx2(cur, up, n, bpp, allowed) : only;
-    dst[0] = static_cast<std::uint8_t>(f);
-    apply_filter_avx2(f, dst + 1, cur, up, n, bpp);
-    return;
-  }
-#endif
-  unsigned f = choose ? choose_filter(cur, up, n, bpp, allowed) : only;
+  const unsigned f = choose ? choose_filter(cur, up, n, bpp, allowed, isa) : ctz32(allowed);
   dst[0] = static_cast<std::uint8_t>(f);
-  apply_filter(f, dst + 1, cur, up, n, bpp);
+  apply_filter(f, dst + 1, cur, up, n, bpp, isa);
 }
 
 // Consecutive rows of up to max_row_bytes bytes filtered one by one: load a
@@ -397,10 +502,7 @@ class RowFilter {
   void start(std::size_t max_row_bytes, unsigned bpp, unsigned filters) {
     bpp_ = bpp;
     allowed_ = filters ? filters : 1;
-#if VIO_SIMD_AVX2
-    avx2_ = (jpeg::simd::cpu_flags() & (jpeg::simd::kAVX2 | jpeg::simd::kBMI2)) ==
-            (jpeg::simd::kAVX2 | jpeg::simd::kBMI2);
-#endif
+    isa_ = filter_isa();
     stride_ = kRowPad + ((max_row_bytes + 15) & ~std::size_t(15)) + 16;
     rows_.assign(2 * stride_, 0);
     cur_ = 0;
@@ -413,7 +515,7 @@ class RowFilter {
   std::uint8_t* row() { return rows_.data() + kRowPad + cur_ * stride_; }
   void filter(std::uint8_t* dst, std::size_t n) {
     const std::uint8_t* up = rows_.data() + kRowPad + (cur_ ^ 1) * stride_;
-    filter_row(dst, row(), up, n, bpp_, allowed_, avx2_);
+    filter_row(dst, row(), up, n, bpp_, allowed_, isa_);
     cur_ ^= 1;
   }
 
@@ -421,7 +523,7 @@ class RowFilter {
   std::vector<std::uint8_t> rows_;
   std::size_t stride_ = 0, cur_ = 0;
   unsigned bpp_ = 1, allowed_ = 1;
-  bool avx2_ = false;
+  FilterIsa isa_ = FilterIsa::kScalar;
 };
 
 // ---------------------------------------------------------------------------
@@ -1057,10 +1159,8 @@ class FastEncoder {
               ByteBuffer& out) {
     bpp_ = bpp;
     allowed_ = filters ? filters : 1;
-#if VIO_SIMD_AVX2
-    avx2_ = (jpeg::simd::cpu_flags() & (jpeg::simd::kAVX2 | jpeg::simd::kBMI2)) ==
-            (jpeg::simd::kAVX2 | jpeg::simd::kBMI2);
-#endif
+    isa_ = filter_isa();
+    huff_avx2_ = isa_ == FilterIsa::kAvx2 && simd::support().huffman;
     std::size_t max_rb = 0, total = 0;
     std::uint64_t rows = 0;
     for (std::size_t k = 0; k < nsegs; k++) {
@@ -1154,13 +1254,13 @@ class FastEncoder {
 
   std::size_t encode_bytes(BitWriter& w, const std::uint8_t* p, std::size_t n, std::size_t run) {
 #if VIO_SIMD_AVX2
-    if (avx2_) return encode_bytes_avx2(w, t_, p, n, run);
+    if (huff_avx2_) return encode_bytes_avx2(w, t_, p, n, run);
 #endif
     return encode_bytes_scalar(w, t_, p, n, run);
   }
 
   void filter_row(std::uint8_t* dst, const std::uint8_t* cur, const std::uint8_t* up) {
-    detail::filter_row(dst, cur, up, rb_, bpp_, allowed_, avx2_);
+    detail::filter_row(dst, cur, up, rb_, bpp_, allowed_, isa_);
   }
 
   void write_headers(BitWriter& w) {
@@ -1243,7 +1343,8 @@ class FastEncoder {
   std::size_t rb_ = 0;
   unsigned bpp_ = 1;
   unsigned allowed_ = 0x1f;
-  bool avx2_ = false;
+  FilterIsa isa_ = FilterIsa::kScalar;
+  bool huff_avx2_ = false;  // AVX2 Huffman coder
   std::vector<std::uint8_t> rows_, filtered_;
   CodeTables t_;
 };

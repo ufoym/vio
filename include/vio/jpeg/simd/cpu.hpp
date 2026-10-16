@@ -200,7 +200,8 @@ inline Support support() {
 #endif
 #endif
 #if VIO_SIMD_NEON
-  if (env_is_1("JSIMD_FORCENEON")) s.flags = kNEON;
+  // (keeping the Arm CRC32 and PMULL extensions, which only the PNG code uses)
+  if (env_is_1("JSIMD_FORCENEON")) s.flags = kNEON | (s.flags & (kCRC32 | kPMULL));
 #endif
 #if VIO_SIMD_RVV
   if (env_is_1("JSIMD_FORCERVV")) s.flags = kRVV;

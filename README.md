@@ -106,8 +106,9 @@ transformations and format conversions give libpng's results bit for bit.
 | Integration: no external zlib                                    |  ✓  |   ✗    |
 | Integration: C API                                               |  ✗  |   ✓    |
 
-¹ x86 SSE2/SSSE3/SSE4.1/PCLMUL/AVX2 and Arm NEON/CRC32/PMULL, chosen at run
-time.
+¹ x86 SSE2/SSSE3/SSE4.1/PCLMUL/AVX2, Arm NEON/CRC32/PMULL (AArch64; NEON
+on AArch32), PowerPC AltiVec, Loongson MMI and RISC-V RVV, chosen at run time
+and restricted by the same `JSIMD_*` variables as the JPEG codec.
 ² Unfiltering only: NEON, SSE2, MIPS MSA/MMI, PowerPC VSX, LoongArch LSX,
 RISC-V RVV.
 ³ zlib's portable code (Arm CRC32 instructions only when compiled for them);
@@ -465,9 +466,13 @@ include/vio/
 │   │                                 or resumable)
 │   ├── deflate.hpp                   DEFLATE compression, zlib-identical
 │   │                                 output
-│   ├── filter.hpp                    scanline filters (scalar, NEON, SSE2)
-│   └── checksum.hpp                  CRC-32, Adler-32 (PCLMUL/PMULL folding,
-│                                     Arm CRC32, SSSE3/NEON sums)
+│   ├── filter.hpp                    scanline filters (scalar, NEON, SSE2,
+│   │                                 generic vector kernels)
+│   ├── checksum.hpp                  CRC-32, Adler-32 (PCLMUL/PMULL folding,
+│   │                                 Arm CRC32, SSSE3/NEON/generic sums)
+│   └── simd.hpp                      run-time kernel selection; the JPEG
+│                                     vector interface `V` for AltiVec, MMI
+│                                     and RVV
 ├── jpeg.hpp                          includes the jpeg/ public API
 └── jpeg/
     ├── decoder.hpp encoder.hpp       public API

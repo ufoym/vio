@@ -13,11 +13,16 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "../jpeg/config.hpp"
-#include "../jpeg/simd/cpu.hpp"
+#include "simd.hpp"
 
 #if VIO_SIMD_NEON
+#if VIO_SIMD_NEON_RUNTIME
+VIO_TARGET_PUSH_("fpu=neon")
+#endif
 #include <arm_neon.h>
+#if VIO_SIMD_NEON_RUNTIME
+VIO_TARGET_POP()
+#endif
 #endif
 #if VIO_SIMD_X86
 #include <immintrin.h>
@@ -118,6 +123,9 @@ inline void unfilter_row_scalar(unsigned filter, std::uint8_t* dst, const std::u
 }
 
 #if VIO_SIMD_NEON
+#if VIO_SIMD_NEON_RUNTIME
+VIO_TARGET_PUSH_("fpu=neon")
+#endif
 // One pixel per step, in the low lanes of a 64-bit vector: pixels of 3 or 4
 // bytes through 4-byte loads and stores (one byte too many is stored for 3:
 // the next pixel's source byte it overwrites, when unfiltering in place, was
@@ -220,6 +228,9 @@ inline void unfilter_row_neon(unsigned filter, std::uint8_t* dst, const std::uin
   if (bpp <= 4) unfilter_px_neon<4>(filter, dst, src, prev, n, bpp);
   else unfilter_px_neon<8>(filter, dst, src, prev, n, bpp);
 }
+#if VIO_SIMD_NEON_RUNTIME
+VIO_TARGET_POP()
+#endif
 #endif
 
 #if VIO_SIMD_X86
@@ -355,8 +366,7 @@ VIO_INLINE void unfilter_px_sse2(unsigned filter, std::uint8_t* dst, const std::
           P::store(dst + i, a, bpp);
         }
       } else {
-        static const bool sse41 = (jpeg::simd::cpu_flags() & jpeg::simd::kSSE41) != 0;
-        if (sse41) paeth_rows_sse41(dst, src, prev, n, bpp);
+        if (simd::has(jpeg::simd::kSSE41)) paeth_rows_sse41(dst, src, prev, n, bpp);
         else paeth_rows_sse2<W>(dst, src, prev, n, bpp);
       }
       break;
@@ -385,15 +395,99 @@ inline void unfilter_row_sse2(unsigned filter, std::uint8_t* dst, const std::uin
 VIO_TARGET_POP()
 #endif
 
+// Generic kernels for a 128-bit vector interface V (AltiVec, MMI, RVV), the
+// same algorithms as the SSE2 ones with 8-bit Paeth arithmetic.
+template <class V>
+struct VecFilter {
+  using T = typename V::T;
+
+  // floor((a + b) / 2): rounded average minus the dropped low bit
+  static VIO_INLINE T avg_floor(T a, T b) {
+    return V::sub_8(V::avg_u8(a, b), V::and_(V::xor_(a, b), V::set1_8(1)));
+  }
+  static VIO_INLINE T absdiff(T x, T y) { return V::or_(V::subs_u8(x, y), V::subs_u8(y, x)); }
+  // x <= y (unsigned bytes)
+  static VIO_INLINE T le(T x, T y) { return V::cmpeq_8(V::min_u8(x, y), x); }
+  static VIO_INLINE T select(T m, T x, T y) { return V::or_(V::and_(m, x), V::andnot(m, y)); }
+  static VIO_INLINE T paeth(T a, T b, T c) {
+    const T pa = absdiff(b, c), pb = absdiff(a, c);
+    const T diff_sign = V::xor_(le(c, a), le(c, b));  // a < c differs from b < c
+    const T pc = select(diff_sign, absdiff(pa, pb), V::adds_u8(pa, pb));
+    const T use_a = V::and_(le(pa, pb), le(pa, pc)), use_b = le(pb, pc);
+    return select(use_a, a, select(use_b, b, c));
+  }
+
+  // Pixels of 3 or 4 bytes (W = 4, one byte too many stored for 3, as in
+  // the SSE2 kernels) or of 6 or 8 bytes (W = 8).
+  template <unsigned W>
+  static VIO_INLINE T load(const std::uint8_t* p) {
+    if constexpr (W == 4) return V::loadl_32(p);
+    else return V::loadl_64(p);
+  }
+  template <unsigned W>
+  static VIO_INLINE void store(std::uint8_t* p, T v, unsigned bpp) {
+    if constexpr (W == 4) {
+      V::storel_32(p, v);
+    } else if (bpp == 8) {
+      V::storel_64(p, v);
+    } else {
+      std::uint8_t t[8];
+      V::storel_64(t, v);
+      std::memcpy(p, t, 6);
+    }
+  }
+
+  template <unsigned W>
+  static void unfilter_px(unsigned filter, std::uint8_t* dst, const std::uint8_t* src, const std::uint8_t* prev,
+                          std::size_t n, unsigned bpp) {
+    T a = V::zero(), c = a;
+    if (filter == kFilterSub || (filter == kFilterPaeth && !prev)) {  // Paeth: b = c = 0, the prediction is a
+      for (std::size_t i = 0; i < n; i += bpp) {
+        a = V::add_8(load<W>(src + i), a);
+        store<W>(dst + i, a, bpp);
+      }
+    } else if (filter == kFilterAvg) {
+      for (std::size_t i = 0; i < n; i += bpp) {
+        a = V::add_8(load<W>(src + i), avg_floor(a, prev ? load<W>(prev + i) : V::zero()));
+        store<W>(dst + i, a, bpp);
+      }
+    } else {
+      for (std::size_t i = 0; i < n; i += bpp) {
+        const T b = load<W>(prev + i);
+        a = V::add_8(load<W>(src + i), paeth(a, b, c));
+        c = b;
+        store<W>(dst + i, a, bpp);
+      }
+    }
+  }
+
+  static void unfilter_row(unsigned filter, std::uint8_t* dst, const std::uint8_t* src, const std::uint8_t* prev,
+                           std::size_t n, unsigned bpp) {
+    if (filter == kFilterUp && prev) {
+      std::size_t i = 0;
+      for (; i + 16 <= n; i += 16) V::storeu(dst + i, V::add_8(V::loadu(src + i), V::loadu(prev + i)));
+      for (; i < n; i++) dst[i] = static_cast<std::uint8_t>(src[i] + prev[i]);
+      return;
+    }
+    if (filter == kFilterNone || filter == kFilterUp || bpp < 3 || bpp == 5 || bpp == 7 || bpp > 8) {
+      unfilter_row_scalar(filter, dst, src, prev, n, bpp);
+      return;
+    }
+    if (bpp <= 4) unfilter_px<4>(filter, dst, src, prev, n, bpp);
+    else unfilter_px<8>(filter, dst, src, prev, n, bpp);
+  }
+};
+
 inline void unfilter_row(unsigned filter, std::uint8_t* dst, const std::uint8_t* src,
                          const std::uint8_t* prev, std::size_t n, unsigned bpp) {
-#if VIO_SIMD_NEON_A64
-  unfilter_row_neon(filter, dst, src, prev, n, bpp);
-#elif VIO_SIMD_X86_64
-  unfilter_row_sse2(filter, dst, src, prev, n, bpp);
-#else
-  unfilter_row_scalar(filter, dst, src, prev, n, bpp);
+#if VIO_SIMD_NEON
+  if (simd::has(jpeg::simd::kNEON)) return unfilter_row_neon(filter, dst, src, prev, n, bpp);
+#elif VIO_SIMD_X86
+  if (simd::has(jpeg::simd::kSSE2)) return unfilter_row_sse2(filter, dst, src, prev, n, bpp);
+#elif VIO_PNG_GENERIC
+  if (simd::has(simd::kGenericIsa)) return VecFilter<simd::GV>::unfilter_row(filter, dst, src, prev, n, bpp);
 #endif
+  unfilter_row_scalar(filter, dst, src, prev, n, bpp);
 }
 
 }  // namespace vio::png::detail

@@ -23,12 +23,6 @@
 #include "../core.hpp"
 #include "checksum.hpp"
 
-#if VIO_SIMD_NEON
-#include <arm_neon.h>
-#endif
-#if VIO_SIMD_X86
-#include <emmintrin.h>
-#endif
 
 namespace vio::png::zlib {
 
@@ -222,23 +216,45 @@ VIO_INLINE std::uint64_t load_le64(const std::uint8_t* p) {
   return v;
 }
 
+// Plain data movement (16-byte copies, byte fills) uses vector registers
+// wherever the target has them, whatever the JSIMD_* variables select; the
+// compiler emits the same instructions for the memcpy forms on x86.
 VIO_INLINE void copy16(std::uint8_t* d, const std::uint8_t* s) {
-#if VIO_SIMD_NEON
+#if VIO_SIMD_NEON && !VIO_SIMD_NEON_RUNTIME
   vst1q_u8(d, vld1q_u8(s));
-#elif VIO_SIMD_X86
-  _mm_storeu_si128(reinterpret_cast<__m128i*>(d), _mm_loadu_si128(reinterpret_cast<const __m128i*>(s)));
 #else
-  std::uint64_t a, b;
-  std::memcpy(&a, s, 8);
-  std::memcpy(&b, s + 8, 8);
-  std::memcpy(d, &a, 8);
-  std::memcpy(d + 8, &b, 8);
+  std::uint8_t t[16];
+  std::memcpy(t, s, 16);
+  std::memcpy(d, t, 16);
 #endif
 }
 
+#if VIO_SIMD_NEON_A64
+// Repeats the dist-byte pattern before out (dist < 8) through 16-byte
+// vectors advanced by the largest multiple of dist that fits.
+VIO_INLINE void copy_pattern_neon(std::uint8_t* out, std::uint8_t* end, std::size_t dist) {
+  static constexpr std::uint8_t idx[8][16] = {
+      {}, {},
+      {0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1},
+      {0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0},
+      {0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3},
+      {0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0},
+      {0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3},
+      {0, 1, 2, 3, 4, 5, 6, 0, 1, 2, 3, 4, 5, 6, 0, 1}};
+  static constexpr std::uint8_t step[8] = {0, 0, 16, 15, 16, 15, 12, 14};
+  const uint8x16_t v = vqtbl1q_u8(vld1q_u8(out - dist), vld1q_u8(idx[dist]));
+  const unsigned s = step[dist];
+  do {
+    vst1q_u8(out, v);
+    out += s;
+  } while (out < end);
+}
+#endif
+
 // Copies a match of `len` bytes from `dist` bytes back; may write up to 15
-// bytes past the end of the match.
-VIO_INLINE void copy_match(std::uint8_t* out, std::size_t dist, unsigned len) {
+// bytes past the end of the match.  `pattern_simd`: copy_pattern_neon for
+// distances under 8 (when NEON is enabled).
+VIO_INLINE void copy_match(std::uint8_t* out, std::size_t dist, unsigned len, [[maybe_unused]] bool pattern_simd) {
   std::uint8_t* end = out + len;
   const std::uint8_t* src = out - dist;
   if (dist >= 16) {
@@ -248,17 +264,17 @@ VIO_INLINE void copy_match(std::uint8_t* out, std::size_t dist, unsigned len) {
       src += 16;
     } while (out < end);
   } else if (dist == 1) {
-#if VIO_SIMD_NEON
-    uint8x16_t v = vdupq_n_u8(*src);
+#if VIO_SIMD_NEON && !VIO_SIMD_NEON_RUNTIME
+    const uint8x16_t v = vdupq_n_u8(*src);
     do {
       vst1q_u8(out, v);
       out += 16;
     } while (out < end);
 #else
-    std::uint64_t v = 0x0101010101010101ull * *src;
+    std::uint8_t v[16];
+    std::memset(v, *src, 16);
     do {
-      std::memcpy(out, &v, 8);
-      std::memcpy(out + 8, &v, 8);
+      std::memcpy(out, v, 16);
       out += 16;
     } while (out < end);
 #endif
@@ -272,29 +288,12 @@ VIO_INLINE void copy_match(std::uint8_t* out, std::size_t dist, unsigned len) {
     } while (out < end);
   } else {
 #if VIO_SIMD_NEON_A64
-    // Repeat the dist-byte pattern: store it in 16-byte vectors advanced by
-    // the largest multiple of dist that fits.
-    static constexpr std::uint8_t idx[8][16] = {
-        {}, {},
-        {0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1},
-        {0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0},
-        {0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3},
-        {0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0},
-        {0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3},
-        {0, 1, 2, 3, 4, 5, 6, 0, 1, 2, 3, 4, 5, 6, 0, 1}};
-    static constexpr std::uint8_t step[8] = {0, 0, 16, 15, 16, 15, 12, 14};
-    uint8x16_t v = vqtbl1q_u8(vld1q_u8(src), vld1q_u8(idx[dist]));
-    const unsigned s = step[dist];
-    do {
-      vst1q_u8(out, v);
-      out += s;
-    } while (out < end);
-#else
+    if (pattern_simd) return copy_pattern_neon(out, end, dist);
+#endif
     do {
       *out = out[-static_cast<std::ptrdiff_t>(dist)];
       out++;
     } while (out < end);
-#endif
   }
 }
 
@@ -512,6 +511,7 @@ class Inflater {
         bitcnt |= 56;
       };
       bool end_of_block = false;
+      const bool pattern_simd = simd::has(jpeg::simd::kNEON);
       refill();
       std::uint32_t e = lit[bitbuf & kLitMask];
       while (in < in_fast_end && out < out_fast_end) {
@@ -596,7 +596,7 @@ class Inflater {
           fail("invalid distance too far back");
         refill();
         e = lit[bitbuf & kLitMask];
-        copy_match(out, distance, len);
+        copy_match(out, distance, len, pattern_simd);
         out += len;
       }
       // Give back whole bytes not yet consumed so that the careful loop

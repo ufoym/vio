@@ -2,25 +2,32 @@
 //
 // crc32() folds 64-byte blocks with carry-less multiplication where the CPU
 // has it (x86 PCLMULQDQ, Arm PMULL), else uses the Arm CRC32 instructions or
-// slicing-by-8 tables.  adler32() sums 32-byte blocks with SSSE3 or NEON.
+// slicing-by-8 tables.  adler32() sums 32-byte blocks with SSSE3, NEON or
+// the generic vector kernel.
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 
-#include "../jpeg/config.hpp"
-#include "../jpeg/simd/cpu.hpp"
+#include "simd.hpp"
 
 #if VIO_SIMD_X86
 #include <immintrin.h>
 #endif
-#if VIO_SIMD_NEON_A64
-#include <arm_neon.h>
-#if defined(__GNUC__) || defined(__clang__)
-#include <arm_acle.h>
+#if VIO_SIMD_NEON
+#if VIO_SIMD_NEON_RUNTIME
+VIO_TARGET_PUSH_("fpu=neon")
 #endif
+#include <arm_neon.h>
+#if VIO_SIMD_NEON_RUNTIME
+VIO_TARGET_POP()
+#endif
+#endif
+#if VIO_SIMD_NEON_A64 && (defined(__GNUC__) || defined(__clang__))
+#include <arm_acle.h>
 #endif
 
 // Function attributes for the optional Arm extensions.
@@ -240,6 +247,12 @@ inline std::uint32_t crc32_arm(std::uint32_t crc, const std::uint8_t* buf, std::
   return crc;
 }
 
+#endif
+
+#if VIO_SIMD_NEON
+#if VIO_SIMD_NEON_RUNTIME
+VIO_TARGET_PUSH_("fpu=neon")
+#endif
 // Adler-32 sums of whole 32-byte blocks (nblocks <= 173).
 inline void adler32_neon(std::uint32_t& s1, std::uint32_t& s2, const std::uint8_t* p,
                          std::size_t nblocks) {
@@ -250,9 +263,9 @@ inline void adler32_neon(std::uint32_t& s1, std::uint32_t& s2, const std::uint8_
     vs2 = vaddq_u32(vs2, vs1);
     vs1 = vpadalq_u16(vs1, vpadalq_u8(vpaddlq_u8(b0), b1));
     c0 = vaddw_u8(c0, vget_low_u8(b0));
-    c1 = vaddw_high_u8(c1, b0);
+    c1 = vaddw_u8(c1, vget_high_u8(b0));
     c2 = vaddw_u8(c2, vget_low_u8(b1));
-    c3 = vaddw_high_u8(c3, b1);
+    c3 = vaddw_u8(c3, vget_high_u8(b1));
   }
   static constexpr std::uint16_t w[32] = {32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22,
                                           21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11,
@@ -260,38 +273,76 @@ inline void adler32_neon(std::uint32_t& s1, std::uint32_t& s2, const std::uint8_
   uint16x8_t w0 = vld1q_u16(w), w1 = vld1q_u16(w + 8), w2 = vld1q_u16(w + 16),
              w3 = vld1q_u16(w + 24);
   uint32x4_t acc = vmull_u16(vget_low_u16(c0), vget_low_u16(w0));
-  acc = vmlal_high_u16(acc, c0, w0);
+  acc = vmlal_u16(acc, vget_high_u16(c0), vget_high_u16(w0));
   acc = vmlal_u16(acc, vget_low_u16(c1), vget_low_u16(w1));
-  acc = vmlal_high_u16(acc, c1, w1);
+  acc = vmlal_u16(acc, vget_high_u16(c1), vget_high_u16(w1));
   acc = vmlal_u16(acc, vget_low_u16(c2), vget_low_u16(w2));
-  acc = vmlal_high_u16(acc, c2, w2);
+  acc = vmlal_u16(acc, vget_high_u16(c2), vget_high_u16(w2));
   acc = vmlal_u16(acc, vget_low_u16(c3), vget_low_u16(w3));
-  acc = vmlal_high_u16(acc, c3, w3);
-  s2 += static_cast<std::uint32_t>(nblocks * 32) * s1 + 32 * vaddvq_u32(vs2) + vaddvq_u32(acc);
-  s1 += vaddvq_u32(vs1);
+  acc = vmlal_u16(acc, vget_high_u16(c3), vget_high_u16(w3));
+  auto hsum = [](uint32x4_t v) {
+    const uint64x2_t t = vpaddlq_u32(v);
+    return static_cast<std::uint32_t>(vgetq_lane_u64(t, 0) + vgetq_lane_u64(t, 1));
+  };
+  s2 += static_cast<std::uint32_t>(nblocks * 32) * s1 + 32 * hsum(vs2) + hsum(acc);
+  s1 += hsum(vs1);
 }
+#if VIO_SIMD_NEON_RUNTIME
+VIO_TARGET_POP()
 #endif
+#endif
+
+// Adler-32 sums of whole 32-byte blocks (nblocks <= 128, which keeps the
+// per-position byte sums within signed 16 bits) with a 128-bit vector
+// interface V (AltiVec, MMI, RVV).
+template <class V>
+inline void adler32_vec(std::uint32_t& s1, std::uint32_t& s2, const std::uint8_t* p, std::size_t nblocks) {
+  using T = typename V::T;
+  const T ones = V::set1_16(1);
+  T vs1 = V::zero(), vs2 = vs1, c0 = vs1, c1 = vs1, c2 = vs1, c3 = vs1;
+  for (std::size_t i = 0; i < nblocks; i++, p += 32) {
+    const T b0 = V::loadu(p), b1 = V::loadu(p + 16);
+    const T w0 = V::widenlo_u8(b0), w1 = V::widenhi_u8(b0), w2 = V::widenlo_u8(b1), w3 = V::widenhi_u8(b1);
+    vs2 = V::add_32(vs2, vs1);
+    vs1 = V::add_32(vs1, V::madd_16(V::add_16(V::add_16(w0, w1), V::add_16(w2, w3)), ones));
+    c0 = V::add_16(c0, w0);
+    c1 = V::add_16(c1, w1);
+    c2 = V::add_16(c2, w2);
+    c3 = V::add_16(c3, w3);
+  }
+  static constexpr std::int16_t w[32] = {32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17,
+                                         16, 15, 14, 13, 12, 11, 10, 9,  8,  7,  6,  5,  4,  3,  2,  1};
+  const T acc = V::add_32(V::add_32(V::madd_16(c0, V::loadu(w)), V::madd_16(c1, V::loadu(w + 8))),
+                          V::add_32(V::madd_16(c2, V::loadu(w + 16)), V::madd_16(c3, V::loadu(w + 24))));
+  auto hsum = [](T v) {
+    std::uint32_t t[4];
+    V::storeu(t, v);
+    return t[0] + t[1] + t[2] + t[3];
+  };
+  s2 += static_cast<std::uint32_t>(nblocks * 32) * s1 + 32 * hsum(vs2) + hsum(acc);
+  s1 += hsum(vs1);
+}
 
 }  // namespace detail
 
 inline std::uint32_t crc32(std::uint32_t crc, const std::uint8_t* buf, std::size_t len) {
   crc = ~crc;
-  [[maybe_unused]] const unsigned flags = jpeg::simd::cpu_flags();
+  using namespace jpeg::simd;
 #if VIO_SIMD_X86
-  if (len >= 64 && (flags & jpeg::simd::kPCLMUL) && (flags & jpeg::simd::kSSE41)) {
+  if (len >= 64 && simd::has(kPCLMUL) && simd::has(kSSE41)) {
     std::size_t n = len & ~std::size_t(15);
     crc = detail::crc32_pclmul(crc, buf, n);
     buf += n;
     len -= n;
   }
 #elif VIO_SIMD_NEON_A64
-  if (len >= 64 && (flags & jpeg::simd::kPMULL)) {
+  if (len >= 64 && simd::has(kPMULL)) {
     std::size_t n = len & ~std::size_t(15);
     crc = detail::crc32_pmull(crc, buf, n);
     buf += n;
     len -= n;
   }
-  if (flags & jpeg::simd::kCRC32) return ~detail::crc32_arm(crc, buf, len);
+  if (simd::has(kCRC32)) return ~detail::crc32_arm(crc, buf, len);
 #endif
   return ~detail::crc32_tables(crc, buf, len);
 }
@@ -300,23 +351,35 @@ inline std::uint32_t adler32(std::uint32_t adler, const std::uint8_t* buf, std::
   constexpr std::uint32_t BASE = 65521;
   constexpr std::size_t NMAX = 5552;
   std::uint32_t a = adler & 0xffff, b = (adler >> 16) & 0xffff;
-  [[maybe_unused]] const unsigned flags = jpeg::simd::cpu_flags();
+  using namespace jpeg::simd;
+#if VIO_SIMD_X86
+  const bool vec = simd::has(kSSSE3);
+#elif VIO_SIMD_NEON
+  const bool vec = simd::has(kNEON);
+#elif VIO_PNG_GENERIC
+  const bool vec = simd::has(simd::kGenericIsa);
+#endif
   while (len > 0) {
     std::size_t n = len < NMAX ? len : NMAX;
     len -= n;
-    std::size_t blocks = n / 32;
+#if VIO_SIMD_X86 || VIO_SIMD_NEON || VIO_PNG_GENERIC
+    if (vec) {
 #if VIO_SIMD_X86
-    if (flags & jpeg::simd::kSSSE3) {
+      const std::size_t blocks = n / 32;
       detail::adler32_ssse3(a, b, buf, blocks);
+#elif VIO_SIMD_NEON
+      const std::size_t blocks = n / 32;
+      detail::adler32_neon(a, b, buf, blocks);
+#else
+      // (at most 128 blocks at a time; NMAX bytes have 173)
+      const std::size_t blocks = n / 32;
+      for (std::size_t k = 0; k < blocks; k += 128)
+        detail::adler32_vec<simd::GV>(a, b, buf + k * 32, std::min<std::size_t>(128, blocks - k));
+#endif
       buf += blocks * 32;
       n -= blocks * 32;
     }
-#elif VIO_SIMD_NEON_A64
-    detail::adler32_neon(a, b, buf, blocks);
-    buf += blocks * 32;
-    n -= blocks * 32;
 #endif
-    (void)blocks;
     while (n--) {
       a += *buf++;
       b += a;

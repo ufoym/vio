@@ -165,6 +165,19 @@ struct V {
     return map(a, b, [](U8 x, U8 y) { return u8(pcmpgth_s(as<S16>(x), as<S16>(y))); });
   }
 
+  // Unsigned bytes (PNG filters); avg_u8 rounds up.
+  static VIO_INLINE T sub_8(T a, T b) { return map(a, b, [](U8 x, U8 y) { return psubb_u(x, y); }); }
+  static VIO_INLINE T avg_u8(T a, T b) { return map(a, b, [](U8 x, U8 y) { return pavgb(x, y); }); }
+  static VIO_INLINE T min_u8(T a, T b) { return map(a, b, [](U8 x, U8 y) { return pminub(x, y); }); }
+  static VIO_INLINE T adds_u8(T a, T b) { return map(a, b, [](U8 x, U8 y) { return paddusb(x, y); }); }
+  static VIO_INLINE T subs_u8(T a, T b) { return map(a, b, [](U8 x, U8 y) { return psubusb(x, y); }); }
+  static VIO_INLINE T cmpeq_8(T a, T b) { return map(a, b, [](U8 x, U8 y) { return pcmpeqb_u(x, y); }); }
+  static VIO_INLINE T loadl_32(const void* p) {
+    std::uint32_t x;
+    std::memcpy(&x, p, 4);
+    return {from_q(x), U8{}};
+  }
+
   static VIO_INLINE T loadl_64(const void* p) {
     T v = zero();
     std::memcpy(&v.lo, p, 8);
