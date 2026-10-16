@@ -326,68 +326,54 @@ megapixels per second, each image timed as the fastest of 3 runs.
   mode (`png::Encoder`) is a different, single-pass algorithm, compared with
   the two fastest encoders at about the same file size: fpnge (x86 only; its
   AVX2 build in the AVX2 rows, its SSE4.1 build in the SSE2 rows) and
-  image-png's fast mode; in parentheses, the size of vio's files relative to
-  the other's.  Both modes
-  are lossless: they change file size and speed, never the pixels.
+  image-png's fast mode.  vio's files are 4–5% smaller than fpnge's and 4%
+  smaller than image-png's.  Both modes are lossless: they change file size
+  and speed, never the pixels.
 
 All libraries are built from source with the same compiler (image-png with
 rustc); the benchmark is `tests/png-bench/` (`png_bench.py run`, then
 `report` or `compare`; `.github/workflows/bench-png.yml` runs it on the
 GitHub-hosted runners, one job per platform and SIMD level).
 
+Compilers: GCC on Linux, MSVC on Windows, Apple Clang on macOS; the CPU
+gives the architecture (x86-64 or AArch64).
+
 PNG decoding:
 
-| Platform | CPU (compiler) | SIMD | vs libpng | vs image-png |
-| --- | --- | --- | ---: | ---: |
-| Linux x86-64 | AMD EPYC 7763 (GCC) | AVX2 | +172% | +23% |
-| Linux x86-64 | AMD EPYC 7763 (GCC) | SSE2 | +146% | +11% |
-| Linux x86-64 | AMD EPYC 7763 (GCC) | scalar | +101% | −19% |
-| Windows x86-64 | AMD EPYC 9V45 (MSVC) | AVX2 | +170% | +17% |
-| Windows x86-64 | AMD EPYC 9V45 (MSVC) | SSE2 | +151% | +7% |
-| Windows x86-64 | AMD EPYC 7763 (MSVC) | scalar | +109% | −23% |
-| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | AVX2 | +254% | +6% |
-| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | SSE2 | +228% | −8% |
-| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | scalar | +160% | −21% |
-| Linux AArch64 | Neoverse-N2 (GCC) | NEON | +138% | +11% |
-| Linux AArch64 | Neoverse-N2 (GCC) | scalar | +102% | −10% |
-| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | NEON | +174% | +22% |
-| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | scalar | +188% | −7% |
+| Platform, CPU       | SIMD   | vs libpng | vs image-png |
+| ------------------- | ------ | --------: | -----------: |
+| Linux, EPYC 7763    | AVX2   |     +172% |         +23% |
+| Linux, EPYC 7763    | SSE2   |     +146% |         +11% |
+| Linux, EPYC 7763    | scalar |     +101% |         −19% |
+| Windows, EPYC 9V45  | AVX2   |     +170% |         +17% |
+| Windows, EPYC 9V45  | SSE2   |     +151% |          +7% |
+| Windows, EPYC 7763  | scalar |     +109% |         −23% |
+| macOS, i7-8700B     | AVX2   |     +254% |          +6% |
+| macOS, i7-8700B     | SSE2   |     +228% |          −8% |
+| macOS, i7-8700B     | scalar |     +160% |         −21% |
+| Linux, Neoverse-N2  | NEON   |     +138% |         +11% |
+| Linux, Neoverse-N2  | scalar |     +102% |         −10% |
+| macOS, M1 (virtual) | NEON   |     +174% |         +22% |
+| macOS, M1 (virtual) | scalar |     +188% |          −7% |
 
-PNG encoding vs libpng (zlib mode, the same files as libpng's):
+PNG encoding: vio's zlib mode vs libpng at levels 1 and 6 (L1, L6); vio's
+fast mode vs fpnge and vs image-png's fast mode.
 
-| Platform | CPU (compiler) | SIMD | level 1 | level 6 |
-| --- | --- | --- | ---: | ---: |
-| Linux x86-64 | AMD EPYC 7763 (GCC) | AVX2 | +119% | +48% |
-| Linux x86-64 | AMD EPYC 7763 (GCC) | SSE2 | +108% | +44% |
-| Linux x86-64 | AMD EPYC 7763 (GCC) | scalar | +94% | +43% |
-| Windows x86-64 | AMD EPYC 9V45 (MSVC) | AVX2 | +124% | +51% |
-| Windows x86-64 | AMD EPYC 9V45 (MSVC) | SSE2 | +118% | +55% |
-| Windows x86-64 | AMD EPYC 7763 (MSVC) | scalar | +12% | +14% |
-| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | AVX2 | +151% | +56% |
-| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | SSE2 | +123% | +52% |
-| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | scalar | +38% | +51% |
-| Linux AArch64 | Neoverse-N2 (GCC) | NEON | +108% | +34% |
-| Linux AArch64 | Neoverse-N2 (GCC) | scalar | +88% | +30% |
-| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | NEON | +118% | +60% |
-| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | scalar | +79% | +46% |
-
-PNG encoding, fast mode:
-
-| Platform | CPU (compiler) | SIMD | fastest other encoder | vio vs it |
-| --- | --- | --- | --- | ---: |
-| Linux x86-64 | AMD EPYC 7763 (GCC) | AVX2 | fpnge | +29% (−5% size) |
-| Linux x86-64 | AMD EPYC 7763 (GCC) | SSE2 | image-png (fast) | +20% (−4% size) |
-| Linux x86-64 | AMD EPYC 7763 (GCC) | scalar | image-png (fast) | −9% (−4% size) |
-| Windows x86-64 | AMD EPYC 9V45 (MSVC) | AVX2 | image-png (fast) | +69% (−4% size) |
-| Windows x86-64 | AMD EPYC 9V45 (MSVC) | SSE2 | image-png (fast) | +11% (−4% size) |
-| Windows x86-64 | AMD EPYC 7763 (MSVC) | scalar | image-png (fast) | −80% (−4% size) |
-| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | AVX2 | fpnge | +26% (−5% size) |
-| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | SSE2 | image-png (fast) | −6% (−4% size) |
-| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | scalar | image-png (fast) | −51% (−4% size) |
-| Linux AArch64 | Neoverse-N2 (GCC) | NEON | image-png (fast) | +83% (−4% size) |
-| Linux AArch64 | Neoverse-N2 (GCC) | scalar | image-png (fast) | +22% (−4% size) |
-| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | NEON | image-png (fast) | +83% (−4% size) |
-| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | scalar | image-png (fast) | −15% (−4% size) |
+| Platform, CPU       | SIMD   | vs libpng L1 | vs libpng L6 | vs fpnge | vs image-png |
+| ------------------- | ------ | -----------: | -----------: | -------: | -----------: |
+| Linux, EPYC 7763    | AVX2   |        +119% |         +48% |     +29% |         +77% |
+| Linux, EPYC 7763    | SSE2   |        +108% |         +44% |     +27% |         +20% |
+| Linux, EPYC 7763    | scalar |         +94% |         +43% |        — |          −9% |
+| Windows, EPYC 9V45  | AVX2   |        +124% |         +51% |    +115% |         +69% |
+| Windows, EPYC 9V45  | SSE2   |        +118% |         +55% |     +85% |         +11% |
+| Windows, EPYC 7763  | scalar |         +12% |         +14% |        — |         −80% |
+| macOS, i7-8700B     | AVX2   |        +151% |         +56% |     +26% |        +115% |
+| macOS, i7-8700B     | SSE2   |        +123% |         +52% |     +32% |          −6% |
+| macOS, i7-8700B     | scalar |         +38% |         +51% |        — |         −51% |
+| Linux, Neoverse-N2  | NEON   |        +108% |         +34% |        — |         +83% |
+| Linux, Neoverse-N2  | scalar |         +88% |         +30% |        — |         +22% |
+| macOS, M1 (virtual) | NEON   |        +118% |         +60% |        — |         +83% |
+| macOS, M1 (virtual) | scalar |         +79% |         +46% |        — |         −15% |
 
 In the scalar rows image-png keeps its SIMD (its checksum crates', and the
 loops rustc vectorizes), so they compare vio without SIMD with image-png
