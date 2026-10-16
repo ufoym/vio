@@ -129,6 +129,28 @@ inline void unfilter_small(unsigned filter, std::uint8_t* dst, const std::uint8_
             }
         }
       } else {
+#if defined(__clang__) && (defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86))
+        // Clang on x86 vectorizes this form over the pixel's bytes: with
+        // t = 3c - a - b, the prediction is max(a, b) if t <= min(a, b),
+        // else min(a, b) if max(a, b) <= t, else c.
+        std::int16_t a16[B] = {}, c16[B] = {};
+        for (std::size_t i = 0; i < n; i += B) {
+          std::int16_t b16[B], r[B];
+          for (unsigned k = 0; k < B; k++) b16[k] = prev[i + k];
+          for (unsigned k = 0; k < B; k++) {
+            const std::int16_t t = static_cast<std::int16_t>(3 * c16[k] - (a16[k] + b16[k]));
+            const std::int16_t lo = std::min(a16[k], b16[k]), hi = std::max(a16[k], b16[k]);
+            const std::int16_t t0 = hi <= t ? lo : c16[k];
+            r[k] = static_cast<std::int16_t>((src[i + k] + (t <= lo ? hi : t0)) & 0xff);
+          }
+          for (unsigned k = 0; k < B; k++) {
+            dst[i + k] = static_cast<std::uint8_t>(r[k]);
+            a16[k] = r[k];
+            c16[k] = b16[k];
+          }
+        }
+        (void)c;
+#else
         for (std::size_t i = 0; i < n; i += B)
           for (unsigned k = 0; k < B; k++) {
             const int b = prev[i + k], cc = static_cast<int>(c[k]), ak = static_cast<int>(a[k]);
@@ -148,6 +170,7 @@ inline void unfilter_small(unsigned filter, std::uint8_t* dst, const std::uint8_
             dst[i + k] = static_cast<std::uint8_t>(a[k] = static_cast<unsigned>(src[i + k] + pred) & 0xff);
             c[k] = static_cast<unsigned>(b);
           }
+#endif
       }
       break;
   }
