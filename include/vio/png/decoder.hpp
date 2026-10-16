@@ -960,16 +960,29 @@ class Decoder {
     }
   }
 
-  // Reconstructs `rows` filtered rows of `rb` bytes stored at `buf` with
-  // their filter bytes (rows of rb + 1 bytes), moving them to rows of rb
-  // bytes at the same address.
-  static void unfilter_rows(std::uint8_t* buf, std::size_t rb, std::uint32_t rows, unsigned bpp) {
+  // Reconstructs `rows` filtered rows of `rb` bytes stored with their filter
+  // bytes (rows of rb + 1 bytes) at buf + gap, moving them to rows of rb
+  // bytes at buf.  With a gap of at least pair_gap(rb), rows are
+  // reconstructed two at a time where they can be (detail::unfilter_pair).
+  static std::size_t pair_gap(std::size_t rb) { return rb + 16; }
+  static void unfilter_rows(std::uint8_t* buf, std::size_t rb, std::uint32_t rows, unsigned bpp,
+                            std::size_t gap = 0) {
+    const bool pairs = gap >= pair_gap(rb);
     const std::uint8_t* prev = nullptr;
     for (std::uint32_t y = 0; y < rows; y++) {
-      const std::uint8_t* src = buf + y * (rb + 1);
+      const std::uint8_t* src = buf + gap + y * (rb + 1);
       std::uint8_t* dst = buf + y * rb;
       unsigned filter = src[0];
       if (filter > 4) fail("bad adaptive filter value");
+      if (pairs && prev && y + 1 < rows) {
+        const unsigned next = src[rb + 1];
+        if (detail::can_unfilter_pair(filter, next, bpp)) {
+          detail::unfilter_pair(filter, next, dst, src + 1, prev, dst + rb, src + rb + 2, rb, bpp);
+          prev = dst + rb;
+          y++;
+          continue;
+        }
+      }
       detail::unfilter_row(filter, dst, src + 1, prev, rb, bpp);
       prev = dst;
     }
@@ -1005,9 +1018,10 @@ class Decoder {
     constexpr std::size_t kSlack = 16;
     if (!h.interlace) {
       const std::size_t expected = static_cast<std::size_t>(height) * (rb + 1);
-      pixels.allocate(expected + kSlack);
-      inflate(idat, pixels.get(), expected);
-      unfilter_rows(pixels.get(), rb, height, bpp);
+      const std::size_t gap = height > 1 ? pair_gap(rb) : 0;
+      pixels.allocate(gap + expected + kSlack);
+      inflate(idat, pixels.get() + gap, expected);
+      unfilter_rows(pixels.get(), rb, height, bpp, gap);
       if (h.bit_depth == 16) swap16(pixels.get(), rb * height);
       if (const unsigned used = (static_cast<std::size_t>(width) * bits_pp) % 8) {
         // Clear the padding bits after the last sample of each row (only

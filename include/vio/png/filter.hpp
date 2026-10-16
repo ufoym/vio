@@ -94,6 +94,47 @@ inline void paeth_bounds_scalar(PaethBlock& t, const std::uint8_t* src, const st
   paeth_bounds_scalar(t, j, m, src + i0, prev + i0, prev + i0 + j - bpp);
 }
 
+// Two consecutive rows reconstructed together, the second a block behind
+// the first: the filters whose prediction depends on the pixel to the left
+// (Sub, Average, Paeth) are chains of dependent operations along a row, and
+// two rows make two independent chains.  r0 and r1 are the jobs of the two
+// rows (r1's row above being r0's row), n the bytes per row.
+template <class J0, class J1>
+VIO_INLINE void unfilter_pair_jobs(J0& r0, J1& r1, std::size_t n, unsigned bpp) {
+  constexpr std::size_t K = PaethBlock::kBytes;
+  std::uint8_t first[8];
+  const std::size_t m0 = std::min(K, n);
+  r0.prep(0, m0);
+  for (std::size_t j = 0; j < m0; j += bpp) r0.step(j);
+  std::size_t k = K;
+  for (; k < n; k += K) {
+    const std::size_t m = std::min(K, n - k);
+    r0.prep(k, m);
+    r1.prep(k - K, K);
+    std::size_t j = 0;
+    if (k == K) {  // (m >= bpp)
+      r0.step(k);
+      r1.step(0);
+      std::memcpy(first, r1.dst, bpp);
+      j = bpp;
+    }
+    for (; j < m; j += bpp) {
+      r0.step(k + j);
+      r1.step(k - K + j);
+    }
+    for (; j < K; j += bpp) r1.step(k - K + j);
+  }
+  if (n > K) {
+    // The first row's last pixel may have been stored with a byte too
+    // many (3-byte pixels through 4-byte stores) over the second row's
+    // first byte, which that row's first block wrote before: rewrite it.
+    std::memcpy(r1.dst, first, bpp);
+  }
+  const std::size_t last = k - K;
+  r1.prep(last, n - last);
+  for (std::size_t j = last; j < n; j += bpp) r1.step(j);
+}
+
 // Pixels of B bytes (B <= 8): the previous pixel stays in registers (B
 // independent chains) instead of being reloaded from the row just stored.
 template <unsigned B>
@@ -361,6 +402,105 @@ inline void unfilter_row_neon(unsigned filter, std::uint8_t* dst, const std::uin
   if (bpp <= 4) unfilter_px_neon<4>(filter, dst, src, prev, n, bpp);
   else unfilter_px_neon<8>(filter, dst, src, prev, n, bpp);
 }
+
+// Rows reconstructed in pairs (see unfilter_pair): one row of a pair as a
+// job prepared a block at a time (prep) and advanced a pixel at a time
+// (step, at byte i of the row).
+template <unsigned W>
+struct NeonRowJob {
+  using P = PxNeon<W>;
+  std::uint8_t* dst;
+  const std::uint8_t* src;
+  const std::uint8_t* prev;
+  unsigned bpp;
+  uint8x8_t a = vdup_n_u8(0);
+};
+template <unsigned W>
+struct NeonSubJob : NeonRowJob<W> {
+  VIO_INLINE void prep(std::size_t, std::size_t) {}
+  VIO_INLINE void step(std::size_t i) {
+    using P = PxNeon<W>;
+    this->a = vadd_u8(P::load(this->src + i), this->a);
+    P::store(this->dst + i, this->a, this->bpp);
+  }
+};
+template <unsigned W>
+struct NeonAvgJob : NeonRowJob<W> {
+  VIO_INLINE void prep(std::size_t, std::size_t) {}
+  VIO_INLINE void step(std::size_t i) {
+    using P = PxNeon<W>;
+    this->a = vadd_u8(P::load(this->src + i), vhadd_u8(this->a, P::load(this->prev + i)));
+    P::store(this->dst + i, this->a, this->bpp);
+  }
+};
+template <unsigned W>
+struct NeonPaethJob : NeonRowJob<W> {
+  PaethBlock t;
+  std::size_t base = 0;
+  VIO_INLINE void prep(std::size_t i0, std::size_t m) {
+    base = i0;
+    for (std::size_t j = 0; j < m; j += 16) {
+      const std::size_t i = i0 + j;
+      uint8x16_t c;
+      if (i >= this->bpp) {
+        c = vld1q_u8(this->prev + i - this->bpp);
+      } else {
+        std::uint8_t z[16] = {};
+        std::memcpy(z + this->bpp, this->prev, 16 - this->bpp);
+        c = vld1q_u8(z);
+      }
+      paeth_bounds_neon(t, j, vld1q_u8(this->src + i), vld1q_u8(this->prev + i), c);
+    }
+  }
+  VIO_INLINE void step(std::size_t i) {
+    using P = PxNeon<W>;
+    const std::size_t j = i - base;
+    const uint8x8_t a = this->a, xa = vadd_u8(P::load(this->src + i), a);
+    const uint8x8_t v1 = vbsl_u8(vcge_u8(a, P::load(t.l + j)), P::load(t.xl + j), xa);
+    const uint8x8_t v2 = vbsl_u8(vcgt_u8(a, P::load(t.u + j)), xa, P::load(t.xh + j));
+    this->a = vbsl_u8(vcge_u8(a, P::load(t.s + j)), v2, v1);
+    P::store(this->dst + i, this->a, this->bpp);
+  }
+};
+template <template <unsigned> class J, unsigned W>
+VIO_INLINE J<W> neon_job(std::uint8_t* dst, const std::uint8_t* src, const std::uint8_t* prev, unsigned bpp) {
+  J<W> j;
+  j.dst = dst;
+  j.src = src;
+  j.prev = prev;
+  j.bpp = bpp;
+  return j;
+}
+
+template <unsigned W, template <unsigned> class J0>
+VIO_INLINE void unfilter_pair_neon_(unsigned f1, std::uint8_t* d0, const std::uint8_t* s0, const std::uint8_t* p0,
+                                    std::uint8_t* d1, const std::uint8_t* s1, std::size_t n, unsigned bpp) {
+  J0<W> r0 = neon_job<J0, W>(d0, s0, p0, bpp);
+  switch (f1) {
+    case kFilterSub: {
+      auto r1 = neon_job<NeonSubJob, W>(d1, s1, d0, bpp);
+      return unfilter_pair_jobs(r0, r1, n, bpp);
+    }
+    case kFilterAvg: {
+      auto r1 = neon_job<NeonAvgJob, W>(d1, s1, d0, bpp);
+      return unfilter_pair_jobs(r0, r1, n, bpp);
+    }
+    default: {
+      auto r1 = neon_job<NeonPaethJob, W>(d1, s1, d0, bpp);
+      return unfilter_pair_jobs(r0, r1, n, bpp);
+    }
+  }
+}
+template <unsigned W>
+inline void unfilter_pair_neon(unsigned f0, unsigned f1, std::uint8_t* d0, const std::uint8_t* s0,
+                               const std::uint8_t* p0, std::uint8_t* d1, const std::uint8_t* s1, std::size_t n,
+                               unsigned bpp) {
+  switch (f0) {
+    case kFilterSub: return unfilter_pair_neon_<W, NeonSubJob>(f1, d0, s0, p0, d1, s1, n, bpp);
+    case kFilterAvg: return unfilter_pair_neon_<W, NeonAvgJob>(f1, d0, s0, p0, d1, s1, n, bpp);
+    default: return unfilter_pair_neon_<W, NeonPaethJob>(f1, d0, s0, p0, d1, s1, n, bpp);
+  }
+}
 #if VIO_SIMD_NEON_RUNTIME
 VIO_TARGET_POP()
 #endif
@@ -559,6 +699,7 @@ inline void unfilter_row_sse2(unsigned filter, std::uint8_t* dst, const std::uin
   if (bpp <= 4) unfilter_px_sse2<4>(filter, dst, src, prev, n, bpp);
   else unfilter_px_sse2<8>(filter, dst, src, prev, n, bpp);
 }
+
 VIO_TARGET_POP()
 #endif
 
@@ -655,6 +796,36 @@ inline void unfilter_row(unsigned filter, std::uint8_t* dst, const std::uint8_t*
   if (simd::has(simd::kGenericIsa)) return VecFilter<simd::GV>::unfilter_row(filter, dst, src, prev, n, bpp);
 #endif
   unfilter_row_scalar(filter, dst, src, prev, n, bpp);
+}
+
+// Whether unfilter_pair() reconstructs rows of bpp bytes per pixel whose
+// filter types are f0 and f1 (Sub, Average or Paeth, with a row above the
+// first).
+inline bool can_unfilter_pair(unsigned f0, unsigned f1, unsigned bpp) {
+  const auto chain = [](unsigned f) { return f == kFilterSub || f == kFilterAvg || f == kFilterPaeth; };
+  if (!chain(f0) || !chain(f1) || !(bpp == 3 || bpp == 4 || bpp == 6 || bpp == 8)) return false;
+  // (NEON only: no gain with SSE2, whose Paeth chain is short already, nor
+  // in the scalar code)
+#if VIO_SIMD_NEON
+  return simd::has(jpeg::simd::kNEON);
+#else
+  return false;
+#endif
+}
+
+// Reconstructs two consecutive rows (filter types f0 and f1, row bytes n,
+// dst/src as for unfilter_row, p0 the row above the first) when
+// can_unfilter_pair(f0, f1, bpp).  The second row's output may overlap
+// only bytes of the first row's input that precede the second row's own
+// position (it trails the first row by a block).
+inline void unfilter_pair(unsigned f0, unsigned f1, std::uint8_t* d0, const std::uint8_t* s0, const std::uint8_t* p0,
+                          std::uint8_t* d1, const std::uint8_t* s1, std::size_t n, unsigned bpp) {
+#if VIO_SIMD_NEON
+  if (bpp <= 4) unfilter_pair_neon<4>(f0, f1, d0, s0, p0, d1, s1, n, bpp);
+  else unfilter_pair_neon<8>(f0, f1, d0, s0, p0, d1, s1, n, bpp);
+#else
+  (void)f0, (void)f1, (void)d0, (void)s0, (void)p0, (void)d1, (void)s1, (void)n, (void)bpp;
+#endif
 }
 
 }  // namespace vio::png::detail
