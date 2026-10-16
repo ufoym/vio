@@ -762,6 +762,22 @@ struct BitWriter {
 // pointers; keeps 16 bytes of slack past its capacity for wide stores.
 class ByteBuffer {
  public:
+  ByteBuffer() = default;
+  ByteBuffer(ByteBuffer&& o) noexcept : data_(std::move(o.data_)), size_(o.size_), cap_(o.cap_) {
+    o.size_ = o.cap_ = 0;
+  }
+  ByteBuffer& operator=(ByteBuffer&& o) noexcept {
+    if (this != &o) {
+      release();
+      data_ = std::move(o.data_);
+      size_ = o.size_;
+      cap_ = o.cap_;
+      o.size_ = o.cap_ = 0;
+    }
+    return *this;
+  }
+  ~ByteBuffer() { release(); }
+
   std::uint8_t* data() { return data_.get(); }
   std::size_t size() const { return size_; }
   std::uint8_t* end() { return data_.get() + size_; }
@@ -771,6 +787,13 @@ class ByteBuffer {
   }
   void reserve(std::size_t n) {
     if (n <= cap_) return;
+    Cache& c = cache();
+    if (!data_ && c.data && c.cap >= n) {
+      data_ = std::move(c.data);
+      cap_ = c.cap;
+      c.cap = 0;
+      return;
+    }
     std::size_t cap = std::max(n, cap_ + cap_ / 2);
     std::unique_ptr<std::uint8_t[]> d(new std::uint8_t[cap + 16]);
     if (size_) std::memcpy(d.get(), data_.get(), size_);
@@ -795,6 +818,27 @@ class ByteBuffer {
   std::vector<std::uint8_t> to_vector() const { return {data_.get(), data_.get() + size_}; }
 
  private:
+  // The storage of the last buffer released on a thread is kept for the
+  // next one there (allocating megabytes per image costs a page fault per
+  // 4 KiB page on systems whose allocator returns large blocks to the OS).
+  struct Cache {
+    std::unique_ptr<std::uint8_t[]> data;
+    std::size_t cap = 0;
+  };
+  static Cache& cache() {
+    thread_local Cache c;
+    return c;
+  }
+  void release() {
+    Cache& c = cache();
+    if (data_ && cap_ <= (std::size_t(64) << 20) && cap_ > c.cap) {
+      c.data = std::move(data_);
+      c.cap = cap_;
+    }
+    data_.reset();
+    size_ = cap_ = 0;
+  }
+
   std::unique_ptr<std::uint8_t[]> data_;
   std::size_t size_ = 0, cap_ = 0;
 };
