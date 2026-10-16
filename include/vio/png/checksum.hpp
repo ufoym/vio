@@ -364,33 +364,16 @@ VIO_TARGET_POP()
 #endif
 
 // Adler-32 sums of whole 32-byte blocks without vector intrinsics (nblocks
-// <= 173, as within NMAX bytes), in forms that compilers vectorize.
+// <= 173, as within NMAX bytes).
 inline void adler32_blocks(std::uint32_t& s1, std::uint32_t& s2, const std::uint8_t* p, std::size_t nblocks) {
-#if defined(__clang__) && (defined(__aarch64__) || defined(_M_ARM64))
-  // The n bytes add n * s1 + sum((n - j) * p[j]) to s2: a sum and a sum
-  // weighted by the index (within 32 bits for n <= NMAX).
-  const std::uint32_t n = static_cast<std::uint32_t>(nblocks * 32);
-  std::uint32_t sum = 0, indexed = 0;
-  for (std::uint32_t j = 0; j < n; j++) {
-    sum += p[j];
-    indexed += j * p[j];
-  }
-  s2 += n * s1 + n * sum - indexed;
-  s1 += sum;
-#else
-  // Per byte position k of the blocks, the sum c[k] of its bytes and the
-  // sum t[k] of those sums at each block's start: s2 gains
-  // 32 * nblocks * s1 + 32 * sum(t) + sum((32 - k) * c[k]).
+#if defined(__GNUC__) && !defined(__clang__)
+  // In a form GCC vectorizes: per byte position k of the blocks, the sum
+  // c[k] of its bytes and the sum t[k] of those sums at each block's start;
+  // s2 gains 32 * nblocks * s1 + 32 * sum(t) + sum((32 - k) * c[k]).
   std::uint16_t c[32] = {};
   std::uint32_t t[32] = {};
   for (std::size_t i = 0; i < nblocks; i++, p += 32) {
-#if defined(__clang__)
-#pragma clang loop vectorize(enable) unroll(disable)
-#endif
     for (unsigned k = 0; k < 32; k++) t[k] += c[k];
-#if defined(__clang__)
-#pragma clang loop vectorize(enable) unroll(disable)
-#endif
     for (unsigned k = 0; k < 32; k++) c[k] = static_cast<std::uint16_t>(c[k] + p[k]);
   }
   std::uint32_t sum = 0, weighted = 0, tsum = 0;
@@ -401,6 +384,53 @@ inline void adler32_blocks(std::uint32_t& s1, std::uint32_t& s2, const std::uint
   }
   s2 += static_cast<std::uint32_t>(nblocks * 32) * s1 + 32 * tsum + weighted;
   s1 += sum;
+#elif defined(__clang__) && (defined(__aarch64__) || defined(_M_ARM64))
+  // The n bytes add n * s1 + sum((n - j) * p[j]) to s2: a sum and a sum
+  // weighted by the index (within 32 bits for n <= NMAX), which Clang
+  // vectorizes well on AArch64.
+  const std::uint32_t n = static_cast<std::uint32_t>(nblocks * 32);
+  std::uint32_t sum = 0, indexed = 0;
+  for (std::uint32_t j = 0; j < n; j++) {
+    sum += p[j];
+    indexed += j * p[j];
+  }
+  s2 += n * s1 + n * sum - indexed;
+  s1 += sum;
+#else
+  // 8 bytes per 64-bit word (MSVC and Clang on x86 vectorize the forms
+  // above poorly): the running sum of the words' byte sums (each
+  // summed by a multiply) and its total over the words, which counts each
+  // word's bytes once per word from it to the end, and per byte position k
+  // of the words the sum of its bytes (in 16-bit lanes, even and odd
+  // positions apart), which corrects for k: the n bytes add
+  // n * s1 + 8 * total - sum(k * column[k]) to s2.
+  constexpr std::uint64_t kLow = 0x00ff00ff00ff00ffu, kLanes = 0x0001000100010001u;
+  const std::size_t nwords = nblocks * 4;
+  std::uint64_t run = 0, total = 0, column[8] = {};
+  for (std::size_t j0 = 0; j0 < nwords; j0 += 256) {  // 16-bit lanes for 257 words
+    const std::size_t j1 = std::min(nwords, j0 + 256);
+    std::uint64_t even = 0, odd = 0;
+    for (std::size_t j = j0; j < j1; j++) {
+      std::uint64_t w;
+      std::memcpy(&w, p + 8 * j, 8);
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+      w = __builtin_bswap64(w);
+#endif
+      const std::uint64_t e = w & kLow, o = (w >> 8) & kLow;
+      even += e;
+      odd += o;
+      run += ((e + o) * kLanes) >> 48;
+      total += run;
+    }
+    for (unsigned k = 0; k < 4; k++) {
+      column[2 * k] += (even >> (16 * k)) & 0xffff;
+      column[2 * k + 1] += (odd >> (16 * k)) & 0xffff;
+    }
+  }
+  std::uint64_t by_k = 0;
+  for (unsigned k = 1; k < 8; k++) by_k += k * column[k];
+  s2 += static_cast<std::uint32_t>(nwords * 8 * s1 + 8 * total - by_k);
+  s1 += static_cast<std::uint32_t>(run);
 #endif
 }
 
