@@ -444,6 +444,7 @@ machine, geometric mean over the corpus or the stated subset).
 - NEON reconstruction of consecutive Sub, Average and Paeth rows in pairs, the second a 192-byte block behind the first, two independent dependency chains instead of one; data inflated a row past the image's start so the second row never overwrites input still to be read ([87ff9cd](https://github.com/ufoym/vio/commit/87ff9cd)): decoding +4% (Apple M4), +8% (Cortex-X925, GCC), 1/8 of the corpus.
 - SSE2, AVX2 and generic Paeth predictors in fewer operations: the sign test from the saturated differences already computed, both selections from one minimum ([8f0da1f](https://github.com/ufoym/vio/commit/8f0da1f)): encoding +3% with AVX2, +3–6% with SSE2 (Core Ultra 9 285K, MSVC and clang-cl, 1/8 of the corpus); files unchanged.
 - Inflate fast loop compiled a second time with BMI2 shifts (GCC, Clang; chosen at run time, not at the SSE2 level), one micro-op each where shifts by cl take up to three on the lookup chain ([1b7636d](https://github.com/ufoym/vio/commit/1b7636d)): decoding +1% (Core Ultra 9 285K, clang-cl, 1/8 of the corpus).
+- MSVC scalar filter selection storing the Paeth residuals as it costs them, so rows taking Paeth are not filtered again ([801d2b2](https://github.com/ufoym/vio/commit/801d2b2)): encoding without SIMD +6–8% (Core Ultra 9 285K, MSVC, 1/8 of the corpus); files unchanged.
 
 ## Building and testing
 
