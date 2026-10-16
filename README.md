@@ -435,6 +435,7 @@ machine, geometric mean over the corpus or the stated subset).
 - Scalar Adler-32 in forms compilers vectorize without a horizontal sum per block, matches at distances 2 to 7 copied as a 16-byte pattern without NEON ([f35cffb](https://github.com/ufoym/vio/commit/f35cffb)): decoding without SIMD +10% (Apple M4), +5% (Cortex-X925, GCC), +8% (Core Ultra 9 285K, MSVC), 1/8 of the corpus.
 - Scalar filter selection on byte-typed residuals, which Clang vectorizes on 8-bit lanes instead of 16- and 32-bit ones ([4978392](https://github.com/ufoym/vio/commit/4978392)): encoding without SIMD +65% (Apple M4), +50% (Core Ultra 9 285K, clang-cl), 1/8 of the corpus; files unchanged.
 - Scalar filter selection and filtering without ?: and with operands through distinct restrict pointers, the form MSVC vectorizes ([77f90b0](https://github.com/ufoym/vio/commit/77f90b0)): encoding without SIMD +140% (Core Ultra 9 285K, MSVC, 1/8 of the corpus); files unchanged.
+- Huffman coder's bit writer copied field by field around zero runs, where MSVC's struct copy (a 16-byte load right after 8-byte stores) stalled store forwarding ([d4abf9f](https://github.com/ufoym/vio/commit/d4abf9f)): encoding +13% (AVX2), +14% (SSE2), +11% (without SIMD) on the Core Ultra 9 285K with MSVC, 1/8 of the corpus.
 
 ## Building and testing
 
