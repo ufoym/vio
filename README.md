@@ -6,8 +6,9 @@ lossless transforms, and SIMD acceleration for x86 (MMX through AVX2), Arm
 NEON, PowerPC AltiVec, Loongson MMI and RISC-V Vector.  It is faster than
 libjpeg-turbo in every configuration measured.  The PNG codec, with its own
 DEFLATE implementation, decodes faster than image-png and encodes faster
-than fpnge, and faster than libpng at the same compression, with
-byte-identical files in its zlib mode (see [Performance](#performance)).
+than fpnge and image-png with SIMD, and faster than libpng at the same
+compression at every SIMD level, with byte-identical files in its zlib mode
+(see [Performance](#performance)).
 
 ## Using the library
 
@@ -294,84 +295,122 @@ Throughput gain of each change over the build before it (A/B on the same machine
 Single-threaded throughput on the 2848 images of the
 [QOI benchmark corpus](https://qoiformat.org/benchmark/) (icons, photos,
 textures, screenshots of games and web pages), the corpus image-png's own
-benchmark uses, compared with the fastest decoder and encoder available and
-with libpng 1.6.59 (with zlib 1.3.2, its SIMD filter code enabled as in its
-default build), the most widely used PNG library.  Each figure is the
-geometric mean over the images of the speed-up in megapixels per second,
-each image timed as the fastest of 3 runs.
+benchmark uses.  vio is compared at each SIMD level with the same libraries
+on every platform, one column each: libpng 1.6.59 with zlib 1.3.2, the most
+widely used combination, and the fastest decoder and encoders measured.
+Each figure is the geometric mean over the images of the speed-up in
+megapixels per second, each image timed as the fastest of 3 runs.
 
+- vio's SIMD level is set with the `JSIMD_*` variables; libpng (whose SIMD
+  code only unfilters rows when decoding; zlib has none) is built without
+  it for the scalar rows.
+- The fastest decoder measured is image-png 0.18.1, ahead of Wuffs 0.4,
+  zune-png 0.5 and libspng or libpng with zlib-ng 2.3.  It has no build
+  without SIMD (the CRC-32 and Adler-32 crates it uses choose SIMD code at
+  run time), so its default build appears in every row.
 - Decoding produces the image's own sample layout (`png::Decoder`; image-png
-  0.18.1 with `Transformations::IDENTITY`, built by `cargo --release`;
-  libpng without transformations).  Checksums are verified, except Adler-32
-  by image-png, which skips it by default.
+  with `Transformations::IDENTITY`, built by `cargo --release`; libpng
+  without transformations).  Checksums are verified, except Adler-32 by
+  image-png, which skips it by default.
 - Encoding starts from 8-bit RGB or RGBA.  Against libpng, vio runs in its
   zlib mode (`Encoder::Mode::kZlib`), whose files are byte for byte libpng's
-  at the same zlib level, so the figures are speed alone, as for JPEG:
-  levels 1 and 6 (6 being libpng's default; adaptive filters in both).
-  vio's default fast mode (`png::Encoder`) is a different, single-pass
-  algorithm, compared with the fastest encoders at about the same file size:
-  fpnge at its default level (x86 only) and image-png's fast mode; in
-  parentheses, the size of vio's files relative to the other's.  Both modes
+  at the same zlib level, so the figures are speed alone: levels 1 and 6 (6
+  being libpng's default; adaptive filters in both).  vio's default fast
+  mode (`png::Encoder`) is a different, single-pass algorithm, compared with
+  the two fastest encoders at about the same file size: fpnge (x86 only; its
+  AVX2 build in the AVX2 rows, its SSE4.1 build in the SSE2 rows) and
+  image-png's fast mode; in parentheses, the size of vio's files relative to
+  the other's.  Both modes
   are lossless: they change file size and speed, never the pixels.
 
-All libraries are built from source with the same compiler; the benchmark
-is `tests/png-bench/` (`png_bench.py run`, then `report` or `compare`;
-`.github/workflows/bench-png.yml` runs it on the GitHub-hosted runners).
+All libraries are built from source with the same compiler (image-png with
+rustc); the benchmark is `tests/png-bench/` (`png_bench.py run`, then
+`report` or `compare`; `.github/workflows/bench-png.yml` runs it on the
+GitHub-hosted runners, one job per platform and SIMD level).
 
 PNG decoding:
 
-| Platform | CPU (compiler) | vs image-png | vs libpng |
-| --- | --- | ---: | ---: |
-| Linux x86-64 | AMD EPYC 7763 (GCC) | +24% | +174% |
-| Windows x86-64 | AMD EPYC 9V74 (MSVC) | +17% | +195% |
-| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | −1% | +219% |
-| Linux AArch64 | Neoverse-N2 (GCC) | +11% | +139% |
-| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | +15% | +167% |
+| Platform | CPU (compiler) | SIMD | vs libpng | vs image-png |
+| --- | --- | --- | ---: | ---: |
+| Linux x86-64 | AMD EPYC 7763 (GCC) | AVX2 | +172% | +23% |
+| Linux x86-64 | AMD EPYC 7763 (GCC) | SSE2 | +146% | +11% |
+| Linux x86-64 | AMD EPYC 7763 (GCC) | scalar | +101% | −19% |
+| Windows x86-64 | AMD EPYC 9V45 (MSVC) | AVX2 | +170% | +17% |
+| Windows x86-64 | AMD EPYC 9V45 (MSVC) | SSE2 | +151% | +7% |
+| Windows x86-64 | AMD EPYC 7763 (MSVC) | scalar | +109% | −23% |
+| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | AVX2 | +254% | +6% |
+| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | SSE2 | +228% | −8% |
+| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | scalar | +160% | −21% |
+| Linux AArch64 | Neoverse-N2 (GCC) | NEON | +138% | +11% |
+| Linux AArch64 | Neoverse-N2 (GCC) | scalar | +102% | −10% |
+| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | NEON | +174% | +22% |
+| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | scalar | +188% | −7% |
 
 PNG encoding vs libpng (zlib mode, the same files as libpng's):
 
-| Platform | CPU (compiler) | vs libpng level 1 | vs libpng level 6 |
-| --- | --- | ---: | ---: |
-| Linux x86-64 | AMD EPYC 7763 (GCC) | +107% | +42% |
-| Windows x86-64 | AMD EPYC 9V74 (MSVC) | +109% | +45% |
-| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | +136% | +67% |
-| Linux AArch64 | Neoverse-N2 (GCC) | +100% | +41% |
-| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | +112% | +67% |
+| Platform | CPU (compiler) | SIMD | level 1 | level 6 |
+| --- | --- | --- | ---: | ---: |
+| Linux x86-64 | AMD EPYC 7763 (GCC) | AVX2 | +119% | +48% |
+| Linux x86-64 | AMD EPYC 7763 (GCC) | SSE2 | +108% | +44% |
+| Linux x86-64 | AMD EPYC 7763 (GCC) | scalar | +94% | +43% |
+| Windows x86-64 | AMD EPYC 9V45 (MSVC) | AVX2 | +124% | +51% |
+| Windows x86-64 | AMD EPYC 9V45 (MSVC) | SSE2 | +118% | +55% |
+| Windows x86-64 | AMD EPYC 7763 (MSVC) | scalar | +12% | +14% |
+| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | AVX2 | +151% | +56% |
+| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | SSE2 | +123% | +52% |
+| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | scalar | +38% | +51% |
+| Linux AArch64 | Neoverse-N2 (GCC) | NEON | +108% | +34% |
+| Linux AArch64 | Neoverse-N2 (GCC) | scalar | +88% | +30% |
+| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | NEON | +118% | +60% |
+| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | scalar | +79% | +46% |
 
 PNG encoding, fast mode:
 
-| Platform | CPU (compiler) | vs fpnge | vs image-png (fast) |
-| --- | --- | ---: | ---: |
-| Linux x86-64 | AMD EPYC 7763 (GCC) | +25% (−5% size) | +73% (−4% size) |
-| Windows x86-64 | AMD EPYC 9V74 (MSVC) | +107% (−5% size) | +59% (−4% size) |
-| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | +31% (−5% size) | +91% (−4% size) |
-| Linux AArch64 | Neoverse-N2 (GCC) | — | +80% (−4% size) |
-| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | — | +73% (−4% size) |
+| Platform | CPU (compiler) | SIMD | fastest other encoder | vio vs it |
+| --- | --- | --- | --- | ---: |
+| Linux x86-64 | AMD EPYC 7763 (GCC) | AVX2 | fpnge | +29% (−5% size) |
+| Linux x86-64 | AMD EPYC 7763 (GCC) | SSE2 | image-png (fast) | +20% (−4% size) |
+| Linux x86-64 | AMD EPYC 7763 (GCC) | scalar | image-png (fast) | −9% (−4% size) |
+| Windows x86-64 | AMD EPYC 9V45 (MSVC) | AVX2 | image-png (fast) | +69% (−4% size) |
+| Windows x86-64 | AMD EPYC 9V45 (MSVC) | SSE2 | image-png (fast) | +11% (−4% size) |
+| Windows x86-64 | AMD EPYC 7763 (MSVC) | scalar | image-png (fast) | −80% (−4% size) |
+| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | AVX2 | fpnge | +26% (−5% size) |
+| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | SSE2 | image-png (fast) | −6% (−4% size) |
+| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | scalar | image-png (fast) | −51% (−4% size) |
+| Linux AArch64 | Neoverse-N2 (GCC) | NEON | image-png (fast) | +83% (−4% size) |
+| Linux AArch64 | Neoverse-N2 (GCC) | scalar | image-png (fast) | +22% (−4% size) |
+| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | NEON | image-png (fast) | +83% (−4% size) |
+| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | scalar | image-png (fast) | −15% (−4% size) |
 
+In the scalar rows image-png keeps its SIMD (its checksum crates', and the
+loops rustc vectorizes), so they compare vio without SIMD with image-png
+with it; libpng is the like-for-like comparison there.  MSVC, unlike GCC and
+Clang, does not vectorize vio's scalar loops, hence the Windows scalar row.
 The fast mode's files are also about the size of libpng's at level 1 (1%
-smaller), which it writes 11 to 17 times as fast.
+smaller), which it writes 11 to 18 times as fast with AVX2 or NEON.
 
-By image category, number of images in parentheses (Linux x86-64, AMD EPYC 7763, GCC):
+By image category, number of images in parentheses (Linux x86-64, AMD EPYC 7763, GCC, AVX2):
 
 | Category | dec. vs image-png | dec. vs libpng | zlib mode vs libpng level 6 | fast mode vs fpnge |
 | --- | ---: | ---: | ---: | ---: |
-| icon_512 (213) | +27% | +292% | +77% | +16% (−16% size) |
-| icon_64 (213) | +30% | +196% | +50% | +72% (−17% size) |
-| photo_kodak (24) | +27% | +130% | +21% | +7% (−3% size) |
-| photo_tecnick (100) | +24% | +175% | +28% | +2% (−2% size) |
-| photo_wikipedia (49) | +25% | +135% | +26% | +8% (−3% size) |
-| pngimg (187) | +24% | +226% | +51% | +11% (−4% size) |
-| screenshot_game (618) | +29% | +200% | +59% | +7% (−6% size) |
-| screenshot_web (14) | +14% | +130% | +63% | +33% (−11% size) |
-| textures_photo (20) | +27% | +114% | +19% | +19% (−8% size) |
-| textures_pk (1002) | +18% | +135% | +31% | +45% (−8% size) |
-| textures_pk01 (113) | +24% | +182% | +26% | +8% (−3% size) |
-| textures_pk02 (235) | +25% | +153% | +26% | +4% (−3% size) |
-| textures_plants (60) | +23% | +206% | +40% | +13% (−3% size) |
+| icon_512 (213) | +29% | +289% | +93% | +14% (−16% size) |
+| icon_64 (213) | +27% | +190% | +55% | +65% (−17% size) |
+| photo_kodak (24) | +24% | +122% | +22% | +13% (−3% size) |
+| photo_tecnick (100) | +17% | +160% | +30% | +11% (−2% size) |
+| photo_wikipedia (49) | +25% | +132% | +29% | +16% (−3% size) |
+| pngimg (187) | +24% | +224% | +58% | +12% (−4% size) |
+| screenshot_game (618) | +29% | +198% | +70% | +12% (−6% size) |
+| screenshot_web (14) | +25% | +150% | +80% | +32% (−11% size) |
+| textures_photo (20) | +24% | +111% | +19% | +31% (−8% size) |
+| textures_pk (1002) | +17% | +135% | +35% | +52% (−8% size) |
+| textures_pk01 (113) | +23% | +178% | +29% | +12% (−3% size) |
+| textures_pk02 (235) | +24% | +150% | +26% | +11% (−3% size) |
+| textures_plants (60) | +21% | +201% | +45% | +16% (−3% size) |
 
-Measured at [df87ff9](https://github.com/ufoym/vio/commit/df87ff9) on the
-GitHub-hosted runners (one run; the runners' CPUs vary from run to run).
-fpnge has no Arm code; image-png's fast mode is its fpnge-inspired encoder.
+Measured at [f61b56d](https://github.com/ufoym/vio/commit/f61b56d) on the
+GitHub-hosted runners (one run; one job per platform and SIMD level, whose
+CPUs vary from job to job).  fpnge has no Arm code; image-png's fast mode is
+its fpnge-inspired encoder.
 
 ### PNG optimization log
 
@@ -393,6 +432,9 @@ machine, geometric mean over the corpus or the stated subset).
 - zlib mode: rows filtered with the fast mode's SIMD filter selection, files unchanged ([fb6801e](https://github.com/ufoym/vio/commit/fb6801e)): zlib-mode encoding +68% at level 6, +260% at level 1 (Apple M4, 1/8 of the corpus).
 - zlib mode: matches compared 8 bytes at a time, codes written 32 bits at a time, output still identical to zlib's ([df87ff9](https://github.com/ufoym/vio/commit/df87ff9)): zlib-mode encoding +23% at level 6, +18% at level 1 (Apple M4, 1/8 of the corpus).
 - zlib mode: block symbols in their own 16-bit buffer instead of bytes overlaid on the output buffer, which the compiler had to assume aliased the deflater's state ([f3cfc60](https://github.com/ufoym/vio/commit/f3cfc60)): zlib-mode encoding +7% at level 1, +2% at level 6 (Apple M4, 1/8 of the corpus).
+- Scalar paths: 3- to 8-byte pixels unfiltered with the previous pixel in registers, Adler-32 and filter selection in loops compilers vectorize (8-bit Paeth arithmetic), braided CRC-32 ([1a7f107](https://github.com/ufoym/vio/commit/1a7f107)): without SIMD, decoding +43% and encoding +75% (Apple M4), +36% and +116% (Cortex-X925, GCC).
+- Int arithmetic in MSVC's scalar filter selection, which MSVC does not vectorize ([a6fc885](https://github.com/ufoym/vio/commit/a6fc885)): encoding without SIMD +14% over the version before the scalar rewrite (Core Ultra 9 285K, MSVC).
+- Generic Adler-32 kernel with SSE2 on x86-64 without SSSE3 ([bd4da24](https://github.com/ufoym/vio/commit/bd4da24)): Adler-32 46.5 GB/s instead of 5.7 (Core Ultra 9 285K, MSVC, JSIMD_FORCESSE2).
 
 ## Building and testing
 
