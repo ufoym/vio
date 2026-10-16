@@ -134,11 +134,11 @@ inline void filter_costs_int(const std::uint8_t* VIO_RESTRICT x, const std::uint
 }
 #endif
 
-#if !defined(VIO_PNG_SCALAR_I16) && !VIO_PNG_SCALAR_INT && \
+#if !defined(VIO_PNG_SCALAR_I16) && !VIO_PNG_SCALAR_INT && defined(__clang__) && \
     (defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86))
 // On x86, whose SSE2 has signed 16-bit minimum, maximum and comparisons but
-// no unsigned 8-bit comparisons, the scalar code below is vectorized best
-// on 16-bit values.
+// no unsigned 8-bit comparisons, Clang vectorizes the scalar code below
+// best on 16-bit values.
 #define VIO_PNG_SCALAR_I16 1
 #endif
 #if VIO_PNG_SCALAR_I16
