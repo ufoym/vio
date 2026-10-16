@@ -745,6 +745,13 @@ struct BitWriter {
   void align() {
     if (n) put(0, 8 - n);
   }
+  // Field by field: MSVC copies the struct with a 16-byte load right after
+  // 8-byte stores of the fields, which stalls store forwarding.
+  VIO_INLINE void copy_to(BitWriter& o) const {
+    o.out = out;
+    o.buf = buf;
+    o.n = n;
+  }
 };
 
 // ---------------------------------------------------------------------------
@@ -1078,9 +1085,9 @@ inline std::size_t encode_bytes_scalar(BitWriter& writer, const CodeTables& t,
 #else
     unsigned lead = ctz64(v) / 8;
 #endif
-    writer = w;
+    w.copy_to(writer);
     emit_run(writer, t, run + lead);
-    w = writer;
+    writer.copy_to(w);
     run = 0;
     emit_literals(w, t, p + i + lead, 8 - lead);
   }
@@ -1089,15 +1096,15 @@ inline std::size_t encode_bytes_scalar(BitWriter& writer, const CodeTables& t,
       run++;
     } else {
       if (run) {
-        writer = w;
+        w.copy_to(writer);
         emit_run(writer, t, run);
-        w = writer;
+        writer.copy_to(w);
       }
       run = 0;
       w.put(t.lit[p[i]] & 0xffff, t.lit[p[i]] >> 16);
     }
   }
-  writer = w;
+  w.copy_to(writer);
   return run;
 }
 
@@ -1184,9 +1191,9 @@ inline std::size_t encode_bytes_avx2(BitWriter& writer, const CodeTables& t,
     unsigned first = 0;
     if (run) {
       first = ctz32(~zero);
-      writer = w;
+      w.copy_to(writer);
       emit_run(writer, t, run + first);
-      w = writer;
+      writer.copy_to(w);
       run = 0;
     }
     unsigned end = avail >= 32 ? 32 : static_cast<unsigned>(avail);
@@ -1216,7 +1223,7 @@ inline std::size_t encode_bytes_avx2(BitWriter& writer, const CodeTables& t,
     w.put(c[1][2], static_cast<unsigned>(l[1][2]));
     w.put(c[1][3], static_cast<unsigned>(l[1][3]));
   }
-  writer = w;
+  w.copy_to(writer);
   return run;
 }
 VIO_TARGET_POP()
