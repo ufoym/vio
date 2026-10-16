@@ -432,6 +432,7 @@ machine, geometric mean over the corpus or the stated subset).
 - Int arithmetic in MSVC's scalar filter selection, which MSVC does not vectorize ([a6fc885](https://github.com/ufoym/vio/commit/a6fc885)): encoding without SIMD +14% over the version before the scalar rewrite (Core Ultra 9 285K, MSVC).
 - Generic Adler-32 kernel with SSE2 on x86-64 without SSSE3 ([bd4da24](https://github.com/ufoym/vio/commit/bd4da24)): Adler-32 46.5 GB/s instead of 5.7 (Core Ultra 9 285K, MSVC, JSIMD_FORCESSE2).
 - Paeth unfiltering with the ranges of a that predict b or c precomputed 16 bytes at a time, leaving three comparisons and two selections per pixel on the dependency chain ([f582411](https://github.com/ufoym/vio/commit/f582411)): decoding +15% (Apple M4), +9% (Cortex-X925, GCC), +3% with SSE4.1 and +5% with SSE2 (Core Ultra 9 285K, MSVC), 1/8 of the corpus.
+- Scalar Adler-32 in forms compilers vectorize without a horizontal sum per block, matches at distances 2 to 7 copied as a 16-byte pattern without NEON ([f35cffb](https://github.com/ufoym/vio/commit/f35cffb)): decoding without SIMD +10% (Apple M4), +5% (Cortex-X925, GCC), +8% (Core Ultra 9 285K, MSVC), 1/8 of the corpus.
 
 ## Building and testing
 
