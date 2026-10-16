@@ -538,6 +538,14 @@ class Encoder {
     } while (n);
   }
 
+  // Whether 16-bit samples (in host byte order) need swapping into PNG's
+  // big-endian order.
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+  static constexpr bool kSwap16 = false;
+#else
+  static constexpr bool kSwap16 = true;
+#endif
+
   // Copies a row into PNG byte order.
   static void load_row(std::uint8_t* dst, const std::uint8_t* src, std::size_t rb, bool swap) {
     if (!swap) {
@@ -555,7 +563,7 @@ class Encoder {
   std::vector<detail::FastEncoder::Segment> segments(const std::uint8_t* pixels, std::size_t stride,
                                                      std::uint32_t w, std::uint32_t h) const {
     using namespace detail;
-    const bool swap = header.bit_depth == 16;
+    const bool swap = kSwap16 && header.bit_depth == 16;
     const std::size_t rb = row_bytes_for(w);
     std::vector<FastEncoder::Segment> segs;
     if (!header.interlace) {
@@ -690,7 +698,7 @@ class Encoder {
     deflater_->avail_out = static_cast<unsigned>(zbuf_.size());
   }
   void stream_row(const std::uint8_t* row) {
-    load_row(row_filter_.row(), row, row_bytes_, header.bit_depth == 16);
+    load_row(row_filter_.row(), row, row_bytes_, kSwap16 && header.bit_depth == 16);
     row_filter_.filter(filtered_.data(), row_bytes_);
     auto& z = *deflater_;
     z.next_in = filtered_.data();
