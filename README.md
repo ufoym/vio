@@ -447,6 +447,7 @@ machine, geometric mean over the corpus or the stated subset).
 - MSVC scalar filter selection storing the Paeth residuals as it costs them, so rows taking Paeth are not filtered again ([801d2b2](https://github.com/ufoym/vio/commit/801d2b2)): encoding without SIMD +6–8% (Core Ultra 9 285K, MSVC, 1/8 of the corpus); files unchanged.
 - NEON, SSE2 and AVX2 filter selection storing the Paeth residuals as it costs them, so rows taking Paeth are not filtered again ([75e6e3f](https://github.com/ufoym/vio/commit/75e6e3f)): encoding +2–4% (Apple M4), +3% (Cortex-X925, GCC), +4% with AVX2 and +6% with SSE2 (Core Ultra 9 285K, MSVC), 1/8 of the corpus; files unchanged.
 - Consecutive Paeth rows in pairs, the second one pixel behind, in GCC's scalar code on AArch64 ([ce86b25](https://github.com/ufoym/vio/commit/ce86b25)): decoding without SIMD +2% (Cortex-X925, GCC, 1/8 of the corpus).
+- Scalar Paeth of 3- and 4-byte pixels by minimum, maximum and two comparisons with 3c - a - b for MSVC and Clang ([faf21b4](https://github.com/ufoym/vio/commit/faf21b4)): decoding without SIMD +12% (Core Ultra 9 285K, MSVC), +3% (Apple M4), 1/8 of the corpus.
 
 ## Building and testing
 
