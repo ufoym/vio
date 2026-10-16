@@ -70,9 +70,12 @@ inline unsigned pick_filter(const std::uint64_t* cost, unsigned allowed) {
 // without branches, so that GCC and Clang vectorize the loops below (8-bit
 // arithmetic as in the vector kernels: pc is |pa - pb| when a - c and b - c
 // differ in sign, else pa + pb saturated).  MSVC does not vectorize them,
-// and its scalar code is faster with int arithmetic.
-#if defined(_MSC_VER) && !defined(__clang__)
+// and its scalar code is faster with int arithmetic (VIO_PNG_SCALAR_INT=1
+// tests that form with other compilers).
+#if defined(_MSC_VER) && !defined(__clang__) && !defined(VIO_PNG_SCALAR_INT)
 #define VIO_PNG_SCALAR_INT 1
+#endif
+#if VIO_PNG_SCALAR_INT
 VIO_INLINE std::uint8_t paeth_select(std::uint8_t a, std::uint8_t b, std::uint8_t c) {
   const int pa = std::abs(int{b} - int{c}), pb = std::abs(int{a} - int{c}), pc = std::abs(int{a} + int{b} - 2 * int{c});
   const std::uint8_t bc = pb <= pc ? b : c;
