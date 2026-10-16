@@ -433,6 +433,7 @@ machine, geometric mean over the corpus or the stated subset).
 - Generic Adler-32 kernel with SSE2 on x86-64 without SSSE3 ([bd4da24](https://github.com/ufoym/vio/commit/bd4da24)): Adler-32 46.5 GB/s instead of 5.7 (Core Ultra 9 285K, MSVC, JSIMD_FORCESSE2).
 - Paeth unfiltering with the ranges of a that predict b or c precomputed 16 bytes at a time, leaving three comparisons and two selections per pixel on the dependency chain ([f582411](https://github.com/ufoym/vio/commit/f582411)): decoding +15% (Apple M4), +9% (Cortex-X925, GCC), +3% with SSE4.1 and +5% with SSE2 (Core Ultra 9 285K, MSVC), 1/8 of the corpus.
 - Scalar Adler-32 in forms compilers vectorize without a horizontal sum per block, matches at distances 2 to 7 copied as a 16-byte pattern without NEON ([f35cffb](https://github.com/ufoym/vio/commit/f35cffb)): decoding without SIMD +10% (Apple M4), +5% (Cortex-X925, GCC), +8% (Core Ultra 9 285K, MSVC), 1/8 of the corpus.
+- Scalar filter selection on byte-typed residuals, which Clang vectorizes on 8-bit lanes instead of 16- and 32-bit ones ([4978392](https://github.com/ufoym/vio/commit/4978392)): encoding without SIMD +65% (Apple M4), +50% (Core Ultra 9 285K, clang-cl), 1/8 of the corpus; files unchanged.
 
 ## Building and testing
 
