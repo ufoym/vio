@@ -191,23 +191,31 @@ inline void unfilter_small(unsigned filter, std::uint8_t* dst, const std::uint8_
           }
         }
         (void)c;
+#elif defined(_MSC_VER) || defined(__clang__)
+        // with t = 3c - a - b: max(a, b) if t <= min(a, b), else min(a, b)
+        // if max(a, b) <= t, else c (fewer operations; conditional moves)
+        for (std::size_t i = 0; i < n; i += B)
+          for (unsigned k = 0; k < B; k++) {
+            const int b = prev[i + k], cc = static_cast<int>(c[k]), ak = static_cast<int>(a[k]);
+            const int t = 3 * cc - b - ak;
+            const int lo = ak < b ? ak : b, hi = ak < b ? b : ak;
+            const int t0 = hi <= t ? lo : cc;
+            const int pred = t <= lo ? hi : t0;
+            dst[i + k] = static_cast<std::uint8_t>(a[k] = static_cast<unsigned>(src[i + k] + pred) & 0xff);
+            c[k] = static_cast<unsigned>(b);
+          }
 #else
         for (std::size_t i = 0; i < n; i += B)
           for (unsigned k = 0; k < B; k++) {
             const int b = prev[i + k], cc = static_cast<int>(c[k]), ak = static_cast<int>(a[k]);
             const int x = ak - cc, e = b - cc, y = x + e;
-#if !defined(__clang__)
-            // explicitly branchless (GCC and MSVC branch otherwise; the choice
-            // is data-dependent and unpredictable)
+            // explicitly branchless (GCC branches otherwise; the choice is
+            // data-dependent and unpredictable)
             const int pa = (e ^ (e >> 31)) - (e >> 31), pb = (x ^ (x >> 31)) - (x >> 31),
                       pc = (y ^ (y >> 31)) - (y >> 31);
             const int use_a = -static_cast<int>((pa <= pb) & (pa <= pc)), use_b = -static_cast<int>(pb <= pc);
             const int bc = cc ^ ((b ^ cc) & use_b);
             const int pred = bc ^ ((ak ^ bc) & use_a);
-#else
-            const int pa = e < 0 ? -e : e, pb = x < 0 ? -x : x, pc = y < 0 ? -y : y;
-            const int pred = pa <= pb && pa <= pc ? ak : pb <= pc ? b : cc;
-#endif
             dst[i + k] = static_cast<std::uint8_t>(a[k] = static_cast<unsigned>(src[i + k] + pred) & 0xff);
             c[k] = static_cast<unsigned>(b);
           }
