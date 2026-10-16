@@ -5,7 +5,7 @@
 // PNG code reads once per process.  Besides the hand-written x86 and NEON
 // kernels, the PowerPC AltiVec, Loongson MMI and RISC-V Vector back ends
 // instantiate generic kernels with the 128-bit vector interface `V` that the
-// JPEG code uses (vio/jpeg/simd/*/v.inc).
+// JPEG code uses (vio/jpeg/simd/*/v.inc), as does x86-64 SSE2 for Adler-32.
 #pragma once
 
 #include <cstddef>
@@ -26,6 +26,9 @@
 #if VIO_SIMD_MMI
 #include <loongson-mmiintrin.h>
 #endif
+#if VIO_SIMD_X86_64
+#include <immintrin.h>
+#endif
 
 namespace vio::png::simd {
 
@@ -36,6 +39,12 @@ inline const jpeg::simd::Support& support() {
 }
 inline bool has(unsigned isa) { return support().has(isa); }
 
+#if VIO_SIMD_X86_64
+// (SSE2, the x86-64 baseline: generic kernels where SSE2 is all there is)
+namespace sse2 {
+#include "../jpeg/simd/x86/v128.inc"
+}  // namespace sse2
+#endif
 #if VIO_SIMD_ALTIVEC
 namespace altivec {
 #include "../jpeg/simd/altivec/v.inc"

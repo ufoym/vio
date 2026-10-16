@@ -2,8 +2,8 @@
 //
 // crc32() folds 64-byte blocks with carry-less multiplication where the CPU
 // has it (x86 PCLMULQDQ, Arm PMULL), else uses the Arm CRC32 instructions or
-// braided slicing-by-8 tables.  adler32() sums 32-byte blocks with SSSE3, NEON or
-// the generic vector kernel.
+// braided slicing-by-8 tables.  adler32() sums 32-byte blocks with SSSE3,
+// NEON or the generic vector kernel (also SSE2 on x86-64 without SSSE3).
 #pragma once
 
 #include <algorithm>
@@ -438,7 +438,9 @@ inline std::uint32_t adler32(std::uint32_t adler, const std::uint8_t* buf, std::
   constexpr std::size_t NMAX = 5552;
   std::uint32_t a = adler & 0xffff, b = (adler >> 16) & 0xffff;
   using namespace jpeg::simd;
-#if VIO_SIMD_X86
+#if VIO_SIMD_X86_64
+  const bool ssse3 = simd::has(kSSSE3), vec = simd::has(kSSE2);
+#elif VIO_SIMD_X86
   const bool vec = simd::has(kSSSE3);
 #elif VIO_SIMD_NEON
   const bool vec = simd::has(kNEON);
@@ -454,7 +456,14 @@ inline std::uint32_t adler32(std::uint32_t adler, const std::uint8_t* buf, std::
     if (!vec) {
       detail::adler32_blocks(a, b, buf, blocks);
     } else {
-#if VIO_SIMD_X86
+#if VIO_SIMD_X86_64
+      if (ssse3) {
+        detail::adler32_ssse3(a, b, buf, blocks);
+      } else {
+        for (std::size_t k = 0; k < blocks; k += 128)
+          detail::adler32_vec<simd::sse2::V>(a, b, buf + k * 32, std::min<std::size_t>(128, blocks - k));
+      }
+#elif VIO_SIMD_X86
       detail::adler32_ssse3(a, b, buf, blocks);
 #elif VIO_SIMD_NEON
       detail::adler32_neon(a, b, buf, blocks);
