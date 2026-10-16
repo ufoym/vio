@@ -250,7 +250,8 @@ VIO_INLINE uint8x16_t abs_residual_neon(uint8x16_t r) {
 }
 
 inline unsigned choose_filter_neon(const std::uint8_t* cur, const std::uint8_t* up, std::size_t n,
-                                  unsigned bpp, unsigned allowed = 0x1f) {
+                                  unsigned bpp, unsigned allowed = 0x1f,
+                                  std::uint8_t* paeth_out = nullptr) {
   uint32x4_t total[5];
   for (auto& t : total) t = vdupq_n_u32(0);
   std::size_t i = 0;
@@ -267,7 +268,9 @@ inline unsigned choose_filter_neon(const std::uint8_t* cur, const std::uint8_t* 
       acc[1] = vpadalq_u8(acc[1], abs_residual_neon(vsubq_u8(x, a)));
       acc[2] = vpadalq_u8(acc[2], abs_residual_neon(vsubq_u8(x, b)));
       acc[3] = vpadalq_u8(acc[3], abs_residual_neon(vsubq_u8(x, vhaddq_u8(a, b))));
-      acc[4] = vpadalq_u8(acc[4], abs_residual_neon(vsubq_u8(x, paeth_predict_neon(a, b, c))));
+      const uint8x16_t r4 = vsubq_u8(x, paeth_predict_neon(a, b, c));
+      if (paeth_out) vst1q_u8(paeth_out + i, r4);
+      acc[4] = vpadalq_u8(acc[4], abs_residual_neon(r4));
     }
     for (int f = 0; f < 5; f++) total[f] = vpadalq_u16(total[f], acc[f]);
   }
@@ -281,6 +284,7 @@ inline unsigned choose_filter_neon(const std::uint8_t* cur, const std::uint8_t* 
     std::uint8_t r[5] = {x, static_cast<std::uint8_t>(x - a), static_cast<std::uint8_t>(x - b),
                          static_cast<std::uint8_t>(x - ((a + b) >> 1)),
                          static_cast<std::uint8_t>(x - paeth(a, b, c))};
+    if (paeth_out) paeth_out[i] = r[4];
     for (int f = 0; f < 5; f++) cost[f] += r[f] < 128 ? r[f] : 256 - r[f];
   }
   return pick_filter(cost, allowed);
@@ -347,7 +351,8 @@ VIO_INLINE __m128i abs_sum_sse2(__m128i r) {
 }
 
 inline unsigned choose_filter_sse2(const std::uint8_t* cur, const std::uint8_t* up, std::size_t n,
-                                  unsigned bpp, unsigned allowed = 0x1f) {
+                                  unsigned bpp, unsigned allowed = 0x1f,
+                                  std::uint8_t* paeth_out = nullptr) {
   __m128i acc[5];
   for (auto& a : acc) a = _mm_setzero_si128();
   std::size_t i = 0;
@@ -358,7 +363,9 @@ inline unsigned choose_filter_sse2(const std::uint8_t* cur, const std::uint8_t* 
     acc[1] = _mm_add_epi64(acc[1], abs_sum_sse2(_mm_sub_epi8(x, a)));
     acc[2] = _mm_add_epi64(acc[2], abs_sum_sse2(_mm_sub_epi8(x, b)));
     acc[3] = _mm_add_epi64(acc[3], abs_sum_sse2(_mm_sub_epi8(x, avg_floor_sse2(a, b))));
-    acc[4] = _mm_add_epi64(acc[4], abs_sum_sse2(_mm_sub_epi8(x, paeth_predict_sse2(a, b, c))));
+    const __m128i r4 = _mm_sub_epi8(x, paeth_predict_sse2(a, b, c));
+    if (paeth_out) _mm_storeu_si128(reinterpret_cast<__m128i*>(paeth_out + i), r4);
+    acc[4] = _mm_add_epi64(acc[4], abs_sum_sse2(r4));
   }
   std::uint64_t cost[5];
   for (int f = 0; f < 5; f++) {
@@ -371,6 +378,7 @@ inline unsigned choose_filter_sse2(const std::uint8_t* cur, const std::uint8_t* 
     std::uint8_t r[5] = {x, static_cast<std::uint8_t>(x - a), static_cast<std::uint8_t>(x - b),
                          static_cast<std::uint8_t>(x - ((a + b) >> 1)),
                          static_cast<std::uint8_t>(x - paeth(a, b, c))};
+    if (paeth_out) paeth_out[i] = r[4];
     for (int f = 0; f < 5; f++) cost[f] += r[f] < 128 ? r[f] : 256 - r[f];
   }
   return pick_filter(cost, allowed);
@@ -434,7 +442,8 @@ VIO_INLINE __m256i abs_sum_avx2(__m256i r) {
 }
 
 inline unsigned choose_filter_avx2(const std::uint8_t* cur, const std::uint8_t* up, std::size_t n,
-                                  unsigned bpp, unsigned allowed = 0x1f) {
+                                  unsigned bpp, unsigned allowed = 0x1f,
+                                  std::uint8_t* paeth_out = nullptr) {
   __m256i acc[5];
   for (auto& a : acc) a = _mm256_setzero_si256();
   std::size_t i = 0;
@@ -445,7 +454,9 @@ inline unsigned choose_filter_avx2(const std::uint8_t* cur, const std::uint8_t* 
     acc[1] = _mm256_add_epi64(acc[1], abs_sum_avx2(_mm256_sub_epi8(x, a)));
     acc[2] = _mm256_add_epi64(acc[2], abs_sum_avx2(_mm256_sub_epi8(x, b)));
     acc[3] = _mm256_add_epi64(acc[3], abs_sum_avx2(_mm256_sub_epi8(x, avg_floor_avx2(a, b))));
-    acc[4] = _mm256_add_epi64(acc[4], abs_sum_avx2(_mm256_sub_epi8(x, paeth_predict_avx2(a, b, c))));
+    const __m256i r4 = _mm256_sub_epi8(x, paeth_predict_avx2(a, b, c));
+    if (paeth_out) _mm256_storeu_si256(reinterpret_cast<__m256i*>(paeth_out + i), r4);
+    acc[4] = _mm256_add_epi64(acc[4], abs_sum_avx2(r4));
   }
   std::uint64_t cost[5];
   for (int f = 0; f < 5; f++) {
@@ -458,6 +469,7 @@ inline unsigned choose_filter_avx2(const std::uint8_t* cur, const std::uint8_t* 
     std::uint8_t r[5] = {x, static_cast<std::uint8_t>(x - a), static_cast<std::uint8_t>(x - b),
                          static_cast<std::uint8_t>(x - ((a + b) >> 1)),
                          static_cast<std::uint8_t>(x - paeth(a, b, c))};
+    if (paeth_out) paeth_out[i] = r[4];
     for (int f = 0; f < 5; f++) cost[f] += r[f] < 128 ? r[f] : 256 - r[f];
   }
   return pick_filter(cost, allowed);
@@ -586,22 +598,32 @@ inline FilterIsa filter_isa() {
   return FilterIsa::kScalar;
 }
 
+#if VIO_PNG_SCALAR_INT
+inline constexpr bool kScalarInt = true;
+#else
+inline constexpr bool kScalarInt = false;
+#endif
+// (paeth: where the vector and MSVC scalar paths also store the Paeth
+// residuals; returns whether they did.)
 inline unsigned choose_filter(const std::uint8_t* cur, const std::uint8_t* up, std::size_t n, unsigned bpp,
-                              unsigned allowed, FilterIsa isa) {
+                              unsigned allowed, FilterIsa isa, std::uint8_t* paeth = nullptr,
+                              bool* stored = nullptr) {
+  if (stored) *stored = isa == FilterIsa::kAvx2 || isa == FilterIsa::kSse2 || isa == FilterIsa::kNeon ||
+                        (kScalarInt && isa == FilterIsa::kScalar);
   switch (isa) {
 #if VIO_SIMD_AVX2
-    case FilterIsa::kAvx2: return choose_filter_avx2(cur, up, n, bpp, allowed);
+    case FilterIsa::kAvx2: return choose_filter_avx2(cur, up, n, bpp, allowed, paeth);
 #endif
 #if VIO_SIMD_X86
-    case FilterIsa::kSse2: return choose_filter_sse2(cur, up, n, bpp, allowed);
+    case FilterIsa::kSse2: return choose_filter_sse2(cur, up, n, bpp, allowed, paeth);
 #endif
 #if VIO_SIMD_NEON
-    case FilterIsa::kNeon: return choose_filter_neon(cur, up, n, bpp, allowed);
+    case FilterIsa::kNeon: return choose_filter_neon(cur, up, n, bpp, allowed, paeth);
 #endif
 #if VIO_PNG_GENERIC
     case FilterIsa::kVec: return VecFilterSelect<simd::GV>::choose(cur, up, n, bpp, allowed);
 #endif
-    default: return choose_filter_scalar(cur, up, n, bpp, allowed);
+    default: return choose_filter_scalar(cur, up, n, bpp, allowed, paeth);
   }
 }
 
@@ -629,17 +651,10 @@ inline void apply_filter(unsigned filter, std::uint8_t* out, const std::uint8_t*
 inline void filter_row(std::uint8_t* dst, const std::uint8_t* cur, const std::uint8_t* up,
                        std::size_t n, unsigned bpp, unsigned allowed, FilterIsa isa) {
   const bool choose = (allowed & (allowed - 1)) != 0;  // more than one allowed
-#if VIO_PNG_SCALAR_INT
-  if (choose && isa == FilterIsa::kScalar) {
-    const unsigned f = choose_filter_scalar(cur, up, n, bpp, allowed, dst + 1);
-    dst[0] = static_cast<std::uint8_t>(f);
-    if (f != kFilterPaeth) apply_filter_scalar(f, dst + 1, cur, up, n, bpp);
-    return;
-  }
-#endif
-  const unsigned f = choose ? choose_filter(cur, up, n, bpp, allowed, isa) : ctz32(allowed);
+  bool stored = false;  // the Paeth residuals are in dst + 1 already
+  const unsigned f = choose ? choose_filter(cur, up, n, bpp, allowed, isa, dst + 1, &stored) : ctz32(allowed);
   dst[0] = static_cast<std::uint8_t>(f);
-  apply_filter(f, dst + 1, cur, up, n, bpp, isa);
+  if (f != kFilterPaeth || !stored) apply_filter(f, dst + 1, cur, up, n, bpp, isa);
 }
 
 // Consecutive rows of up to max_row_bytes bytes filtered one by one: load a
