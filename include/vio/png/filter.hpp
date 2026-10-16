@@ -94,47 +94,6 @@ inline void paeth_bounds_scalar(PaethBlock& t, const std::uint8_t* src, const st
   paeth_bounds_scalar(t, j, m, src + i0, prev + i0, prev + i0 + j - bpp);
 }
 
-// Two consecutive rows reconstructed together, the second a block behind
-// the first: the filters whose prediction depends on the pixel to the left
-// (Sub, Average, Paeth) are chains of dependent operations along a row, and
-// two rows make two independent chains.  r0 and r1 are the jobs of the two
-// rows (r1's row above being r0's row), n the bytes per row.
-template <class J0, class J1>
-VIO_INLINE void unfilter_pair_jobs(J0& r0, J1& r1, std::size_t n, unsigned bpp) {
-  constexpr std::size_t K = PaethBlock::kBytes;
-  std::uint8_t first[8];
-  const std::size_t m0 = std::min(K, n);
-  r0.prep(0, m0);
-  for (std::size_t j = 0; j < m0; j += bpp) r0.step(j);
-  std::size_t k = K;
-  for (; k < n; k += K) {
-    const std::size_t m = std::min(K, n - k);
-    r0.prep(k, m);
-    r1.prep(k - K, K);
-    std::size_t j = 0;
-    if (k == K) {  // (m >= bpp)
-      r0.step(k);
-      r1.step(0);
-      std::memcpy(first, r1.dst, bpp);
-      j = bpp;
-    }
-    for (; j < m; j += bpp) {
-      r0.step(k + j);
-      r1.step(k - K + j);
-    }
-    for (; j < K; j += bpp) r1.step(k - K + j);
-  }
-  if (n > K) {
-    // The first row's last pixel may have been stored with a byte too
-    // many (3-byte pixels through 4-byte stores) over the second row's
-    // first byte, which that row's first block wrote before: rewrite it.
-    std::memcpy(r1.dst, first, bpp);
-  }
-  const std::size_t last = k - K;
-  r1.prep(last, n - last);
-  for (std::size_t j = last; j < n; j += bpp) r1.step(j);
-}
-
 // Pixels of B bytes (B <= 8): the previous pixel stays in registers (B
 // independent chains) instead of being reloaded from the row just stored.
 template <unsigned B>
@@ -436,6 +395,47 @@ inline void unfilter_row_neon(unsigned filter, std::uint8_t* dst, const std::uin
   else unfilter_px_neon<8>(filter, dst, src, prev, n, bpp);
 }
 
+// Two consecutive rows reconstructed together, the second a block behind
+// the first: the filters whose prediction depends on the pixel to the left
+// (Sub, Average, Paeth) are chains of dependent operations along a row, and
+// two rows make two independent chains.  r0 and r1 are the jobs of the two
+// rows (r1's row above being r0's row), n the bytes per row.
+template <class J0, class J1>
+VIO_INLINE void unfilter_pair_jobs(J0& r0, J1& r1, std::size_t n, unsigned bpp) {
+  constexpr std::size_t K = PaethBlock::kBytes;
+  std::uint8_t first[8];
+  const std::size_t m0 = std::min(K, n);
+  r0.prep(0, m0);
+  for (std::size_t j = 0; j < m0; j += bpp) r0.step(j);
+  std::size_t k = K;
+  for (; k < n; k += K) {
+    const std::size_t m = std::min(K, n - k);
+    r0.prep(k, m);
+    r1.prep(k - K, K);
+    std::size_t j = 0;
+    if (k == K) {  // (m >= bpp)
+      r0.step(k);
+      r1.step(0);
+      std::memcpy(first, r1.dst, bpp);
+      j = bpp;
+    }
+    for (; j < m; j += bpp) {
+      r0.step(k + j);
+      r1.step(k - K + j);
+    }
+    for (; j < K; j += bpp) r1.step(k - K + j);
+  }
+  if (n > K) {
+    // The first row's last pixel may have been stored with a byte too
+    // many (3-byte pixels through 4-byte stores) over the second row's
+    // first byte, which that row's first block wrote before: rewrite it.
+    std::memcpy(r1.dst, first, bpp);
+  }
+  const std::size_t last = k - K;
+  r1.prep(last, n - last);
+  for (std::size_t j = last; j < n; j += bpp) r1.step(j);
+}
+
 // Rows reconstructed in pairs (see unfilter_pair): one row of a pair as a
 // job prepared a block at a time (prep) and advanced a pixel at a time
 // (step, at byte i of the row).
@@ -446,7 +446,8 @@ struct NeonRowJob {
   const std::uint8_t* src;
   const std::uint8_t* prev;
   unsigned bpp;
-  uint8x8_t a = vdup_n_u8(0);
+  uint8x8_t a;  // (set by neon_job: no initializer, whose implicit constructor
+                // would be compiled outside the NEON target region)
 };
 template <unsigned W>
 struct NeonSubJob : NeonRowJob<W> {
@@ -502,6 +503,7 @@ VIO_INLINE J<W> neon_job(std::uint8_t* dst, const std::uint8_t* src, const std::
   j.src = src;
   j.prev = prev;
   j.bpp = bpp;
+  j.a = vdup_n_u8(0);
   return j;
 }
 
