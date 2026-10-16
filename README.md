@@ -303,14 +303,15 @@ each image timed as the fastest of 3 runs.
   0.18.1 with `Transformations::IDENTITY`, built by `cargo --release`;
   libpng without transformations).  Checksums are verified, except Adler-32
   by image-png, which skips it by default.
-- Encoding starts from 8-bit RGB or RGBA, and each encoder is compared with
-  encoders whose files are about the same size.  vio's default fast mode
-  (`png::Encoder`) is compared with fpnge at its default level (x86 only),
-  image-png's fast mode and libpng at zlib level 1, its fastest compressing
-  level; in parentheses, the size of vio's files relative to the other's.
-  vio's zlib mode (`Encoder::Mode::kZlib`), whose files are byte for byte
-  libpng's at the same level, is compared with libpng at levels 1 and 6 (6
-  being libpng's default; adaptive filters in both).
+- Encoding starts from 8-bit RGB or RGBA.  Against libpng, vio runs in its
+  zlib mode (`Encoder::Mode::kZlib`), whose files are byte for byte libpng's
+  at the same zlib level, so the figures are speed alone, as for JPEG:
+  levels 1 and 6 (6 being libpng's default; adaptive filters in both).
+  vio's default fast mode (`png::Encoder`) is a different, single-pass
+  algorithm, compared with the fastest encoders at about the same file size:
+  fpnge at its default level (x86 only) and image-png's fast mode; in
+  parentheses, the size of vio's files relative to the other's.  Both modes
+  are lossless: they change file size and speed, never the pixels.
 
 All libraries are built from source with the same compiler; the benchmark
 is `tests/png-bench/` (`png_bench.py run`, then `report` or `compare`;
@@ -326,17 +327,7 @@ PNG decoding:
 | Linux AArch64 | Neoverse-N2 (GCC) | +11% | +139% |
 | macOS AArch64 | Apple M1 (virtual) (Apple Clang) | +15% | +167% |
 
-PNG encoding, fast mode:
-
-| Platform | CPU (compiler) | vs fpnge | vs image-png (fast) | vs libpng level 1 |
-| --- | --- | ---: | ---: | ---: |
-| Linux x86-64 | AMD EPYC 7763 (GCC) | +25% (−5% size) | +73% (−4% size) | +1519% (−1% size) |
-| Windows x86-64 | AMD EPYC 9V74 (MSVC) | +107% (−5% size) | +59% (−4% size) | +1634% (−1% size) |
-| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | +31% (−5% size) | +91% (−4% size) | +1472% (−1% size) |
-| Linux AArch64 | Neoverse-N2 (GCC) | — | +80% (−4% size) | +1037% (−1% size) |
-| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | — | +73% (−4% size) | +1202% (−1% size) |
-
-PNG encoding, zlib mode (the same files as libpng's):
+PNG encoding vs libpng (zlib mode, the same files as libpng's):
 
 | Platform | CPU (compiler) | vs libpng level 1 | vs libpng level 6 |
 | --- | --- | ---: | ---: |
@@ -346,23 +337,36 @@ PNG encoding, zlib mode (the same files as libpng's):
 | Linux AArch64 | Neoverse-N2 (GCC) | +100% | +41% |
 | macOS AArch64 | Apple M1 (virtual) (Apple Clang) | +112% | +67% |
 
+PNG encoding, fast mode:
+
+| Platform | CPU (compiler) | vs fpnge | vs image-png (fast) |
+| --- | --- | ---: | ---: |
+| Linux x86-64 | AMD EPYC 7763 (GCC) | +25% (−5% size) | +73% (−4% size) |
+| Windows x86-64 | AMD EPYC 9V74 (MSVC) | +107% (−5% size) | +59% (−4% size) |
+| macOS x86-64 | Intel Core i7-8700B (Apple Clang) | +31% (−5% size) | +91% (−4% size) |
+| Linux AArch64 | Neoverse-N2 (GCC) | — | +80% (−4% size) |
+| macOS AArch64 | Apple M1 (virtual) (Apple Clang) | — | +73% (−4% size) |
+
+The fast mode's files are also about the size of libpng's at level 1 (1%
+smaller), which it writes 11 to 17 times as fast.
+
 By image category, number of images in parentheses (Linux x86-64, AMD EPYC 7763, GCC):
 
-| Category | dec. vs image-png | dec. vs libpng | enc. vs fpnge | enc. vs libpng level 1 | zlib mode vs libpng level 6 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| icon_512 (213) | +27% | +292% | +16% (−16% size) | +1070% (−4% size) | +77% |
-| icon_64 (213) | +30% | +196% | +72% (−17% size) | +877% (+5% size) | +50% |
-| photo_kodak (24) | +27% | +130% | +7% (−3% size) | +1959% (+5% size) | +21% |
-| photo_tecnick (100) | +24% | +175% | +2% (−2% size) | +2009% (−5% size) | +28% |
-| photo_wikipedia (49) | +25% | +135% | +8% (−3% size) | +2124% (−2% size) | +26% |
-| pngimg (187) | +24% | +226% | +11% (−4% size) | +1548% (−9% size) | +51% |
-| screenshot_game (618) | +29% | +200% | +7% (−6% size) | +1310% (−3% size) | +59% |
-| screenshot_web (14) | +14% | +130% | +33% (−11% size) | +1417% (+5% size) | +63% |
-| textures_photo (20) | +27% | +114% | +19% (−8% size) | +1989% (+21% size) | +19% |
-| textures_pk (1002) | +18% | +135% | +45% (−8% size) | +1873% (+2% size) | +31% |
-| textures_pk01 (113) | +24% | +182% | +8% (−3% size) | +1450% (+11% size) | +26% |
-| textures_pk02 (235) | +25% | +153% | +4% (−3% size) | +1558% (+17% size) | +26% |
-| textures_plants (60) | +23% | +206% | +13% (−3% size) | +1721% (−7% size) | +40% |
+| Category | dec. vs image-png | dec. vs libpng | zlib mode vs libpng level 6 | fast mode vs fpnge |
+| --- | ---: | ---: | ---: | ---: |
+| icon_512 (213) | +27% | +292% | +77% | +16% (−16% size) |
+| icon_64 (213) | +30% | +196% | +50% | +72% (−17% size) |
+| photo_kodak (24) | +27% | +130% | +21% | +7% (−3% size) |
+| photo_tecnick (100) | +24% | +175% | +28% | +2% (−2% size) |
+| photo_wikipedia (49) | +25% | +135% | +26% | +8% (−3% size) |
+| pngimg (187) | +24% | +226% | +51% | +11% (−4% size) |
+| screenshot_game (618) | +29% | +200% | +59% | +7% (−6% size) |
+| screenshot_web (14) | +14% | +130% | +63% | +33% (−11% size) |
+| textures_photo (20) | +27% | +114% | +19% | +19% (−8% size) |
+| textures_pk (1002) | +18% | +135% | +31% | +45% (−8% size) |
+| textures_pk01 (113) | +24% | +182% | +26% | +8% (−3% size) |
+| textures_pk02 (235) | +25% | +153% | +26% | +4% (−3% size) |
+| textures_plants (60) | +23% | +206% | +40% | +13% (−3% size) |
 
 Measured at [df87ff9](https://github.com/ufoym/vio/commit/df87ff9) on the
 GitHub-hosted runners (one run; the runners' CPUs vary from run to run).
