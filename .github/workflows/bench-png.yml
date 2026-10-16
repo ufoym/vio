@@ -18,26 +18,31 @@ permissions:
 
 jobs:
   bench:
-    name: bench-png · ${{ matrix.name }}
+    name: bench-png · ${{ matrix.name }} · ${{ matrix.level }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
     defaults:
       run:
         shell: bash
+    # One job per platform and SIMD level (each job's runner may have a
+    # different processor, so every job runs all the libraries).
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {name: linux-x64, os: ubuntu-24.04, fpnge: true,
-             isas: --isa avx2= --isa sse2=JSIMD_FORCESSE2=1 --isa none=JSIMD_FORCENONE=1}
-          - {name: linux-arm64, os: ubuntu-24.04-arm,
-             isas: --isa neon= --isa none=JSIMD_FORCENONE=1}
-          - {name: macos-arm64, os: macos-15,
-             isas: --isa neon= --isa none=JSIMD_FORCENONE=1}
-          - {name: macos-x64, os: macos-15-intel, fpnge: true,
-             isas: --isa avx2= --isa sse2=JSIMD_FORCESSE2=1 --isa none=JSIMD_FORCENONE=1}
-          - {name: windows-x64, os: windows-2025, fpnge: true,
-             isas: --isa avx2= --isa sse2=JSIMD_FORCESSE2=1 --isa none=JSIMD_FORCENONE=1}
+          - {name: linux-x64, os: ubuntu-24.04, fpnge: true, level: avx2, isa: avx2=}
+          - {name: linux-x64, os: ubuntu-24.04, fpnge: true, level: sse2, isa: sse2=JSIMD_FORCESSE2=1}
+          - {name: linux-x64, os: ubuntu-24.04, level: none, isa: none=JSIMD_FORCENONE=1}
+          - {name: linux-arm64, os: ubuntu-24.04-arm, level: neon, isa: neon=}
+          - {name: linux-arm64, os: ubuntu-24.04-arm, level: none, isa: none=JSIMD_FORCENONE=1}
+          - {name: macos-arm64, os: macos-15, level: neon, isa: neon=}
+          - {name: macos-arm64, os: macos-15, level: none, isa: none=JSIMD_FORCENONE=1}
+          - {name: macos-x64, os: macos-15-intel, fpnge: true, level: avx2, isa: avx2=}
+          - {name: macos-x64, os: macos-15-intel, fpnge: true, level: sse2, isa: sse2=JSIMD_FORCESSE2=1}
+          - {name: macos-x64, os: macos-15-intel, level: none, isa: none=JSIMD_FORCENONE=1}
+          - {name: windows-x64, os: windows-2025, fpnge: true, level: avx2, isa: avx2=}
+          - {name: windows-x64, os: windows-2025, fpnge: true, level: sse2, isa: sse2=JSIMD_FORCESSE2=1}
+          - {name: windows-x64, os: windows-2025, level: none, isa: none=JSIMD_FORCENONE=1}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -89,23 +94,23 @@ jobs:
           [ "$RUNNER_OS" = Windows ] && py=python
           exe=""
           [ "$RUNNER_OS" = Windows ] && exe=.exe
-          bins=(--bin none=build/vio/png-bench-scalar$exe)
-          [ "${{ matrix.fpnge }}" = true ] && bins+=(--bin sse2=build/vio/png-bench-sse$exe)
+          tag=${{ matrix.name }}-${{ matrix.level }}
           mkdir -p results
           $py tests/png-bench/png_bench.py run --corpus build/corpus \
-            --out results/png-${{ matrix.name }}.txt --sample ${{ inputs.sample }} --reps 3 \
-            --vio build/vio/png-bench$exe "${bins[@]}" ${{ matrix.isas }} \
+            --out results/png-$tag.txt --sample ${{ inputs.sample }} --reps 3 \
+            --vio build/vio/png-bench$exe --bin none=build/vio/png-bench-scalar$exe \
+            --bin sse2=build/vio/png-bench-sse$exe --isa ${{ matrix.isa }} \
             --image-png tests/png-bench/image-png/target/release/png-bench-image-png$exe
-          { echo "### ${{ matrix.name }}"; echo '```';
-            $py tests/png-bench/png_bench.py report results/png-${{ matrix.name }}.txt --by-category;
+          { echo "### $tag"; echo '```';
+            $py tests/png-bench/png_bench.py report results/png-$tag.txt --by-category;
             echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
-          uname -a > results/cpu-${{ matrix.name }}.txt || true
-          if [ "$RUNNER_OS" = Linux ]; then lscpu >> results/cpu-${{ matrix.name }}.txt; fi
-          if [ "$RUNNER_OS" = macOS ]; then sysctl -n machdep.cpu.brand_string >> results/cpu-${{ matrix.name }}.txt; fi
-          if [ "$RUNNER_OS" = Windows ]; then powershell -c "(Get-CimInstance Win32_Processor).Name" >> results/cpu-${{ matrix.name }}.txt; fi
+          uname -a > results/cpu-$tag.txt || true
+          if [ "$RUNNER_OS" = Linux ]; then lscpu >> results/cpu-$tag.txt; fi
+          if [ "$RUNNER_OS" = macOS ]; then sysctl -n machdep.cpu.brand_string >> results/cpu-$tag.txt; fi
+          if [ "$RUNNER_OS" = Windows ]; then powershell -c "(Get-CimInstance Win32_Processor).Name" >> results/cpu-$tag.txt; fi
 
       - name: Upload results
         uses: actions/upload-artifact@v7
         with:
-          name: bench-png-${{ matrix.name }}
+          name: bench-png-${{ matrix.name }}-${{ matrix.level }}
           path: results/
