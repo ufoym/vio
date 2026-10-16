@@ -4,10 +4,12 @@
 //
 // impl: vio; fpnge when built with VIO_FPNGE_SOURCE_DIR (x86 only, encode
 //       only); libpng when built with VIO_LIBPNG_SOURCE_DIR and
-//       VIO_ZLIB_SOURCE_DIR.  For encoding, a suffix -zN (vio-z6, libpng-z1)
+//       VIO_ZLIB_SOURCE_DIR; wuffs (decode only) when built with
+//       VIO_WUFFS_SOURCE_DIR.  For encoding, a suffix -zN (vio-z6, libpng-z1)
 //       selects zlib level N: vio's zlib mode instead of its fast mode, or
 //       libpng at that level instead of its default (6).
-// mode: decode   decode to the PNG's own sample layout
+// mode: list     print the implementations built in, one per line
+//       decode   decode to the PNG's own sample layout
 //       encode   decode to 8-bit RGB or RGBA (RGBA when the file has alpha or
 //                tRNS), then time encoding that buffer at the default effort
 //
@@ -32,6 +34,9 @@
 #endif
 #ifdef VIO_BENCH_LIBPNG
 #include <png.h>
+#endif
+#ifdef VIO_BENCH_WUFFS
+#include "wuffs-v0.4.c"
 #endif
 
 namespace {
@@ -193,7 +198,37 @@ std::size_t decode_libpng(const std::vector<std::uint8_t>& file, double& mp,
   if (pixels) *pixels = std::move(px);
   return px.size();
 }
+#endif
 
+#ifdef VIO_BENCH_WUFFS
+// Decodes to the pixel format Wuffs reports for the image (its default:
+// CRC-32 and Adler-32 checked).
+std::size_t decode_wuffs(const std::vector<std::uint8_t>& file, double& mp) {
+  static const std::size_t size = sizeof__wuffs_png__decoder();
+  static wuffs_png__decoder* dec = static_cast<wuffs_png__decoder*>(std::malloc(size));
+  auto check = [](wuffs_base__status st) {
+    if (st.repr) throw std::runtime_error(st.repr);
+  };
+  check(wuffs_png__decoder__initialize(dec, size, WUFFS_VERSION,
+                                       WUFFS_INITIALIZE__LEAVE_INTERNAL_BUFFERS_UNINITIALIZED));
+  wuffs_base__io_buffer src =
+      wuffs_base__ptr_u8__reader(const_cast<std::uint8_t*>(file.data()), file.size(), true);
+  wuffs_base__image_config ic;
+  check(wuffs_png__decoder__decode_image_config(dec, &ic, &src));
+  const std::uint64_t n = wuffs_base__pixel_config__pixbuf_len(&ic.pixcfg);
+  std::vector<std::uint8_t> px(n);
+  wuffs_base__pixel_buffer pb;
+  check(wuffs_base__pixel_buffer__set_from_slice(&pb, &ic.pixcfg, wuffs_base__make_slice_u8(px.data(), n)));
+  const std::uint64_t wn = wuffs_png__decoder__workbuf_len(dec).max_incl;
+  std::vector<std::uint8_t> work(wn);
+  check(wuffs_png__decoder__decode_frame(dec, &pb, &src, WUFFS_BASE__PIXEL_BLEND__SRC,
+                                         wuffs_base__make_slice_u8(work.data(), wn), nullptr));
+  mp = double(wuffs_base__pixel_config__width(&ic.pixcfg)) * wuffs_base__pixel_config__height(&ic.pixcfg) * 1e-6;
+  return n;
+}
+#endif
+
+#ifdef VIO_BENCH_LIBPNG
 // libpng's default compression (zlib level 6, adaptive filters), or the
 // -zN level.
 std::vector<std::uint8_t> encode_libpng(const Rgb8& img) {
@@ -226,10 +261,23 @@ std::vector<std::uint8_t> encode_libpng(const Rgb8& img) {
 
 int main(int argc, char** argv) {
   if (argc < 3) {
-    std::fprintf(stderr, "usage: %s <impl> <decode|encode> [reps] < file-list\n", argv[0]);
+    std::fprintf(stderr, "usage: %s <impl> <decode|encode|list> [reps] < file-list\n", argv[0]);
     return 1;
   }
   const std::string impl_arg = argv[1], mode = argv[2];
+  if (mode == "list") {
+    std::printf("vio\n");
+#ifdef VIO_BENCH_FPNGE
+    std::printf("fpnge\n");
+#endif
+#ifdef VIO_BENCH_LIBPNG
+    std::printf("libpng\n");
+#endif
+#ifdef VIO_BENCH_WUFFS
+    std::printf("wuffs\n");
+#endif
+    return 0;
+  }
   std::string impl = impl_arg;
   if (std::size_t z = impl.rfind("-z"); z != std::string::npos) {
     g_level = std::atoi(impl.c_str() + z + 2);
@@ -278,6 +326,14 @@ int main(int argc, char** argv) {
             continue;
           }
 #endif
+#ifdef VIO_BENCH_WUFFS
+          if (impl == "wuffs") {
+            auto t0 = Clock::now();
+            bytes = decode_wuffs(file, mp);
+            best = std::min(best, std::chrono::duration<double>(Clock::now() - t0).count());
+            continue;
+          }
+#endif
           if (impl != "vio") throw std::runtime_error("decode: unknown implementation");
           auto t0 = Clock::now();
           vio::png::Decoder d;
@@ -301,7 +357,8 @@ int main(int argc, char** argv) {
           if (impl == "libpng") out = encode_libpng(img);
           else
 #endif
-          out = encode_vio(img);
+          if (impl == "vio") out = encode_vio(img);
+          else throw std::runtime_error("encode: unknown implementation");
           double s = std::chrono::duration<double>(Clock::now() - t0).count();
           best = std::min(best, s);
         }

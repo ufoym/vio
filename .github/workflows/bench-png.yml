@@ -1,7 +1,9 @@
 # On demand: PNG throughput of vio vs fpnge (encoding, x86 only), image-png
-# (decoding and its fast encoding mode) and libpng 1.6 with zlib, all built
-# on the runner, over the QOI benchmark corpus (tests/png-bench/).  Each run
-# uploads the per-file results and a summary.
+# (decoding and its fast encoding mode), Wuffs (decoding) and libpng 1.6 with
+# zlib, all built on the runner, over the QOI benchmark corpus
+# (tests/png-bench/), at each SIMD level: vio forced by JSIMD_*, the others
+# from their build for that level (tests/CMakeLists.txt).  Each run uploads
+# the per-file results and a summary.
 name: bench-png
 
 on:
@@ -26,11 +28,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {name: linux-x64, os: ubuntu-24.04, fpnge: true}
-          - {name: linux-arm64, os: ubuntu-24.04-arm}
-          - {name: macos-arm64, os: macos-15}
-          - {name: macos-x64, os: macos-15-intel, fpnge: true}
-          - {name: windows-x64, os: windows-2025, fpnge: true}
+          - {name: linux-x64, os: ubuntu-24.04, fpnge: true,
+             isas: --isa avx2= --isa sse2=JSIMD_FORCESSE2=1 --isa none=JSIMD_FORCENONE=1}
+          - {name: linux-arm64, os: ubuntu-24.04-arm,
+             isas: --isa neon= --isa none=JSIMD_FORCENONE=1}
+          - {name: macos-arm64, os: macos-15,
+             isas: --isa neon= --isa none=JSIMD_FORCENONE=1}
+          - {name: macos-x64, os: macos-15-intel, fpnge: true,
+             isas: --isa avx2= --isa sse2=JSIMD_FORCESSE2=1 --isa none=JSIMD_FORCENONE=1}
+          - {name: windows-x64, os: windows-2025, fpnge: true,
+             isas: --isa avx2= --isa sse2=JSIMD_FORCESSE2=1 --isa none=JSIMD_FORCENONE=1}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -50,6 +57,9 @@ jobs:
           git clone -q --depth 1 -b v1.6.59 https://github.com/pnggroup/libpng.git build/ref/libpng
           git clone -q https://github.com/madler/zlib.git build/ref/zlib
           git -C build/ref/zlib checkout -q v1.3.2
+          mkdir -p build/ref/wuffs
+          curl -fsSL --retry 3 -o build/ref/wuffs/wuffs-v0.4.c \
+            https://raw.githubusercontent.com/google/wuffs/v0.4.0-alpha.9/release/c/wuffs-v0.4.c
           if [ "${{ matrix.fpnge }}" = true ]; then
             git clone -q https://github.com/veluca93/fpnge.git build/ref/fpnge
             git -C build/ref/fpnge checkout -q 097ebccf3d3db443d9a8f238b1deed010a82f961 ||
@@ -62,11 +72,16 @@ jobs:
         run: |
           args=(-DCMAKE_BUILD_TYPE=Release -DVIO_TEST_SCALAR=OFF
                 -DVIO_LIBPNG_SOURCE_DIR=$PWD/build/ref/libpng
-                -DVIO_ZLIB_SOURCE_DIR=$PWD/build/ref/zlib)
-          [ "${{ matrix.fpnge }}" = true ] && args+=(-DVIO_FPNGE_SOURCE_DIR=$PWD/build/ref/fpnge)
+                -DVIO_ZLIB_SOURCE_DIR=$PWD/build/ref/zlib
+                -DVIO_WUFFS_SOURCE_DIR=$PWD/build/ref/wuffs)
+          targets=(png-bench png-bench-scalar)
+          if [ "${{ matrix.fpnge }}" = true ]; then
+            args+=(-DVIO_FPNGE_SOURCE_DIR=$PWD/build/ref/fpnge)
+            targets+=(png-bench-sse)
+          fi
           [ "$RUNNER_OS" = Windows ] && args+=(-G Ninja)
           cmake -S . -B build/vio "${args[@]}"
-          cmake --build build/vio --parallel --target png-bench
+          cmake --build build/vio --parallel --target "${targets[@]}"
 
       - name: Benchmark
         run: |
@@ -74,12 +89,12 @@ jobs:
           [ "$RUNNER_OS" = Windows ] && py=python
           exe=""
           [ "$RUNNER_OS" = Windows ] && exe=.exe
-          fpnge=""
-          [ "${{ matrix.fpnge }}" = true ] && fpnge=--fpnge
+          bins=(--bin none=build/vio/png-bench-scalar$exe)
+          [ "${{ matrix.fpnge }}" = true ] && bins+=(--bin sse2=build/vio/png-bench-sse$exe)
           mkdir -p results
           $py tests/png-bench/png_bench.py run --corpus build/corpus \
             --out results/png-${{ matrix.name }}.txt --sample ${{ inputs.sample }} --reps 3 \
-            --vio build/vio/png-bench$exe --libpng $fpnge \
+            --vio build/vio/png-bench$exe "${bins[@]}" ${{ matrix.isas }} \
             --image-png tests/png-bench/image-png/target/release/png-bench-image-png$exe
           { echo "### ${{ matrix.name }}"; echo '```';
             $py tests/png-bench/png_bench.py report results/png-${{ matrix.name }}.txt --by-category;
