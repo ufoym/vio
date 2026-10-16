@@ -208,14 +208,12 @@ inline void unfilter_small(unsigned filter, std::uint8_t* dst, const std::uint8_
         for (std::size_t i = 0; i < n; i += B)
           for (unsigned k = 0; k < B; k++) {
             const int b = prev[i + k], cc = static_cast<int>(c[k]), ak = static_cast<int>(a[k]);
-            const int x = ak - cc, e = b - cc, y = x + e;
-            // explicitly branchless (GCC branches otherwise; the choice is
-            // data-dependent and unpredictable)
-            const int pa = (e ^ (e >> 31)) - (e >> 31), pb = (x ^ (x >> 31)) - (x >> 31),
-                      pc = (y ^ (y >> 31)) - (y >> 31);
-            const int use_a = -static_cast<int>((pa <= pb) & (pa <= pc)), use_b = -static_cast<int>(pb <= pc);
-            const int bc = cc ^ ((b ^ cc) & use_b);
-            const int pred = bc ^ ((ak ^ bc) & use_a);
+            // the min/max form above, explicitly branchless (GCC branches
+            // otherwise; the choice is data-dependent and unpredictable)
+            const int t = 3 * cc - b - ak, d = ak - b;
+            const int lo = b + (d & (d >> 31)), hi = ak + b - lo;
+            const int t0 = cc ^ ((lo ^ cc) & ~((t - hi) >> 31));
+            const int pred = t0 ^ ((hi ^ t0) & ~((lo - t) >> 31));
             dst[i + k] = static_cast<std::uint8_t>(a[k] = static_cast<unsigned>(src[i + k] + pred) & 0xff);
             c[k] = static_cast<unsigned>(b);
           }
