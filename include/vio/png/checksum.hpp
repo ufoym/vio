@@ -129,6 +129,23 @@ inline std::uint32_t crc32_braided(std::uint32_t crc, const std::uint8_t* buf, s
   if (blocks >= 2) {
     len -= blocks * kBlock;
     const auto& t = braid_tables;
+#if defined(_MSC_VER) && !defined(__clang__)
+    // MSVC keeps the arrays below in memory: named words (twice as fast)
+    static_assert(kBraids == 5);
+    std::uint64_t c0 = crc, c1 = 0, c2 = 0, c3 = 0, c4 = 0;
+    while (--blocks) {
+      const std::uint64_t w0 = c0 ^ crc_load_le64(buf), w1 = c1 ^ crc_load_le64(buf + 8),
+                          w2 = c2 ^ crc_load_le64(buf + 16), w3 = c3 ^ crc_load_le64(buf + 24),
+                          w4 = c4 ^ crc_load_le64(buf + 32);
+      buf += kBlock;
+      c0 = t[0][w0 & 0xff], c1 = t[0][w1 & 0xff], c2 = t[0][w2 & 0xff], c3 = t[0][w3 & 0xff], c4 = t[0][w4 & 0xff];
+      for (unsigned k = 1; k < 8; k++) {
+        c0 ^= t[k][(w0 >> (8 * k)) & 0xff], c1 ^= t[k][(w1 >> (8 * k)) & 0xff], c2 ^= t[k][(w2 >> (8 * k)) & 0xff];
+        c3 ^= t[k][(w3 >> (8 * k)) & 0xff], c4 ^= t[k][(w4 >> (8 * k)) & 0xff];
+      }
+    }
+    const std::uint64_t c[kBraids] = {c0, c1, c2, c3, c4};
+#else
     std::uint64_t c[kBraids] = {crc};
     while (--blocks) {
       std::uint64_t w[kBraids];
@@ -138,6 +155,7 @@ inline std::uint32_t crc32_braided(std::uint32_t crc, const std::uint8_t* buf, s
       for (unsigned k = 1; k < 8; k++)
         for (unsigned j = 0; j < kBraids; j++) c[j] ^= t[k][(w[j] >> (8 * k)) & 0xff];
     }
+#endif
     crc = 0;
     for (unsigned j = 0; j < kBraids; j++) crc = crc_word(c[j] ^ crc_load_le64(buf + 8 * j) ^ crc);
     buf += kBlock;
