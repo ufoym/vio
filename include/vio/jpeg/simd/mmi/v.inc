@@ -168,12 +168,16 @@ struct V {
   // Unsigned bytes (PNG filters); avg_u8 rounds up.
   static VIO_INLINE T sub_8(T a, T b) { return map(a, b, [](U8 x, U8 y) { return psubb_u(x, y); }); }
   static VIO_INLINE T avg_u8(T a, T b) { return map(a, b, [](U8 x, U8 y) { return pavgb(x, y); }); }
-  // a - (a - b saturated), not pminub, which QEMU emulates on 4 bytes only
-  static VIO_INLINE T min_u8(T a, T b) {
-    return map(a, b, [](U8 x, U8 y) { return psubb_u(x, psubusb(x, y)); });
+  // min(a, b) = avg(a, b) rounded up - ceil(|a - b| / 2), a - min(a, b):
+  // not pminub or psubusb, which QEMU emulates wrongly (pminub on 4 bytes,
+  // psubusb without the lower bound), nor pcmpgtb, signed on hardware but
+  // unsigned under QEMU.
+  static VIO_INLINE U8 min8(U8 x, U8 y) { return psubb_u(pavgb(x, y), pavgb(pasubub(x, y), U8{})); }
+  static VIO_INLINE T min_u8(T a, T b) { return map(a, b, [](U8 x, U8 y) { return min8(x, y); }); }
+  static VIO_INLINE T subs_u8(T a, T b) {
+    return map(a, b, [](U8 x, U8 y) { return psubb_u(x, min8(x, y)); });
   }
   static VIO_INLINE T adds_u8(T a, T b) { return map(a, b, [](U8 x, U8 y) { return paddusb(x, y); }); }
-  static VIO_INLINE T subs_u8(T a, T b) { return map(a, b, [](U8 x, U8 y) { return psubusb(x, y); }); }
   static VIO_INLINE T cmpeq_8(T a, T b) { return map(a, b, [](U8 x, U8 y) { return pcmpeqb_u(x, y); }); }
   static VIO_INLINE T loadl_32(const void* p) {
     std::uint32_t x;
