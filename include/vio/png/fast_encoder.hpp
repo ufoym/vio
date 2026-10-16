@@ -130,6 +130,29 @@ inline void filter_costs_int(const std::uint8_t* VIO_RESTRICT x, const std::uint
 }
 #endif
 
+#if !defined(VIO_PNG_SCALAR_I16) && !VIO_PNG_SCALAR_INT && \
+    (defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86))
+// On x86, whose SSE2 has signed 16-bit minimum, maximum and comparisons but
+// no unsigned 8-bit comparisons, the scalar code below is vectorized best
+// on 16-bit values.
+#define VIO_PNG_SCALAR_I16 1
+#endif
+#if VIO_PNG_SCALAR_I16
+// Paeth with t = 3c - a - b: max(a, b) if t <= min(a, b), else min(a, b)
+// if max(a, b) <= t, else c.
+VIO_INLINE std::int16_t paeth_select16(std::int16_t a, std::int16_t b, std::int16_t c) {
+  const std::int16_t t = static_cast<std::int16_t>(3 * c - a - b);
+  const std::int16_t lo = std::min(a, b), hi = std::max(a, b);
+  const std::int16_t t0 = hi <= t ? lo : c;
+  return t <= lo ? hi : t0;
+}
+// |r| of a residual r (-255..255, mod 256) as a signed byte
+VIO_INLINE std::int16_t abs_residual16(std::int16_t r) {
+  const std::int16_t m = std::max(r, static_cast<std::int16_t>(-r));
+  return std::min(m, static_cast<std::int16_t>(256 - m));
+}
+#endif
+
 // Computes the residuals of all five filters for one row and returns the
 // filter whose residuals have the smallest sum of absolute values (as
 // signed bytes).  cur and up point at padded rows (up is all zeros for the
@@ -141,6 +164,21 @@ inline unsigned choose_filter_scalar(const std::uint8_t* cur, const std::uint8_t
   for (std::size_t i = 0; i < n; i += std::size_t(1) << 22) {
     const int m = static_cast<int>(std::min(n - i, std::size_t(1) << 22));
     filter_costs_int(cur + i, cur + i - bpp, up + i, up + i - bpp, m, cost);
+  }
+#elif VIO_PNG_SCALAR_I16
+  for (std::size_t i = 0; i < n;) {
+    // 16-bit sums over at most 256 bytes
+    const std::size_t end = std::min(n, i + 256);
+    std::uint16_t c0 = 0, c1 = 0, c2 = 0, c3 = 0, c4 = 0;
+    for (; i < end; i++) {
+      const std::int16_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp];
+      c0 = static_cast<std::uint16_t>(c0 + abs_residual16(x));
+      c1 = static_cast<std::uint16_t>(c1 + abs_residual16(static_cast<std::int16_t>(x - a)));
+      c2 = static_cast<std::uint16_t>(c2 + abs_residual16(static_cast<std::int16_t>(x - b)));
+      c3 = static_cast<std::uint16_t>(c3 + abs_residual16(static_cast<std::int16_t>(x - ((a + b) >> 1))));
+      c4 = static_cast<std::uint16_t>(c4 + abs_residual16(static_cast<std::int16_t>(x - paeth_select16(a, b, c))));
+    }
+    cost[0] += c0, cost[1] += c1, cost[2] += c2, cost[3] += c3, cost[4] += c4;
   }
 #else
   for (std::size_t i = 0; i < n;) {
