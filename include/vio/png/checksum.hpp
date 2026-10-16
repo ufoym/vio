@@ -363,19 +363,45 @@ VIO_TARGET_POP()
 #endif
 #endif
 
-// Adler-32 sums of whole 32-byte blocks without vector intrinsics (in a
-// form that compilers vectorize): per block, s2 gains 32 * s1 plus the bytes
-// weighted 32 down to 1.
+// Adler-32 sums of whole 32-byte blocks without vector intrinsics (nblocks
+// <= 173, as within NMAX bytes), in forms that compilers vectorize.
 inline void adler32_blocks(std::uint32_t& s1, std::uint32_t& s2, const std::uint8_t* p, std::size_t nblocks) {
-  for (std::size_t i = 0; i < nblocks; i++, p += 32) {
-    std::uint32_t sum = 0, weighted = 0;
-    for (unsigned k = 0; k < 32; k++) {
-      sum += p[k];
-      weighted += (32 - k) * p[k];
-    }
-    s2 += 32 * s1 + weighted;
-    s1 += sum;
+#if defined(__clang__) && (defined(__aarch64__) || defined(_M_ARM64))
+  // The n bytes add n * s1 + sum((n - j) * p[j]) to s2: a sum and a sum
+  // weighted by the index (within 32 bits for n <= NMAX).
+  const std::uint32_t n = static_cast<std::uint32_t>(nblocks * 32);
+  std::uint32_t sum = 0, indexed = 0;
+  for (std::uint32_t j = 0; j < n; j++) {
+    sum += p[j];
+    indexed += j * p[j];
   }
+  s2 += n * s1 + n * sum - indexed;
+  s1 += sum;
+#else
+  // Per byte position k of the blocks, the sum c[k] of its bytes and the
+  // sum t[k] of those sums at each block's start: s2 gains
+  // 32 * nblocks * s1 + 32 * sum(t) + sum((32 - k) * c[k]).
+  std::uint16_t c[32] = {};
+  std::uint32_t t[32] = {};
+  for (std::size_t i = 0; i < nblocks; i++, p += 32) {
+#if defined(__clang__)
+#pragma clang loop vectorize(enable) unroll(disable)
+#endif
+    for (unsigned k = 0; k < 32; k++) t[k] += c[k];
+#if defined(__clang__)
+#pragma clang loop vectorize(enable) unroll(disable)
+#endif
+    for (unsigned k = 0; k < 32; k++) c[k] = static_cast<std::uint16_t>(c[k] + p[k]);
+  }
+  std::uint32_t sum = 0, weighted = 0, tsum = 0;
+  for (unsigned k = 0; k < 32; k++) {
+    sum += c[k];
+    weighted += (32 - k) * c[k];
+    tsum += t[k];
+  }
+  s2 += static_cast<std::uint32_t>(nblocks * 32) * s1 + 32 * tsum + weighted;
+  s1 += sum;
+#endif
 }
 
 // Adler-32 sums of whole 32-byte blocks (nblocks <= 128, which keeps the

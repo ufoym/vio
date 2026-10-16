@@ -290,9 +290,14 @@ VIO_INLINE void copy_match(std::uint8_t* out, std::size_t dist, unsigned len, [[
 #if VIO_SIMD_NEON_A64
     if (pattern_simd) return copy_pattern_neon(out, end, dist);
 #endif
+    // 16 bytes of the pattern, stored at steps of the largest multiple of
+    // dist that fits
+    std::uint8_t v[16];
+    for (unsigned i = 0; i < 16; i++) v[i] = src[i % dist];
+    const std::size_t step = 16 - 16 % dist;
     do {
-      *out = out[-static_cast<std::ptrdiff_t>(dist)];
-      out++;
+      std::memcpy(out, v, 16);
+      out += step;
     } while (out < end);
   }
 }
