@@ -112,17 +112,21 @@ VIO_INLINE int abs_residual(int r) { return std::abs(static_cast<int>(static_cas
 // Adds the sums of absolute residuals of n bytes x for the five filters
 // (a, b, c: the bytes left, above and above left) to cost[0..4]; in the
 // form MSVC vectorizes (no ?:, operands through distinct pointers).
+// The Paeth residuals are also stored in paeth[0..n), which saves filtering
+// the row again when Paeth is chosen (the most common choice).
 inline void filter_costs_int(const std::uint8_t* VIO_RESTRICT x, const std::uint8_t* VIO_RESTRICT a,
                              const std::uint8_t* VIO_RESTRICT b, const std::uint8_t* VIO_RESTRICT c, int n,
-                             std::uint64_t* cost) {
+                             std::uint64_t* cost, std::uint8_t* VIO_RESTRICT paeth) {
   int c0 = 0, c1 = 0, c2 = 0, c3 = 0, c4 = 0;  // n < 2^23
   for (int i = 0; i < n; i++) {
     const int xi = x[i], ai = a[i], bi = b[i], ci = c[i];
+    const int r4 = xi - paeth_select_int(ai, bi, ci);
+    paeth[i] = static_cast<std::uint8_t>(r4);
     c0 += abs_residual(xi);
     c1 += abs_residual(xi - ai);
     c2 += abs_residual(xi - bi);
     c3 += abs_residual(xi - ((ai + bi) >> 1));
-    c4 += abs_residual(xi - paeth_select_int(ai, bi, ci));
+    c4 += abs_residual(r4);
   }
   cost[0] += static_cast<std::uint32_t>(c0), cost[1] += static_cast<std::uint32_t>(c1);
   cost[2] += static_cast<std::uint32_t>(c2), cost[3] += static_cast<std::uint32_t>(c3);
@@ -157,13 +161,16 @@ VIO_INLINE std::int16_t abs_residual16(std::int16_t r) {
 // filter whose residuals have the smallest sum of absolute values (as
 // signed bytes).  cur and up point at padded rows (up is all zeros for the
 // first row).
+// (VIO_PNG_SCALAR_INT: with paeth, the Paeth residuals are stored there.)
 inline unsigned choose_filter_scalar(const std::uint8_t* cur, const std::uint8_t* up, std::size_t n,
-                                  unsigned bpp, unsigned allowed = 0x1f) {
+                                  unsigned bpp, unsigned allowed = 0x1f,
+                                  [[maybe_unused]] std::uint8_t* paeth = nullptr) {
   std::uint64_t cost[5] = {};
 #if VIO_PNG_SCALAR_INT
-  for (std::size_t i = 0; i < n; i += std::size_t(1) << 22) {
-    const int m = static_cast<int>(std::min(n - i, std::size_t(1) << 22));
-    filter_costs_int(cur + i, cur + i - bpp, up + i, up + i - bpp, m, cost);
+  std::uint8_t scratch[4096];
+  for (std::size_t i = 0; i < n; i += sizeof(scratch)) {
+    const int m = static_cast<int>(std::min(n - i, sizeof(scratch)));
+    filter_costs_int(cur + i, cur + i - bpp, up + i, up + i - bpp, m, cost, paeth ? paeth + i : scratch);
   }
 #elif VIO_PNG_SCALAR_I16
   for (std::size_t i = 0; i < n;) {
@@ -622,6 +629,14 @@ inline void apply_filter(unsigned filter, std::uint8_t* out, const std::uint8_t*
 inline void filter_row(std::uint8_t* dst, const std::uint8_t* cur, const std::uint8_t* up,
                        std::size_t n, unsigned bpp, unsigned allowed, FilterIsa isa) {
   const bool choose = (allowed & (allowed - 1)) != 0;  // more than one allowed
+#if VIO_PNG_SCALAR_INT
+  if (choose && isa == FilterIsa::kScalar) {
+    const unsigned f = choose_filter_scalar(cur, up, n, bpp, allowed, dst + 1);
+    dst[0] = static_cast<std::uint8_t>(f);
+    if (f != kFilterPaeth) apply_filter_scalar(f, dst + 1, cur, up, n, bpp);
+    return;
+  }
+#endif
   const unsigned f = choose ? choose_filter(cur, up, n, bpp, allowed, isa) : ctz32(allowed);
   dst[0] = static_cast<std::uint8_t>(f);
   apply_filter(f, dst + 1, cur, up, n, bpp, isa);
