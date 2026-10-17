@@ -8,7 +8,8 @@
 #           submodule on the same runner, per instruction-set level, plus a
 #           per-function compression profile of both, and IJG libjpeg (no
 #           SIMD) as a baseline.  Only on real hardware:
-#           emulated timings say nothing.
+#           emulated timings say nothing.  No macOS arm64 job: that runner is
+#           a virtualized M1, so macOS arm64 is measured on a local Mac.
 #   report  one Markdown report (job summary) + HTML report (artifact).
 name: CI
 
@@ -250,7 +251,7 @@ jobs:
 
       - name: Set up MSVC
         if: matrix.msvc
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ./.github/actions/msvc
         with:
           arch: ${{ matrix.msvc }}
 
@@ -331,9 +332,6 @@ jobs:
           - name: linux-arm64
             os: ubuntu-24.04-arm
             isas: --isa neon= --isa none=JSIMD_FORCENONE=1
-          - name: macos-arm64
-            os: macos-15
-            isas: --isa neon= --isa none=JSIMD_FORCENONE=1
           - name: macos-x64
             os: macos-15-intel
             isas: --isa avx2= --isa sse2=JSIMD_FORCESSE2=1 --isa none=JSIMD_FORCENONE=1
@@ -347,7 +345,7 @@ jobs:
 
       - name: Set up MSVC
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ./.github/actions/msvc
 
       - name: Install NASM
         if: contains(matrix.name, 'x64')

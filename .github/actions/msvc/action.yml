@@ -1,0 +1,26 @@
+# The MSVC developer environment (vcvarsall.bat of the newest Visual Studio
+# with the C++ tools) for the steps after this one: every variable it adds
+# or changes is exported through GITHUB_ENV.
+name: Set up MSVC
+inputs:
+  arch:
+    description: vcvarsall.bat target (x64, x86, ...)
+    default: x64
+runs:
+  using: composite
+  steps:
+    - shell: pwsh
+      run: |
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        $vs = & $vswhere -latest -products * -property installationPath `
+          -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64
+        if (-not $vs) { throw "no Visual Studio with the C++ tools" }
+        $bat = Join-Path $vs 'VC\Auxiliary\Build\vcvarsall.bat'
+        $lines = cmd /c "`"$bat`" ${{ inputs.arch }} >nul && set"
+        if ($LASTEXITCODE) { throw "vcvarsall.bat ${{ inputs.arch }} failed" }
+        foreach ($line in $lines) {
+          if ($line -match '^([^=]+)=(.*)$' -and
+              [Environment]::GetEnvironmentVariable($Matches[1]) -ne $Matches[2]) {
+            "$($Matches[1])=$($Matches[2])" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          }
+        }
