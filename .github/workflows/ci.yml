@@ -373,8 +373,10 @@ jobs:
         continue-on-error: true
         run: |
           curl -fsSL --retry 3 -o jpegsrc.tar.gz https://www.ijg.org/files/jpegsrc.v10.tar.gz
+          sha256="sha256sum"
+          command -v sha256sum > /dev/null || sha256="shasum -a 256"
           echo "8b9eaa13242690ebd03e1728ab1edf97a81a78ed6e83624d493655f31ac95ab5  jpegsrc.tar.gz" |
-            shasum -a 256 -c -
+            $sha256 -c -
           mkdir -p build && tar xzf jpegsrc.tar.gz -C build
 
       - name: Build vio tjbench
