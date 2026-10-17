@@ -5,8 +5,9 @@ progressive, arithmetic-coded and lossless JPEG with 8- to 16-bit samples,
 lossless transforms, and SIMD acceleration for x86 (MMX through AVX2), Arm
 NEON, PowerPC AltiVec, Loongson MMI and RISC-V Vector.  It is faster than
 libjpeg-turbo in every configuration measured.  The PNG codec, with its own
-DEFLATE implementation, decodes faster than image-png and encodes faster
-than fpnge and image-png with SIMD, and faster than libpng at the same
+DEFLATE implementation, decodes faster than image-png (in every
+measurement but one, on the noisiest runner), encodes faster than
+fpnge and image-png with SIMD, and faster than libpng at the same
 compression at every SIMD level, with byte-identical files in its zlib mode
 (see [Performance](#performance)).
 
@@ -131,7 +132,9 @@ Throughput measured by `tjbench` on GitHub-hosted runners: vio, libjpeg-turbo
 TurboJPEG layer, `tests/libjpeg/`), all built on the same machine with the
 same compiler (GCC on Linux, Apple Clang on macOS, MSVC on Windows; NASM for
 libjpeg-turbo's x86 SIMD).  The image is a 3632×2384 RGB tiling of `testorig.ppm`; each number
-is the best of 5 runs.  Results from commit `57212e5`.  Hosted Linux x86-64
+is the best of 5 runs.  Results from commit `57212e5`; the JPEG code has not
+changed since, and the CI run at `d72c74b` measured the same figures within
+a few percent on the runners it shares with them.  Hosted Linux x86-64
 runners come with different processors; the on-demand workflow
 `bench-x64.yml` runs the benchmark on several at once, which measured the
 three AMD EPYC generations and the Intel Xeon below (where several runs had
@@ -404,8 +407,12 @@ By image category, number of images in parentheses (Linux x86-64, AMD EPYC
 
 Measured at [d72c74b](https://github.com/ufoym/vio/commit/d72c74b) on the
 GitHub-hosted runners (one run; one job per platform and SIMD level, whose
-CPUs vary from job to job).  fpnge has no Arm code; image-png's fast mode is
-its fpnge-inspired encoder.
+CPUs vary from job to job).  The macOS x86-64 runner's timings vary the
+most: a second run of its SSE2 job measured decoding +196% against libpng
+and +3% against image-png (−8% in the table), encoding +125% and +82%
+against libpng, +39% against fpnge and +14% against image-png.  The macOS
+AArch64 runner is a virtualized Apple M1.  fpnge has no Arm code;
+image-png's fast mode is its fpnge-inspired encoder.
 
 ### PNG optimization log
 
@@ -466,6 +473,17 @@ NEON code paths on an AArch64 host).  Every build tree lives under `build/`.
 Options: `VIO_BUILD_TESTS` (on when vio is the top-level project),
 `VIO_TEST_SCALAR` (also test every program with SIMD disabled, as the
 `-scalar` variant).
+
+CI (`.github/workflows/ci.yml`) runs the whole suite on every push:
+natively with GCC and Clang on Linux x86-64, GCC on Linux i686 and AArch64,
+Apple Clang on macOS x86-64 and AArch64, and MSVC (x64 and x86) and clang-cl
+on Windows; under QEMU on AArch32 (NEON at build time, and detected at run
+time, also on a CPU without it), PowerPC 64 little-endian (AltiVec and VSX)
+and 32 big-endian (AltiVec), MIPS64 Loongson MMI and RISC-V 64 with RVV
+(VLEN 128 and 256).  On x86 the suite is repeated at the lower SIMD levels
+(`JSIMD_FORCESSE2`, and `JSIMD_FORCESSE` on i686).  All 23 runs pass at
+`d72c74b` (742 tests, 371 in the runs at a lower level, two fewer on
+Windows), as do the 742 tests of the native build on an Apple M4.
 
 On Windows, configure from a Visual Studio developer command prompt with
 Ninja (add `-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl` for

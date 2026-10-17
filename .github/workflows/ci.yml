@@ -8,8 +8,7 @@
 #           submodule on the same runner, per instruction-set level, plus a
 #           per-function compression profile of both, and IJG libjpeg (no
 #           SIMD) as a baseline.  Only on real hardware:
-#           emulated timings say nothing.  No macOS arm64 job: that runner is
-#           a virtualized M1, so macOS arm64 is measured on a local Mac.
+#           emulated timings say nothing.
 #   report  one Markdown report (job summary) + HTML report (artifact).
 name: CI
 
@@ -98,7 +97,7 @@ jobs:
               sse2|JSIMD_FORCESSE2=1|-E scalar
           - name: linux-armhf-neon (qemu)
             os: ubuntu-24.04
-            apt: g++-arm-linux-gnueabihf qemu-user
+            apt: g++-arm-linux-gnueabihf
             triple: arm-linux-gnueabihf
             proc: arm
             flags: -mfpu=neon
@@ -107,7 +106,7 @@ jobs:
               neon|QEMU_CPU=cortex-a15|
           - name: linux-armhf-runtime (qemu)
             os: ubuntu-24.04
-            apt: g++-arm-linux-gnueabihf qemu-user
+            apt: g++-arm-linux-gnueabihf
             triple: arm-linux-gnueabihf
             proc: armrt
             emulator: qemu-arm
@@ -116,7 +115,7 @@ jobs:
               no-neon|QEMU_CPU=cortex-r5f|-E scalar
           - name: linux-ppc64le (qemu)
             os: ubuntu-24.04
-            apt: g++-powerpc64le-linux-gnu qemu-user
+            apt: g++-powerpc64le-linux-gnu
             triple: powerpc64le-linux-gnu
             proc: ppc64le
             flags: -mcpu=power8
@@ -125,7 +124,7 @@ jobs:
               altivec+vsx||
           - name: linux-ppc32-be (qemu)
             os: ubuntu-24.04
-            apt: g++-14-powerpc-linux-gnu qemu-user
+            apt: g++-14-powerpc-linux-gnu
             triple: powerpc-linux-gnu
             sfx: "-14"
             proc: ppc
@@ -135,7 +134,7 @@ jobs:
               altivec|QEMU_CPU=7450_v2.0|
           - name: linux-mips64el (qemu)
             os: ubuntu-24.04
-            apt: g++-mips64el-linux-gnuabi64 qemu-user
+            apt: g++-mips64el-linux-gnuabi64
             triple: mips64el-linux-gnuabi64
             proc: mips64el
             flags: -march=loongson3a
@@ -148,7 +147,7 @@ jobs:
           # can need more than 30 minutes.
           - name: linux-riscv64 (qemu)
             os: ubuntu-24.04
-            apt: g++-14-riscv64-linux-gnu qemu-user
+            apt: g++-14-riscv64-linux-gnu
             triple: riscv64-linux-gnu
             sfx: "-14"
             proc: riscv64
@@ -162,7 +161,7 @@ jobs:
               rvv-vlen128|QEMU_CPU=rv64,v=true,vlen=128|
           - name: linux-riscv64 (qemu)
             os: ubuntu-24.04
-            apt: g++-14-riscv64-linux-gnu qemu-user
+            apt: g++-14-riscv64-linux-gnu
             triple: riscv64-linux-gnu
             sfx: "-14"
             proc: riscv64
@@ -176,7 +175,7 @@ jobs:
               rvv-vlen128|QEMU_CPU=rv64,v=true,vlen=128|
           - name: linux-riscv64 (qemu)
             os: ubuntu-24.04
-            apt: g++-14-riscv64-linux-gnu qemu-user
+            apt: g++-14-riscv64-linux-gnu
             triple: riscv64-linux-gnu
             sfx: "-14"
             proc: riscv64
@@ -190,7 +189,7 @@ jobs:
               rvv-vlen128|QEMU_CPU=rv64,v=true,vlen=128|
           - name: linux-riscv64 (qemu)
             os: ubuntu-24.04
-            apt: g++-14-riscv64-linux-gnu qemu-user
+            apt: g++-14-riscv64-linux-gnu
             triple: riscv64-linux-gnu
             sfx: "-14"
             proc: riscv64
@@ -204,7 +203,7 @@ jobs:
               rvv-vlen128|QEMU_CPU=rv64,v=true,vlen=128|
           - name: linux-riscv64 (qemu)
             os: ubuntu-24.04
-            apt: g++-14-riscv64-linux-gnu qemu-user
+            apt: g++-14-riscv64-linux-gnu
             triple: riscv64-linux-gnu
             sfx: "-14"
             proc: riscv64
@@ -218,7 +217,7 @@ jobs:
               rvv-vlen256|QEMU_CPU=rv64,v=true,vlen=256|-E scalar
           - name: linux-riscv64 (qemu)
             os: ubuntu-24.04
-            apt: g++-14-riscv64-linux-gnu qemu-user
+            apt: g++-14-riscv64-linux-gnu
             triple: riscv64-linux-gnu
             sfx: "-14"
             proc: riscv64
@@ -232,7 +231,7 @@ jobs:
               rvv-vlen256|QEMU_CPU=rv64,v=true,vlen=256|-E scalar
           - name: linux-riscv64 (qemu)
             os: ubuntu-24.04
-            apt: g++-14-riscv64-linux-gnu qemu-user
+            apt: g++-14-riscv64-linux-gnu
             triple: riscv64-linux-gnu
             sfx: "-14"
             proc: riscv64
@@ -261,6 +260,19 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -yq --no-install-recommends ${{ matrix.apt }}
 
+      # QEMU 10.2 (static, from the Ubuntu 26.04 release pocket) instead of
+      # the runner's 8.2: about 1.4x faster on the RVV tjunittest runs.
+      - name: Install QEMU
+        if: matrix.emulator
+        run: |
+          deb=qemu-user_10.2.1+ds-1ubuntu3_amd64.deb
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$deb" \
+            "http://archive.ubuntu.com/ubuntu/pool/universe/q/qemu/$deb"
+          echo "e6bdaac070232a44b8657cad84ac0853d84b7167b55af82370af040291f55bd8  $RUNNER_TEMP/$deb" |
+            sha256sum -c -
+          dpkg -x "$RUNNER_TEMP/$deb" "$RUNNER_TEMP/qemu"
+          "$RUNNER_TEMP/qemu/usr/bin/${{ matrix.emulator }}" --version
+
       - name: Configure
         env:
           CC: ${{ matrix.cc }}
@@ -276,7 +288,7 @@ jobs:
                    "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}"
                    -DCMAKE_EXE_LINKER_FLAGS=-static)
             if [ -n "${{ matrix.emulator }}" ]; then
-              args+=(-DCMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/${{ matrix.emulator }})
+              args+=(-DCMAKE_CROSSCOMPILING_EMULATOR=$RUNNER_TEMP/qemu/usr/bin/${{ matrix.emulator }})
             fi
           fi
           [ "$RUNNER_OS" = Windows ] && args+=(-G Ninja)
@@ -331,6 +343,9 @@ jobs:
             isas: --isa avx2= --isa sse2=JSIMD_FORCESSE2=1 --isa none=JSIMD_FORCENONE=1
           - name: linux-arm64
             os: ubuntu-24.04-arm
+            isas: --isa neon= --isa none=JSIMD_FORCENONE=1
+          - name: macos-arm64
+            os: macos-15
             isas: --isa neon= --isa none=JSIMD_FORCENONE=1
           - name: macos-x64
             os: macos-15-intel
