@@ -2,7 +2,7 @@
 // flipping, transposition, cropping incl. extension, wipe, drop, roll,
 // grayscale conversion) and marker copying.
 //
-// Typical use (see tests/tools/jpeg_transform.cpp):
+// Typical use (see tests/jpeg/tools/jpeg_transform.cpp):
 //   Decoder src; copy_markers_setup(src, CopyOption::Comments); src.open(data);
 //   Transform t; t.transform = TransformOp::Rot90;
 //   if (!request_workspace(src, t)) ...;          // -perfect failure

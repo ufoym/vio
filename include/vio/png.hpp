@@ -1,5 +1,6 @@
 // vio::png - PNG codec.
 //
+//   png/types.hpp     png::Info, png::Header, chunk structs
 //   png/encoder.hpp   png::Encoder
 //   png/decoder.hpp   png::Decoder: all standard PNG variants (bit depths,
 //                     color types, Adam7 interlacing) in the PNG's native
@@ -8,7 +9,7 @@
 //   png/stream.hpp    png::StreamDecoder: progressive (push) decoding
 //   png/simple.hpp    png::FormatReader / FormatWriter: images in a chosen
 //                     8-bit sRGB, 16-bit linear or colormapped format
-//   png/inflate.hpp, png/deflate.hpp, png/checksum.hpp
+//   png/detail/inflate.hpp, png/detail/deflate.hpp, png/detail/checksum.hpp
 //                     the zlib functionality PNG needs (vio::png::zlib)
 //
 // png::Reader/Writer adapt the codec to vio::ImageReader/ImageWriter.

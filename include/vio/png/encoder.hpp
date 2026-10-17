@@ -1,9 +1,9 @@
 // vio::png - PNG encoder.
 //
-// png::Encoder writes the image and every chunk in png::Info (png/info.hpp),
+// png::Encoder writes the image and every chunk in png::Info (png/types.hpp),
 // interlaced or not, and APNG animations (frames added after the default
 // image).  Image data is compressed in one of two modes:
-//   kFast (default)  single-pass SIMD encoder (png/fast_encoder.hpp)
+//   kFast (default)  single-pass SIMD encoder (png/detail/fast_encoder.hpp)
 //   kZlib            per-scanline filter selection and zlib compression at
 //                    a chosen level and strategy; with the default options,
 //                    files byte-identical to libspng 0.7's
@@ -14,12 +14,12 @@
 #include <string>
 #include <vector>
 
-#include "common.hpp"
-#include "deflate.hpp"
-#include "fast_encoder.hpp"
-#include "filter.hpp"
-#include "info.hpp"
+#include "detail/common.hpp"
+#include "detail/deflate.hpp"
+#include "detail/fast_encoder.hpp"
+#include "detail/filter.hpp"
 #include "transform.hpp"
+#include "types.hpp"
 
 namespace vio::png {
 

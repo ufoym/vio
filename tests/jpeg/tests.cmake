@@ -146,32 +146,32 @@ foreach(libtype ${TEST_LIBTYPES})
   set(suffix ${VIO_SUFFIX_${libtype}})
   if(WITH_TURBOJPEG)
     add_test(NAME tjunittest-${libtype}
-      COMMAND tjunittest${suffix})
+      COMMAND ${VIO_TOOL_tjunittest}${suffix})
     add_test(NAME tjunittest-${libtype}-alloc
-      COMMAND tjunittest${suffix} -alloc)
+      COMMAND ${VIO_TOOL_tjunittest}${suffix} -alloc)
     add_test(NAME tjunittest-${libtype}-yuv
-      COMMAND tjunittest${suffix} -yuv)
+      COMMAND ${VIO_TOOL_tjunittest}${suffix} -yuv)
     add_test(NAME tjunittest-${libtype}-yuv-alloc
-      COMMAND tjunittest${suffix} -yuv -alloc)
+      COMMAND ${VIO_TOOL_tjunittest}${suffix} -yuv -alloc)
     add_test(NAME tjunittest-${libtype}-yuv-nopad
-      COMMAND tjunittest${suffix} -yuv -noyuvpad)
+      COMMAND ${VIO_TOOL_tjunittest}${suffix} -yuv -noyuvpad)
     add_test(NAME tjunittest-${libtype}-lossless
-      COMMAND tjunittest${suffix} -lossless)
+      COMMAND ${VIO_TOOL_tjunittest}${suffix} -lossless)
     add_test(NAME tjunittest-${libtype}-lossless-alloc
-      COMMAND tjunittest${suffix} -lossless -alloc)
+      COMMAND ${VIO_TOOL_tjunittest}${suffix} -lossless -alloc)
     add_test(NAME tjunittest-${libtype}-bmp
-      COMMAND tjunittest${suffix} -bmp)
+      COMMAND ${VIO_TOOL_tjunittest}${suffix} -bmp)
     add_test(NAME tjunittest12-${libtype}
-      COMMAND tjunittest${suffix} -precision 12)
+      COMMAND ${VIO_TOOL_tjunittest}${suffix} -precision 12)
     add_test(NAME tjunittest12-${libtype}-alloc
-      COMMAND tjunittest${suffix} -precision 12 -alloc)
+      COMMAND ${VIO_TOOL_tjunittest}${suffix} -precision 12 -alloc)
     foreach(sample_bits 2 3 4 5 6 7 9 10 11 12 13 14 15 16)
       add_test(NAME tjunittest${sample_bits}-${libtype}-lossless
-        COMMAND tjunittest${suffix} -precision ${sample_bits} -lossless)
+        COMMAND ${VIO_TOOL_tjunittest}${suffix} -precision ${sample_bits} -lossless)
       add_test(NAME tjunittest${sample_bits}-${libtype}-lossless-alloc
-        COMMAND tjunittest${suffix} -precision ${sample_bits} -lossless -alloc)
+        COMMAND ${VIO_TOOL_tjunittest}${suffix} -precision ${sample_bits} -lossless -alloc)
       add_test(NAME tjunittest${sample_bits}-${libtype}-bmp
-        COMMAND tjunittest${suffix} -precision ${sample_bits} -bmp)
+        COMMAND ${VIO_TOOL_tjunittest}${suffix} -precision ${sample_bits} -bmp)
     endforeach()
 
     foreach(sample_bits 8 12)
@@ -230,7 +230,7 @@ foreach(libtype ${TEST_LIBTYPES})
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
           ${SRCIMG} ${testout}_tile.${ext})
       add_test(NAME ${tjbench}-${libtype}-tile
-        COMMAND tjbench${suffix} ${testout}_tile.${ext} 95
+        COMMAND ${VIO_TOOL_tjbench}${suffix} ${testout}_tile.${ext} 95
           -precision ${sample_bits} -rgb -quiet -tile -benchtime 0.01
           -warmup 0)
       set_tests_properties(${tjbench}-${libtype}-tile
@@ -238,15 +238,15 @@ foreach(libtype ${TEST_LIBTYPES})
 
       foreach(tile 8 16 32 64 128)
         add_test(NAME ${tjbench}-${libtype}-tile-gray-${tile}x${tile}-cmp
-          COMMAND md5cmp ${MD5_${EXT}_GRAY_TILE}
+          COMMAND ${VIO_TOOL_md5cmp} ${MD5_${EXT}_GRAY_TILE}
             ${testout}_tile_GRAY_Q95_${tile}x${tile}.${ext})
         foreach(subsamp 420 422)
           add_test(NAME ${tjbench}-${libtype}-tile-${subsamp}-${tile}x${tile}-cmp
-            COMMAND md5cmp ${MD5_${EXT}_${subsamp}_${tile}x${tile}_TILE}
+            COMMAND ${VIO_TOOL_md5cmp} ${MD5_${EXT}_${subsamp}_${tile}x${tile}_TILE}
               ${testout}_tile_${subsamp}_Q95_${tile}x${tile}.${ext})
         endforeach()
         add_test(NAME ${tjbench}-${libtype}-tile-444-${tile}x${tile}-cmp
-          COMMAND md5cmp ${MD5_${EXT}_444_TILE}
+          COMMAND ${VIO_TOOL_md5cmp} ${MD5_${EXT}_444_TILE}
             ${testout}_tile_444_Q95_${tile}x${tile}.${ext})
         foreach(subsamp gray 420 422 444)
           set_tests_properties(
@@ -259,22 +259,22 @@ foreach(libtype ${TEST_LIBTYPES})
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
           ${SRCIMG} ${testout}_tilem.${ext})
       add_test(NAME ${tjbench}-${libtype}-tilem
-        COMMAND tjbench${suffix} ${testout}_tilem.${ext} 95
+        COMMAND ${VIO_TOOL_tjbench}${suffix} ${testout}_tilem.${ext} 95
           -precision ${sample_bits} -rgb -fastupsample -quiet -tile
           -benchtime 0.01 -warmup 0)
       set_tests_properties(${tjbench}-${libtype}-tilem
         PROPERTIES DEPENDS ${tjbench}-${libtype}-tilem-cp)
 
       add_test(NAME ${tjbench}-${libtype}-tile-420m-8x8-cmp
-        COMMAND md5cmp ${MD5_${EXT}_420M_8x8_TILE}
+        COMMAND ${VIO_TOOL_md5cmp} ${MD5_${EXT}_420M_8x8_TILE}
           ${testout}_tilem_420_Q95_8x8.${ext})
       add_test(NAME ${tjbench}-${libtype}-tile-422m-8x8-cmp
-        COMMAND md5cmp ${MD5_${EXT}_422M_8x8_TILE}
+        COMMAND ${VIO_TOOL_md5cmp} ${MD5_${EXT}_422M_8x8_TILE}
           ${testout}_tilem_422_Q95_8x8.${ext})
       foreach(tile 16 32 64 128)
         foreach(subsamp 420 422)
           add_test(NAME ${tjbench}-${libtype}-tile-${subsamp}m-${tile}x${tile}-cmp
-            COMMAND md5cmp ${MD5_${EXT}_${subsamp}M_TILE}
+            COMMAND ${VIO_TOOL_md5cmp} ${MD5_${EXT}_${subsamp}M_TILE}
               ${testout}_tilem_${subsamp}_Q95_${tile}x${tile}.${ext})
         endforeach()
       endforeach()
@@ -291,7 +291,7 @@ foreach(libtype ${TEST_LIBTYPES})
   endif()
 
   if(UNIX)
-    add_test(NAME bmpsizetest-${libtype} COMMAND bmpsizetest${suffix})
+    add_test(NAME bmpsizetest-${libtype} COMMAND ${VIO_TOOL_bmpsizetest}${suffix})
   endif()
 
   # These tests are carefully crafted to provide full coverage of as many of
@@ -314,7 +314,7 @@ foreach(libtype ${TEST_LIBTYPES})
       COMMAND ${ACTUAL_PROG}${suffix} ${ACTUAL_ARGS} -outfile ${OUTFILE}
         ${INFILE})
     add_test(NAME ${PROG}-${libtype}-${NAME}-cmp
-      COMMAND md5cmp ${MD5SUM} ${OUTFILE})
+      COMMAND ${VIO_TOOL_md5cmp} ${MD5SUM} ${OUTFILE})
     set_tests_properties(${PROG}-${libtype}-${NAME}-cmp PROPERTIES
       DEPENDS ${PROG}-${libtype}-${NAME})
     if(${ARGC} GREATER 6)
@@ -508,7 +508,7 @@ foreach(libtype ${TEST_LIBTYPES})
       ${MD5_${EXT}_RGB_ISLOW} ${cjpeg}-${libtype}-rgb-islow)
 
     add_test(NAME ${djpeg}-${libtype}-rgb-islow-icc-cmp
-      COMMAND md5cmp b06a39d730129122e85c1363ed1bbc9e ${testout}_rgb_islow.icc)
+      COMMAND ${VIO_TOOL_md5cmp} b06a39d730129122e85c1363ed1bbc9e ${testout}_rgb_islow.icc)
     set_tests_properties(${djpeg}-${libtype}-rgb-islow-icc-cmp PROPERTIES
       DEPENDS ${djpeg}-${libtype}-rgb-islow)
 
@@ -826,7 +826,7 @@ foreach(libtype ${TEST_LIBTYPES})
       COMMAND ${VIO_TOOL_example}${suffix} compress -q 95 ${EXAMPLE_12BIT_ARG}
         ${testout}-example.jpg)
     add_test(NAME example-${sample_bits}bit-${libtype}-compress-cmp
-      COMMAND md5cmp ${MD5_JPEG_EXAMPLE_COMPRESS} ${testout}-example.jpg)
+      COMMAND ${VIO_TOOL_md5cmp} ${MD5_JPEG_EXAMPLE_COMPRESS} ${testout}-example.jpg)
     set_tests_properties(example-${sample_bits}bit-${libtype}-compress-cmp
       PROPERTIES DEPENDS example-${sample_bits}bit-${libtype}-compress)
 
@@ -834,7 +834,7 @@ foreach(libtype ${TEST_LIBTYPES})
       COMMAND ${VIO_TOOL_example}${suffix} decompress ${EXAMPLE_12BIT_ARG}
         ${JPEGIMG} ${testout}-example.ppm)
     add_test(NAME example-${sample_bits}bit-${libtype}-decompress-cmp
-      COMMAND md5cmp ${MD5_PPM_EXAMPLE_DECOMPRESS} ${testout}-example.ppm)
+      COMMAND ${VIO_TOOL_md5cmp} ${MD5_PPM_EXAMPLE_DECOMPRESS} ${testout}-example.ppm)
     set_tests_properties(example-${sample_bits}bit-${libtype}-decompress-cmp
       PROPERTIES DEPENDS example-${sample_bits}bit-${libtype}-decompress)
 

@@ -12,7 +12,7 @@
 #include <cstdint>
 #include <cstring>
 
-#include "simd.hpp"
+#include "../simd/vec.hpp"
 
 #if VIO_SIMD_X86
 #include <immintrin.h>
@@ -487,7 +487,7 @@ inline void adler32_vec(std::uint32_t& s1, std::uint32_t& s2, const std::uint8_t
 
 inline std::uint32_t crc32(std::uint32_t crc, const std::uint8_t* buf, std::size_t len) {
   crc = ~crc;
-  using namespace jpeg::simd;
+  using namespace simd;
 #if VIO_SIMD_X86
   if (len >= 64 && simd::has(kPCLMUL) && simd::has(kSSE41)) {
     std::size_t n = len & ~std::size_t(15);
@@ -511,7 +511,7 @@ inline std::uint32_t adler32(std::uint32_t adler, const std::uint8_t* buf, std::
   constexpr std::uint32_t BASE = 65521;
   constexpr std::size_t NMAX = 5552;
   std::uint32_t a = adler & 0xffff, b = (adler >> 16) & 0xffff;
-  using namespace jpeg::simd;
+  using namespace simd;
 #if VIO_SIMD_X86_64
   const bool ssse3 = simd::has(kSSSE3), vec = simd::has(kSSE2);
 #elif VIO_SIMD_X86

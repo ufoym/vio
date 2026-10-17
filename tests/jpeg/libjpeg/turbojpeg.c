@@ -1,5 +1,5 @@
 /*
- * The subset of the TurboJPEG API that tjbench needs to measure 8-bit
+ * The subset of the TurboJPEG API that jpeg-bench needs to measure 8-bit
  * compression and decompression, implemented on IJG libjpeg (version 9 or
  * later), so that the same benchmark program can time vio, libjpeg-turbo and
  * libjpeg.  Compression and decompression set up libjpeg exactly as

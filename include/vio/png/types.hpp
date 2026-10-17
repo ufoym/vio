@@ -1,4 +1,5 @@
-// vio::png - the contents of a PNG file other than the image data.
+// vio::png - public vocabulary types: image header, palette, and chunk
+// contents (png::Info).
 //
 // png::Info holds every standard chunk, the APNG animation chunks, text, and
 // the chunks the codec does not know (kept on request).  Values keep the
@@ -12,9 +13,40 @@
 #include <string>
 #include <vector>
 
-#include "common.hpp"
+#include "../core.hpp"
+#include "config.hpp"
 
 namespace vio::png {
+
+enum ColorType : std::uint8_t {
+  kGray = 0,
+  kTruecolor = 2,
+  kIndexed = 3,
+  kGrayAlpha = 4,
+  kTruecolorAlpha = 6,
+};
+
+struct Header {
+  std::uint32_t width = 0, height = 0;
+  std::uint8_t bit_depth = 8;
+  std::uint8_t color_type = kTruecolor;
+  std::uint8_t interlace = 0;
+  bool operator==(const Header&) const = default;
+};
+
+struct PaletteEntry {
+  std::uint8_t red, green, blue;
+  bool operator==(const PaletteEntry&) const = default;
+};
+
+inline int num_channels(std::uint8_t color_type) {
+  switch (color_type) {
+    case kGray: case kIndexed: return 1;
+    case kGrayAlpha: return 2;
+    case kTruecolor: return 3;
+    default: return 4;
+  }
+}
 
 // Where a chunk is, or is to be written, relative to PLTE and IDAT.
 enum ChunkLocation : std::uint8_t {

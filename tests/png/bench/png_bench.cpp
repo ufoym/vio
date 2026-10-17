@@ -16,7 +16,7 @@
 // Prints one line per file: "<impl> <mode> <path> <megapixels> <seconds>
 // <bytes>", seconds being the fastest of the repetitions and bytes the size
 // of the decoded image (decode) or of the encoded file (encode).  Encoded
-// files are checked by decoding them again.  tests/png-bench/png_bench.py
+// files are checked by decoding them again.  tests/png/bench/png_bench.py
 // aggregates the lines of several implementations.
 #include <chrono>
 #include <cstdio>

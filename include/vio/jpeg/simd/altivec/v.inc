@@ -136,19 +136,6 @@ struct V {
   static VIO_INLINE T cmpeq_16(T a, T b) { return (T)vec_cmpeq((S16)a, (S16)b); }
   static VIO_INLINE T cmpgt_16(T a, T b) { return (T)vec_cmpgt((S16)a, (S16)b); }
 
-  // Unsigned bytes (PNG filters); avg_u8 rounds up.
-  static VIO_INLINE T sub_8(T a, T b) { return vec_sub(a, b); }
-  static VIO_INLINE T avg_u8(T a, T b) { return vec_avg(a, b); }
-  static VIO_INLINE T min_u8(T a, T b) { return vec_min(a, b); }
-  static VIO_INLINE T adds_u8(T a, T b) { return vec_adds(a, b); }
-  static VIO_INLINE T subs_u8(T a, T b) { return vec_subs(a, b); }
-  static VIO_INLINE T cmpeq_8(T a, T b) { return (T)vec_cmpeq(a, b); }
-  static VIO_INLINE T loadl_32(const void* p) {
-    alignas(16) unsigned char t[16] = {};
-    std::memcpy(t, p, 4);
-    return vec_ld(0, t);
-  }
-
   static VIO_INLINE T loadl_64(const void* p) {
     alignas(16) unsigned char t[16] = {};
     std::memcpy(t, p, 8);

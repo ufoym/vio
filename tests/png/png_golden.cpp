@@ -1,8 +1,8 @@
-// png-golden: writes libpng-expected.txt, what libpng produces for the
+// png-golden: writes png/expected.txt, what libpng produces for the
 // cases of png_cases.hpp, for png-test to compare vio with.  Built only
 // against libpng (VIO_PNG_GOLDEN=ON); run as
 //
-//   png-golden LIBPNG_DIR > tests/libpng-expected.txt
+//   png-golden LIBPNG_DIR > tests/png/expected.txt
 //
 // Lines are "section key value":
 //   decode FILE HASH|error     samples as decoded (PNG layout, 16-bit

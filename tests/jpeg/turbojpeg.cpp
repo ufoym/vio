@@ -1,7 +1,8 @@
 // TurboJPEG API (turbojpeg.h, version 3.2) implemented on top of vio.
 //
 // This compatibility layer lets programs written against libjpeg-turbo's
-// TurboJPEG API -- in particular libjpeg-turbo's own tjunittest and tjbench --
+// TurboJPEG API -- in particular libjpeg-turbo's own tjunittest and tjbench
+// (built as jpeg-test and jpeg-bench) --
 // run unchanged on vio.  The logic follows libjpeg-turbo's turbojpeg.c and
 // turbojpeg-mp.c so that results are identical.
 #include "turbojpeg.h"

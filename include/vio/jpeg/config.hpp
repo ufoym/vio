@@ -4,6 +4,9 @@
 #include <cstddef>
 #include <cstdint>
 
+#ifndef VIO_CONFIG_COMMON_DEFINED
+#define VIO_CONFIG_COMMON_DEFINED
+
 #if defined(_MSC_VER) && !defined(__clang__)
 #define VIO_INLINE __forceinline
 #define VIO_NOINLINE __declspec(noinline)
@@ -147,3 +150,5 @@ VIO_INLINE const T* opaque(const T* p) {
 }
 
 }  // namespace vio
+
+#endif  // VIO_CONFIG_COMMON_DEFINED

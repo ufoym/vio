@@ -1,6 +1,6 @@
 // png-test: the PNG codec's counterparts of libpng's tests, run by
-// tests/libpng.cmake.  Values are compared with libpng-expected.txt, what
-// libpng produces for the same cases (tools/png_golden.cpp).
+// tests/png/tests.cmake.  Values are compared with png/expected.txt, what
+// libpng produces for the same cases (png/png_golden.cpp).
 //
 //   png-test check [--roundtrip] EXPECTED ROOT FILE...       (pngtest)
 //       Decodes each FILE (relative to ROOT); the samples must be libpng's,
@@ -67,7 +67,7 @@ std::vector<std::uint8_t> read_file(const std::string& path) {
   return {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
 }
 
-// libpng-expected.txt: "section key value" (keys may contain spaces).
+// png/expected.txt: "section key value" (keys may contain spaces).
 struct Expected {
   std::map<std::string, std::string> values;
   explicit Expected(const std::string& path) {

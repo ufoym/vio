@@ -1,7 +1,7 @@
 # libpng's tests (tests/libpng/tests, libpng18 branch), adapted to vio: the
-# same test names and images, run by png-test (tools/png_test.cpp) instead
-# of libpng's programs.  Results are compared with libpng-expected.txt, what
-# libpng produces for the same cases (written by tools/png_golden.cpp; build
+# same test names and images, run by png-test (png/png_test.cpp) instead
+# of libpng's programs.  Results are compared with png/expected.txt, what
+# libpng produces for the same cases (written by png/png_golden.cpp; build
 # it with -DVIO_PNG_GOLDEN=ON).
 #
 #   pngtest-all              decode and re-encode pngtest.png, the png-3 and
@@ -17,7 +17,7 @@
 #                            transformations and gamma processing
 
 set(LIBPNG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libpng)
-set(LIBPNG_EXPECTED ${CMAKE_CURRENT_SOURCE_DIR}/libpng-expected.txt)
+set(LIBPNG_EXPECTED ${CMAKE_CURRENT_SOURCE_DIR}/png/expected.txt)
 
 file(GLOB PNGSUITE_PNGS RELATIVE ${LIBPNG_DIR} ${LIBPNG_DIR}/contrib/pngsuite/*.png)
 file(GLOB PNGSUITE_INTERLACED_PNGS RELATIVE ${LIBPNG_DIR}
@@ -112,15 +112,15 @@ foreach(variant ${VIO_VARIANTS})
   endforeach()
 endforeach()
 
-# png-golden: regenerates libpng-expected.txt from the libpng submodule.
-option(VIO_PNG_GOLDEN "Build png-golden (needs zlib) to regenerate libpng-expected.txt" OFF)
+# png-golden: regenerates png/expected.txt from the libpng submodule.
+option(VIO_PNG_GOLDEN "Build png-golden (needs zlib) to regenerate png/expected.txt" OFF)
 if(VIO_PNG_GOLDEN)
   find_package(ZLIB REQUIRED)
   set(PNG_SHARED OFF CACHE BOOL "" FORCE)
   set(PNG_TESTS OFF CACHE BOOL "" FORCE)
   set(PNG_TOOLS OFF CACHE BOOL "" FORCE)
   add_subdirectory(${LIBPNG_DIR} ${CMAKE_CURRENT_BINARY_DIR}/libpng EXCLUDE_FROM_ALL)
-  add_executable(png-golden tools/png_golden.cpp)
-  target_include_directories(png-golden PRIVATE tools ${LIBPNG_DIR} ${CMAKE_CURRENT_BINARY_DIR}/libpng)
+  add_executable(png-golden png/png_golden.cpp)
+  target_include_directories(png-golden PRIVATE png ${LIBPNG_DIR} ${CMAKE_CURRENT_BINARY_DIR}/libpng)
   target_link_libraries(png-golden PRIVATE vio png_static ZLIB::ZLIB)
 endif()

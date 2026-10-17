@@ -33,8 +33,8 @@
 #include <string>
 #include <vector>
 
-#include "common.hpp"
-#include "info.hpp"
+#include "detail/common.hpp"
+#include "types.hpp"
 
 namespace vio::png {
 

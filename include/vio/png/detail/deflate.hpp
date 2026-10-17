@@ -15,7 +15,7 @@
 #include <intrin.h>
 #endif
 
-#include "../core.hpp"
+#include "../../core.hpp"
 #include "checksum.hpp"
 
 namespace vio::png::zlib {
