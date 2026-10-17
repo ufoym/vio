@@ -1,15 +1,21 @@
 # vio
 
-Header-only C++20 image I/O.  The JPEG codec supports sequential,
-progressive, arithmetic-coded and lossless JPEG with 8- to 16-bit samples,
-lossless transforms, and SIMD acceleration for x86 (MMX through AVX2), Arm
-NEON, PowerPC AltiVec, Loongson MMI and RISC-V Vector.  It is faster than
-libjpeg-turbo in every configuration measured.  The PNG codec, with its own
-DEFLATE implementation, decodes faster than image-png (in every
-measurement but one, on the noisiest runner), encodes faster than
-fpnge and image-png with SIMD, and faster than libpng at the same
-compression at every SIMD level, with byte-identical files in its zlib mode
-(see [Performance](#performance)).
+Fast, complete, header-only C++20 image I/O: JPEG, PNG, BMP, GIF, PPM and
+Targa, with SIMD on every major architecture.
+
+- **Fast JPEG** (see [Performance](#performance)):
+  - encoding 4.6–7.6× libjpeg, and 1.2–1.7× libjpeg-turbo;
+  - decoding 2.2–3.1× libjpeg, and 1.2–1.5× libjpeg-turbo.
+- **Fast PNG:**
+  - decoding 2.2–3.6× libpng, and faster than image-png;
+  - encoding 1.4–3.0× libpng with identical files, and with SIMD faster
+    than fpnge and image-png.
+- **Complete JPEG:** sequential, progressive, arithmetic-coded and lossless,
+  8- to 16-bit samples, lossless transforms.
+- **Portable SIMD:** x86 (MMX through AVX2), Arm NEON, PowerPC AltiVec,
+  Loongson MMI and RISC-V Vector, chosen at run time.
+- **Header-only:** add `include/` and include only the formats you need;
+  PNG brings its own DEFLATE, with no zlib dependency.
 
 ## Using the library
 
@@ -127,30 +133,29 @@ rely on compiler auto-vectorization.
 
 ### JPEG
 
-Throughput measured by `tjbench` on GitHub-hosted runners: vio, libjpeg-turbo
-3.2 (built from the test submodule) and IJG libjpeg 10 (driven through a thin
+Throughput measured by `tjbench`: vio against libjpeg-turbo 3.2 (built from
+the test submodule) and IJG libjpeg 10 (no SIMD; driven through a thin
 TurboJPEG layer, `tests/libjpeg/`), all built on the same machine with the
 same compiler (GCC on Linux, Apple Clang on macOS, MSVC on Windows; NASM for
-libjpeg-turbo's x86 SIMD).  The image is a 3632×2384 RGB tiling of `testorig.ppm`; each number
-is the best of 5 runs.  Results from commit `57212e5`; the JPEG code has not
-changed since, and the CI run at `d72c74b` measured the same figures within
-a few percent on the runners it shares with them.  Hosted Linux x86-64
-runners come with different processors; the on-demand workflow
-`bench-x64.yml` runs the benchmark on several at once, which measured the
-three AMD EPYC generations and the Intel Xeon below (where several runs had
-the same processor, each figure is the median over them).
+libjpeg-turbo's x86 SIMD).  The image is a 3632×2384 RGB tiling of
+`testorig.ppm`, each number the best of 5 runs.  +20% means 1.2 times the
+throughput; the summaries are geometric means over the configurations except
+lossless, which libjpeg does not support.
 
-How much faster vio is than libjpeg-turbo and than IJG libjpeg (which has no
-SIMD code): +20% means 1.2 times the throughput.  Geometric mean over the
-configurations below except lossless, which libjpeg does not support.
+The EPYC 7763 (Linux and Windows), i7-8700B, Neoverse-N2 and virtualized M1
+rows are the GitHub-hosted runners in CI at
+[a3184d7](https://github.com/ufoym/vio/commit/a3184d7).  The other x86-64
+processors that hosted Linux runners come with were measured by the
+on-demand `bench-x64.yml` at `57212e5` (median when a processor came up
+more than once; the JPEG code has not changed since).
 
 JPEG compression:
 
 | Platform       | CPU                      | SIMD   | vs libjpeg-turbo | vs libjpeg |
 | -------------- | ------------------------ | ------ | ---------------: | ---------: |
-| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | AVX2   |             +39% |      +554% |
-| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | SSE2   |             +32% |      +480% |
-| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | scalar |             +51% |      +113% |
+| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | AVX2   |             +39% |      +555% |
+| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | SSE2   |             +31% |      +478% |
+| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | scalar |             +50% |      +111% |
 | Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | AVX2   |             +44% |      +614% |
 | Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | SSE2   |             +38% |      +499% |
 | Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | scalar |             +55% |      +128% |
@@ -160,24 +165,26 @@ JPEG compression:
 | Linux x86-64   | Intel Xeon 8573C         | AVX2   |             +44% |      +570% |
 | Linux x86-64   | Intel Xeon 8573C         | SSE2   |             +34% |      +463% |
 | Linux x86-64   | Intel Xeon 8573C         | scalar |             +64% |      +128% |
-| macOS x86-64   | Intel Core i7-8700B      | AVX2   |             +34% |      +500% |
-| macOS x86-64   | Intel Core i7-8700B      | SSE2   |             +21% |      +388% |
-| macOS x86-64   | Intel Core i7-8700B      | scalar |             +70% |      +153% |
-| Linux AArch64  | Neoverse-N2              | NEON   |             +33% |      +353% |
+| macOS x86-64   | Intel Core i7-8700B      | AVX2   |             +31% |      +501% |
+| macOS x86-64   | Intel Core i7-8700B      | SSE2   |             +23% |      +459% |
+| macOS x86-64   | Intel Core i7-8700B      | scalar |             +72% |      +187% |
+| Linux AArch64  | Neoverse-N2              | NEON   |             +34% |      +358% |
 | Linux AArch64  | Neoverse-N2              | scalar |             +36% |      +179% |
 | macOS AArch64  | Apple M4¹                | NEON   |             +61% |      +612% |
 | macOS AArch64  | Apple M4¹                | scalar |             +61% |      +296% |
-| Windows x86-64 | AMD EPYC 7763 (Zen 3)²   | AVX2   |             +37% |          — |
-| Windows x86-64 | AMD EPYC 7763 (Zen 3)²   | SSE2   |             +32% |          — |
-| Windows x86-64 | AMD EPYC 7763 (Zen 3)²   | scalar |             +46% |          — |
+| macOS AArch64  | Apple M1 (virtual)       | NEON   |             +53% |      +589% |
+| macOS AArch64  | Apple M1 (virtual)       | scalar |             +71% |      +333% |
+| Windows x86-64 | AMD EPYC 7763 (Zen 3)²   | AVX2   |             +37% |      +552% |
+| Windows x86-64 | AMD EPYC 7763 (Zen 3)²   | SSE2   |             +32% |      +483% |
+| Windows x86-64 | AMD EPYC 7763 (Zen 3)²   | scalar |             +48% |      +104% |
 
 JPEG decompression:
 
 | Platform       | CPU                      | SIMD   | vs libjpeg-turbo | vs libjpeg |
 | -------------- | ------------------------ | ------ | ---------------: | ---------: |
-| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | AVX2   |             +34% |      +187% |
-| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | SSE2   |             +35% |      +172% |
-| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | scalar |             +20% |       +45% |
+| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | AVX2   |             +34% |      +188% |
+| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | SSE2   |             +36% |      +174% |
+| Linux x86-64   | AMD EPYC 7763 (Zen 3)    | scalar |             +21% |       +47% |
 | Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | AVX2   |             +45% |      +210% |
 | Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | SSE2   |             +42% |      +178% |
 | Linux x86-64   | AMD EPYC 9V74 (Zen 4)    | scalar |             +22% |       +48% |
@@ -187,35 +194,34 @@ JPEG decompression:
 | Linux x86-64   | Intel Xeon 8573C         | AVX2   |             +47% |      +163% |
 | Linux x86-64   | Intel Xeon 8573C         | SSE2   |             +42% |      +135% |
 | Linux x86-64   | Intel Xeon 8573C         | scalar |             +27% |       +55% |
-| macOS x86-64   | Intel Core i7-8700B      | AVX2   |             +30% |      +162% |
-| macOS x86-64   | Intel Core i7-8700B      | SSE2   |             +20% |      +123% |
-| macOS x86-64   | Intel Core i7-8700B      | scalar |             +21% |       +57% |
-| Linux AArch64  | Neoverse-N2              | NEON   |             +36% |      +114% |
+| macOS x86-64   | Intel Core i7-8700B      | AVX2   |             +28% |      +163% |
+| macOS x86-64   | Intel Core i7-8700B      | SSE2   |             +22% |      +169% |
+| macOS x86-64   | Intel Core i7-8700B      | scalar |             +23% |       +85% |
+| Linux AArch64  | Neoverse-N2              | NEON   |             +37% |      +115% |
 | Linux AArch64  | Neoverse-N2              | scalar |             +27% |       +35% |
 | macOS AArch64  | Apple M4¹                | NEON   |             +49% |      +142% |
 | macOS AArch64  | Apple M4¹                | scalar |             +47% |       +63% |
-| Windows x86-64 | AMD EPYC 7763 (Zen 3)²   | AVX2   |             +29% |          — |
-| Windows x86-64 | AMD EPYC 7763 (Zen 3)²   | SSE2   |             +28% |          — |
-| Windows x86-64 | AMD EPYC 7763 (Zen 3)²   | scalar |             +22% |          — |
+| macOS AArch64  | Apple M1 (virtual)       | NEON   |             +49% |      +157% |
+| macOS AArch64  | Apple M1 (virtual)       | scalar |             +47% |       +77% |
+| Windows x86-64 | AMD EPYC 7763 (Zen 3)²   | AVX2   |             +31% |      +150% |
+| Windows x86-64 | AMD EPYC 7763 (Zen 3)²   | SSE2   |             +28% |      +129% |
+| Windows x86-64 | AMD EPYC 7763 (Zen 3)²   | scalar |             +23% |       +31% |
 
-¹ Measured on a local Mac (native, same build and benchmark script)
-instead of the GitHub-hosted runner, which is a virtualized Apple M1.
-² The GitHub-hosted Windows runner, with MSVC; it has no IJG libjpeg build,
-hence no comparison with libjpeg.
+¹ A local Mac (native, same build and benchmark script).
+² The GitHub-hosted Windows runner, with MSVC.
 
-Per configuration, on the same machines (by CPU; the summary gives their
-platforms), each summary figure above being the geometric mean of the first
-seven columns of its row. Columns: 4:4:4, 4:2:2, 4:2:0 and gray at quality
-95; fastDCT: 4:2:0 with the fast integer DCT; prog.: 4:2:0 progressive;
-arith.: 4:2:0 arithmetic-coded.
+Per configuration; each summary figure above is the geometric mean of the
+first seven columns.  4:4:4, 4:2:2, 4:2:0 and gray at quality 95; fastDCT,
+prog. and arith.: 4:2:0 with the fast integer DCT, progressive and
+arithmetic-coded.
 
 JPEG compression, vio vs libjpeg-turbo:
 
 | CPU, SIMD            | 4:4:4 | 4:2:2 | 4:2:0 |  gray | fastDCT | prog. | arith. | lossless |
 | -------------------- | ----: | ----: | ----: | ----: | ------: | ----: | -----: | -------: |
-| EPYC 7763 AVX2       |  +34% |  +30% |  +28% |  +39% |    +38% |  +74% |   +32% |     +29% |
-| EPYC 7763 SSE2       |  +29% |  +25% |  +22% |  +28% |    +23% |  +71% |   +32% |     +30% |
-| EPYC 7763 scalar     |  +67% |  +57% |  +49% |  +67% |    +45% |  +34% |   +40% |     +29% |
+| EPYC 7763 AVX2       |  +35% |  +31% |  +29% |  +40% |    +38% |  +68% |   +32% |     +33% |
+| EPYC 7763 SSE2       |  +29% |  +25% |  +22% |  +29% |    +23% |  +65% |   +31% |     +33% |
+| EPYC 7763 scalar     |  +67% |  +56% |  +49% |  +65% |    +44% |  +30% |   +40% |     +33% |
 | EPYC 9V74 AVX2       |  +36% |  +33% |  +32% |  +47% |    +42% |  +75% |   +50% |     +30% |
 | EPYC 9V74 SSE2       |  +36% |  +29% |  +25% |  +31% |    +27% |  +72% |   +49% |     +30% |
 | EPYC 9V74 scalar     |  +74% |  +61% |  +53% |  +66% |    +49% |  +30% |   +54% |     +30% |
@@ -225,24 +231,26 @@ JPEG compression, vio vs libjpeg-turbo:
 | Xeon 8573C AVX2      |  +36% |  +35% |  +34% |  +50% |    +31% |  +86% |   +46% |     +86% |
 | Xeon 8573C SSE2      |  +24% |  +24% |  +23% |  +29% |    +25% |  +81% |   +44% |     +88% |
 | Xeon 8573C scalar    |  +86% |  +72% |  +64% |  +81% |    +61% |  +35% |   +53% |     +86% |
-| i7-8700B AVX2        |  +18% |  +33% |  +27% |  +37% |    +33% |  +78% |   +18% |     +28% |
-| i7-8700B SSE2        |  +15% |  +14% |  +11% |   +9% |    +12% |  +76% |   +18% |     +31% |
-| i7-8700B scalar      | +105% |  +93% |  +81% |  +91% |    +63% |  +35% |   +36% |     +34% |
-| Neoverse-N2 NEON     |  +22% |  +21% |  +19% |  +29% |    +21% |  +85% |   +45% |     +75% |
-| Neoverse-N2 scalar   |  +28% |  +30% |  +32% |  +31% |    +34% |  +53% |   +49% |     +76% |
+| i7-8700B AVX2        |  +32% |  +16% |   +7% |  +33% |    +27% |  +92% |   +25% |     +41% |
+| i7-8700B SSE2        |  +18% |  +14% |  +12% |  +18% |    +12% |  +79% |   +22% |     +42% |
+| i7-8700B scalar      | +100% |  +92% |  +84% |  +89% |    +68% |  +42% |   +38% |     +41% |
+| Neoverse-N2 NEON     |  +23% |  +22% |  +20% |  +30% |    +22% |  +85% |   +44% |     +75% |
+| Neoverse-N2 scalar   |  +28% |  +30% |  +32% |  +31% |    +34% |  +54% |   +48% |     +75% |
 | M4¹ NEON             |  +47% |  +43% |  +40% |  +65% |    +34% | +148% |   +76% |     +54% |
 | M4¹ scalar           |  +55% |  +58% |  +60% |  +71% |    +54% |  +50% |   +79% |     +54% |
-| EPYC 7763² AVX2      |  +27% |  +24% |  +22% |  +29% |    +28% |  +73% |   +68% |     +51% |
-| EPYC 7763² SSE2      |  +18% |  +19% |  +17% |  +24% |    +18% |  +70% |   +67% |     +52% |
-| EPYC 7763² scalar    |  +54% |  +45% |  +40% |  +48% |    +43% |  +30% |   +68% |     +52% |
+| M1 (virtual) NEON    |  +44% |  +26% |  +39% |  +55% |    +19% | +131% |   +81% |     +48% |
+| M1 (virtual) scalar  |  +74% |  +73% |  +74% |  +81% |    +61% |  +53% |   +83% |     +56% |
+| EPYC 7763² AVX2      |  +27% |  +23% |  +21% |  +29% |    +26% |  +71% |   +68% |     +52% |
+| EPYC 7763² SSE2      |  +22% |  +19% |  +18% |  +22% |    +19% |  +68% |   +68% |     +51% |
+| EPYC 7763² scalar    |  +55% |  +47% |  +41% |  +48% |    +45% |  +30% |   +70% |     +53% |
 
 JPEG decompression, vio vs libjpeg-turbo:
 
 | CPU, SIMD            | 4:4:4 | 4:2:2 | 4:2:0 |  gray | fastDCT | prog. | arith. | lossless |
 | -------------------- | ----: | ----: | ----: | ----: | ------: | ----: | -----: | -------: |
-| EPYC 7763 AVX2       |  +26% |  +28% |  +28% |  +36% |    +35% |  +51% |   +32% |     +31% |
-| EPYC 7763 SSE2       |  +32% |  +32% |  +30% |  +42% |    +30% |  +49% |   +32% |     +31% |
-| EPYC 7763 scalar     |  +11% |  +10% |  +15% |  +25% |    +19% |  +28% |   +29% |     +32% |
+| EPYC 7763 AVX2       |  +26% |  +28% |  +29% |  +39% |    +35% |  +50% |   +30% |     +33% |
+| EPYC 7763 SSE2       |  +33% |  +33% |  +30% |  +47% |    +30% |  +50% |   +30% |     +33% |
+| EPYC 7763 scalar     |  +13% |  +12% |  +17% |  +27% |    +22% |  +30% |   +28% |     +33% |
 | EPYC 9V74 AVX2       |  +42% |  +39% |  +39% |  +52% |    +42% |  +61% |   +44% |     +23% |
 | EPYC 9V74 SSE2       |  +43% |  +36% |  +33% |  +50% |    +34% |  +53% |   +44% |     +23% |
 | EPYC 9V74 scalar     |  +14% |  +11% |  +16% |  +29% |    +21% |  +30% |   +39% |     +22% |
@@ -252,27 +260,25 @@ JPEG decompression, vio vs libjpeg-turbo:
 | Xeon 8573C AVX2      |  +39% |  +42% |  +40% |  +49% |    +43% |  +75% |   +43% |     +37% |
 | Xeon 8573C SSE2      |  +34% |  +37% |  +34% |  +45% |    +34% |  +68% |   +42% |     +38% |
 | Xeon 8573C scalar    |  +17% |  +17% |  +18% |  +33% |    +24% |  +43% |   +39% |     +37% |
-| i7-8700B AVX2        |  +11% |  +24% |  +17% |  +44% |    +28% |  +48% |   +47% |      +6% |
-| i7-8700B SSE2        |   +9% |   +6% |  +12% |  +33% |    +10% |  +33% |   +40% |     +12% |
-| i7-8700B scalar      |  +14% |  +17% |  +12% |  +22% |    +24% |  +23% |   +36% |      +9% |
-| Neoverse-N2 NEON     |  +30% |  +30% |  +33% |  +38% |    +36% |  +48% |   +39% |     +48% |
-| Neoverse-N2 scalar   |  +29% |  +18% |  +21% |  +33% |    +29% |  +28% |   +35% |     +48% |
+| i7-8700B AVX2        |  +15% |  +18% |  +14% |  +47% |    +18% |  +43% |   +44% |     +16% |
+| i7-8700B SSE2        |  +12% |  +12% |  +11% |  +37% |    +10% |  +32% |   +42% |     +20% |
+| i7-8700B scalar      |  +13% |  +17% |  +19% |  +21% |    +24% |  +26% |   +41% |     +20% |
+| Neoverse-N2 NEON     |  +31% |  +31% |  +33% |  +40% |    +37% |  +48% |   +39% |     +48% |
+| Neoverse-N2 scalar   |  +29% |  +18% |  +21% |  +33% |    +30% |  +28% |   +35% |     +48% |
 | M4¹ NEON             |  +45% |  +39% |  +40% |  +52% |    +45% |  +73% |   +47% |     +78% |
 | M4¹ scalar           |  +40% |  +40% |  +50% |  +36% |    +58% |  +58% |   +48% |     +78% |
-| EPYC 7763² AVX2      |  +23% |  +25% |  +24% |  +28% |    +25% |  +39% |   +45% |     +41% |
-| EPYC 7763² SSE2      |  +22% |  +23% |  +21% |  +30% |    +19% |  +39% |   +44% |     +42% |
-| EPYC 7763² scalar    |  +10% |  +16% |  +18% |  +16% |    +24% |  +29% |   +40% |     +42% |
+| M1 (virtual) NEON    |  +47% |  +49% |  +41% |  +58% |    +48% |  +49% |   +51% |     +82% |
+| M1 (virtual) scalar  |  +41% |  +40% |  +49% |  +40% |    +63% |  +48% |   +47% |     +81% |
+| EPYC 7763² AVX2      |  +25% |  +26% |  +26% |  +29% |    +27% |  +40% |   +44% |     +39% |
+| EPYC 7763² SSE2      |  +26% |  +26% |  +21% |  +28% |    +20% |  +37% |   +43% |     +40% |
+| EPYC 7763² scalar    |  +11% |  +16% |  +19% |  +19% |    +25% |  +29% |   +40% |     +39% |
 
-With SIMD, baseline compression is 17–65% faster than libjpeg-turbo and
-sequential decompression 19–52% (9–37% and 6–44% on the macOS x86-64
-runner, whose timings vary the most); without SIMD, compression is 40–105%
-faster on x86 and 28–71% on AArch64, and sequential decompression 10–33% on
-x86 and 18–58% on AArch64.  Progressive compression is 30–148% faster,
-arithmetic-coded 18–79% and lossless 28–88%; progressive decompression is
-23–76% faster, arithmetic-coded 29–48% and lossless 6–78% (22–78% except on
-the macOS x86-64 runner).  Shared CI
-runners are noisy (the macOS x86-64 runner most of all), so differences of a
-few percent are within run-to-run variation.
+With SIMD, baseline compression is 18–65% faster than libjpeg-turbo and
+sequential decompression 20–58% (7–33% and 10–47% on the macOS x86-64
+runner, the noisiest); without SIMD, 41–100% and 11–33% on x86, 28–81% and
+18–63% on AArch64.  Progressive, arithmetic-coded and lossless JPEG compress
+30–148%, 22–83% and 30–88% faster, and decompress 26–76%, 28–51% and 16–82%
+faster.  Differences of a few percent are within run-to-run variation.
 
 ### JPEG optimization log
 
@@ -304,45 +310,37 @@ Throughput gain of each change over the build before it (A/B on the same machine
 
 Single-threaded throughput on the 2848 images of the
 [QOI benchmark corpus](https://qoiformat.org/benchmark/) (icons, photos,
-textures, screenshots of games and web pages), the corpus image-png's own
-benchmark uses.  vio is compared at each SIMD level with the same libraries
-on every platform, one column each: libpng 1.6.59 with zlib 1.3.2, the most
-widely used combination, and the fastest decoder and encoders measured.
-Each figure is the geometric mean over the images of the speed-up in
-megapixels per second, each image timed as the fastest of 3 runs.
+textures, game and web screenshots; image-png's own benchmark corpus): the
+geometric mean over the images of the speed-up in megapixels per second,
+each image the best of 3 runs.  The same comparators at every SIMD level:
+libpng 1.6.59 with zlib 1.3.2, the most widely used combination, and the
+fastest decoder and encoders measured.  All are built from source with the
+same compiler (GCC on Linux, MSVC on Windows, Apple Clang on macOS; rustc for
+image-png).
 
-- vio's SIMD level is set with the `JSIMD_*` variables; libpng (whose SIMD
-  code only unfilters rows when decoding; zlib has none) is built without
-  it for the scalar rows.
-- The fastest decoder measured is image-png 0.18.1, ahead of Wuffs 0.4,
-  zune-png 0.5 and libspng or libpng with zlib-ng 2.3.  Its CRC-32 and
-  Adler-32 crates choose SIMD code at run time; for the scalar rows it is
-  built with their portable code instead (`tests/png-bench/image-png/
-  build_portable.py`).  In both builds, as in vio's scalar code, the loops
-  the compiler vectorizes by itself stay vectorized.
-- Decoding produces the image's own sample layout (`png::Decoder`; image-png
-  with `Transformations::IDENTITY`, built by `cargo --release`; libpng
-  without transformations).  All three verify both checksums, the chunks'
-  CRC-32 and the zlib stream's Adler-32 (image-png, which skips Adler-32 by
-  default, with `ignore_checksums(false)`).
-- Encoding starts from 8-bit RGB or RGBA.  Against libpng, vio runs in its
-  zlib mode (`Encoder::Mode::kZlib`), whose files are byte for byte libpng's
-  at the same zlib level, so the figures are speed alone: levels 1 and 6 (6
-  being libpng's default; adaptive filters in both).  vio's default fast
-  mode (`png::Encoder`) is a different, single-pass algorithm, compared with
-  the two fastest encoders at about the same file size: fpnge (x86 only; its
-  AVX2 build in the AVX2 rows, its SSE4.1 build in the SSE2 rows) and
-  image-png's fast mode.  vio's files are 4–5% smaller than fpnge's and 4%
-  smaller than image-png's.  Both modes are lossless: they change file size
-  and speed, never the pixels.
+- Decoding produces the image's own sample layout and verifies both
+  checksums (chunk CRC-32, zlib Adler-32) in every library.  image-png 0.18.1
+  (`Transformations::IDENTITY`, `ignore_checksums(false)`) is the fastest
+  decoder measured, ahead of Wuffs 0.4, zune-png 0.5, libspng and libpng
+  with zlib-ng 2.3.
+- Encoding starts from 8-bit RGB or RGBA.  vio's zlib mode
+  (`Encoder::Mode::kZlib`) writes libpng's files byte for byte at the same
+  zlib level, so the libpng columns (levels 1 and 6, the default) compare
+  speed alone.  vio's default fast mode, a single-pass encoder, is compared
+  with fpnge (x86 only; its AVX2 build in the AVX2 rows, SSE4.1 in the SSE2
+  rows) and image-png's fast mode; its files are 4–5% smaller than fpnge's
+  and 4% smaller than image-png's.  Both modes are lossless.
+- vio's SIMD level is set with `JSIMD_*`.  In the scalar rows libpng (whose
+  only SIMD code unfilters rows) is built without SIMD and image-png's
+  checksum crates use their portable code
+  (`tests/png-bench/image-png/build_portable.py`); loops the compiler
+  vectorizes by itself stay vectorized in every library.
 
-All libraries are built from source with the same compiler (image-png with
-rustc); the benchmark is `tests/png-bench/` (`png_bench.py run`, then
-`report` or `compare`; `.github/workflows/bench-png.yml` runs it on the
-GitHub-hosted runners, one job per platform and SIMD level).
-
-Compilers: GCC on Linux, MSVC on Windows, Apple Clang on macOS; the CPU
-gives the architecture (x86-64 or AArch64).
+The benchmark is `tests/png-bench/` (`png_bench.py run`, then `report` or
+`compare`); `.github/workflows/bench-png.yml` runs it on the GitHub-hosted
+runners, one job per platform and SIMD level, so the CPU can differ between
+rows.  Results from one run at
+[d72c74b](https://github.com/ufoym/vio/commit/d72c74b).
 
 PNG decoding:
 
@@ -405,14 +403,9 @@ By image category, number of images in parentheses (Linux x86-64, AMD EPYC
 
 ¹ zlib mode, level 6. ² Fast mode.
 
-Measured at [d72c74b](https://github.com/ufoym/vio/commit/d72c74b) on the
-GitHub-hosted runners (one run; one job per platform and SIMD level, whose
-CPUs vary from job to job).  The macOS x86-64 runner's timings vary the
-most: a second run of its SSE2 job measured decoding +196% against libpng
-and +3% against image-png (−8% in the table), encoding +125% and +82%
-against libpng, +39% against fpnge and +14% against image-png.  The macOS
-AArch64 runner is a virtualized Apple M1.  fpnge has no Arm code;
-image-png's fast mode is its fpnge-inspired encoder.
+The macOS x86-64 runner varies the most: a rerun of its SSE2 job measured
+decoding +3% and encoding +14% against image-png (−8% and +32% above).
+fpnge has no Arm code; image-png's fast mode is its fpnge-inspired encoder.
 
 ### PNG optimization log
 
@@ -474,16 +467,14 @@ Options: `VIO_BUILD_TESTS` (on when vio is the top-level project),
 `VIO_TEST_SCALAR` (also test every program with SIMD disabled, as the
 `-scalar` variant).
 
-CI (`.github/workflows/ci.yml`) runs the whole suite on every push:
-natively with GCC and Clang on Linux x86-64, GCC on Linux i686 and AArch64,
-Apple Clang on macOS x86-64 and AArch64, and MSVC (x64 and x86) and clang-cl
-on Windows; under QEMU on AArch32 (NEON at build time, and detected at run
-time, also on a CPU without it), PowerPC 64 little-endian (AltiVec and VSX)
-and 32 big-endian (AltiVec), MIPS64 Loongson MMI and RISC-V 64 with RVV
-(VLEN 128 and 256).  On x86 the suite is repeated at the lower SIMD levels
-(`JSIMD_FORCESSE2`, and `JSIMD_FORCESSE` on i686).  All 23 runs pass at
-`d72c74b` (742 tests, 371 in the runs at a lower level, two fewer on
-Windows), as do the 742 tests of the native build on an Apple M4.
+CI (`.github/workflows/ci.yml`) runs the whole suite on every push: natively
+with GCC and Clang on Linux x86-64, GCC on Linux i686 and AArch64, Apple
+Clang on macOS x86-64 and AArch64, MSVC (x64, x86) and clang-cl on Windows;
+under QEMU 10.2 on AArch32 (NEON at build time, and detected at run time),
+PowerPC 64 LE (AltiVec, VSX) and 32 BE (AltiVec), MIPS64 Loongson MMI and
+RISC-V 64 RVV (VLEN 128 and 256).  On x86 the suite is repeated at the lower
+SIMD levels (`JSIMD_FORCESSE2`, and `JSIMD_FORCESSE` on i686).  All 23 runs
+pass at `d72c74b`, as do the 742 tests of the native build on an Apple M4.
 
 On Windows, configure from a Visual Studio developer command prompt with
 Ninja (add `-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl` for
