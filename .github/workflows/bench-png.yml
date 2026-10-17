@@ -1,6 +1,8 @@
 # On demand: PNG throughput of vio vs fpnge (encoding, x86 only), image-png
-# (decoding and its fast encoding mode), Wuffs (decoding) and libpng 1.6 with
-# zlib, all built on the runner, over the QOI benchmark corpus
+# (decoding, checksums verified as by vio and libpng, and its fast encoding
+# mode; at the "none" level built without its run-time SIMD checksums),
+# Wuffs (decoding) and libpng 1.6 with zlib, all built on the runner, over
+# the QOI benchmark corpus
 # (tests/png-bench/), at each SIMD level: vio forced by JSIMD_*, the others
 # from their build for that level (tests/CMakeLists.txt).  Each run uploads
 # the per-file results and a summary.
@@ -49,8 +51,16 @@ jobs:
           submodules: true
 
       # before the MSVC environment, which confuses cargo's linker lookup
+      # (without SIMD: also without image-png's run-time SIMD checksums)
       - name: Build image-png benchmark
-        run: cargo build --release --manifest-path tests/png-bench/image-png/Cargo.toml
+        run: |
+          if [ "${{ matrix.level }}" = none ]; then
+            py=python3
+            [ "$RUNNER_OS" = Windows ] && py=python
+            $py tests/png-bench/image-png/build_portable.py
+          else
+            cargo build --release --manifest-path tests/png-bench/image-png/Cargo.toml
+          fi
 
       - name: Set up MSVC
         if: runner.os == 'Windows'
@@ -95,12 +105,14 @@ jobs:
           exe=""
           [ "$RUNNER_OS" = Windows ] && exe=.exe
           tag=${{ matrix.name }}-${{ matrix.level }}
+          ipdir=release
+          [ "${{ matrix.level }}" = none ] && ipdir=portable/release
           mkdir -p results
           $py tests/png-bench/png_bench.py run --corpus build/corpus \
             --out results/png-$tag.txt --sample ${{ inputs.sample }} --reps 3 \
             --vio build/vio/png-bench$exe --bin none=build/vio/png-bench-scalar$exe \
             --bin sse2=build/vio/png-bench-sse$exe --isa ${{ matrix.isa }} \
-            --image-png tests/png-bench/image-png/target/release/png-bench-image-png$exe
+            --image-png tests/png-bench/image-png/target/$ipdir/png-bench-image-png$exe
           { echo "### $tag"; echo '```';
             $py tests/png-bench/png_bench.py report results/png-$tag.txt --by-category;
             echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"

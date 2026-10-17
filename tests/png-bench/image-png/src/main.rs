@@ -12,6 +12,9 @@ use std::time::Instant;
 fn decode(data: &[u8], t: png::Transformations) -> (png::OutputInfo, Vec<u8>) {
     let mut d = png::Decoder::new(Cursor::new(data));
     d.set_transformations(t);
+    // Adler-32 checked as well as the chunks' CRC-32, as vio and libpng do
+    // (image-png skips it by default).
+    d.ignore_checksums(false);
     let mut r = d.read_info().unwrap();
     let mut buf = vec![0u8; r.output_buffer_size().unwrap()];
     let info = r.next_frame(&mut buf).unwrap();
