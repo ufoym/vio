@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Throughput of vio's tjbench against libjpeg-turbo's on the same machine.
+"""Throughput of vio's jpeg-bench against libjpeg-turbo's tjbench on the same machine.
 
-bench.py --vio build/tjbench --ref build/ljt/tjbench --platform linux-x64 \
+jpeg_bench.py --vio build/jpeg-bench --ref build/ljt/tjbench --platform linux-x64 \
          --isa avx2= --isa sse2=JSIMD_FORCESSE2=1 --out results/bench-linux-x64.json \
-         [--libjpeg build/tjbench-libjpeg]
+         [--libjpeg build/jpeg-bench-libjpeg]
 
 Each --isa is LABEL=[VAR=value,...]; both libraries honour the same JSIMD_*
-variables, so every row compares like with like.  --libjpeg adds tjbench
+variables, so every row compares like with like.  --libjpeg adds jpeg-bench
 built on IJG libjpeg, which has no SIMD code: it is measured once, with the
 first --isa, and configurations it does not support are recorded as null.  The two programs are run
 alternately, several times, and the best throughput of each is kept:

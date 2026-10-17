@@ -2,17 +2,24 @@
 #
 #   libjpeg-turbo/        libjpeg-turbo 3.2.0 (git submodule): test programs,
 #                         TurboJPEG header and test images, used unchanged
-#   libjpeg-turbo.cmake   libjpeg-turbo's test definitions, adapted to vio
 #   libpng/               libpng, branch libpng18 (git submodule): test images
-#   libpng.cmake          libpng's tests, adapted to vio (tools/png_test.cpp);
-#   libpng-expected.txt   the images as libpng decodes them
-#   tools/                jpeg-encode/-decode/-transform/-example: command-line
+#   jpeg/
+#     tests.cmake         libjpeg-turbo's test definitions, adapted to vio
+#     tools/              jpeg-encode/-decode/-transform/-example: command-line
 #                         compatible stand-ins for cjpeg/djpeg/jpegtran/example
-#   turbojpeg/            the TurboJPEG API implemented on vio, for tjunittest
-#                         and tjbench
-#   shim/                 stand-ins for the libjpeg-turbo internal headers that
+#     turbojpeg.cpp       the TurboJPEG API implemented on vio, for jpeg-test
+#                         and jpeg-bench
+#     shim/               stand-ins for the libjpeg-turbo internal headers that
 #                         the test programs include
-#   bmpsizetest.cpp       port of libjpeg-turbo's bmpsizetest.c
+#     libjpeg/            TurboJPEG layer and config for IJG libjpeg benchmarks
+#     bmp_test_size.cpp   port of libjpeg-turbo's bmpsizetest.c
+#   png/
+#     tests.cmake         libpng's tests, adapted to vio (png/png_test.cpp)
+#     expected.txt        the images as libpng decodes them
+#     png_test.cpp        test runner for libpng's test cases
+#     png_golden.cpp      regenerates expected.txt from libpng
+#     png_cases.hpp       shared test case definitions
+#     bench/              PNG throughput benchmark suite
 
 set(LJT_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libjpeg-turbo)
 if(NOT EXISTS ${LJT_SOURCE_DIR}/src/turbojpeg.h OR
@@ -23,7 +30,7 @@ if(NOT EXISTS ${LJT_SOURCE_DIR}/src/turbojpeg.h OR
 endif()
 
 # The libjpeg-turbo sources are compiled from a copy so that their quoted
-# includes of cdjpeg.h and jconfigint.h resolve to shim/ rather than to the
+# includes of cdjpeg.h and jconfigint.h resolve to jpeg/shim/ rather than to the
 # real headers next to them in the submodule.
 set(LJT_DIR ${CMAKE_CURRENT_BINARY_DIR}/libjpeg-turbo)
 foreach(f tjunittest.c tjbench.c tjutil.c tjutil.h turbojpeg.h
@@ -34,7 +41,7 @@ endforeach()
 # Settings for the libjpeg-turbo C programs.
 macro(vio_ljt_program target)
   target_include_directories(${target} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/shim ${LJT_DIR})
+    ${CMAKE_CURRENT_SOURCE_DIR}/jpeg/shim ${LJT_DIR})
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(${target} PRIVATE -w)
   endif()
@@ -44,48 +51,56 @@ set(VIO_TOOL_cjpeg jpeg-encode)
 set(VIO_TOOL_djpeg jpeg-decode)
 set(VIO_TOOL_jpegtran jpeg-transform)
 set(VIO_TOOL_example jpeg-example)
+set(VIO_TOOL_tjunittest jpeg-test)
+set(VIO_TOOL_tjbench jpeg-bench)
+set(VIO_TOOL_bmpsizetest bmp-test-size)
+set(VIO_TOOL_md5cmp md5-cmp)
 
 foreach(variant ${VIO_VARIANTS})
   set(sfx ${VIO_SUFFIX_${variant}})
   set(defs ${VIO_DEFS_${variant}})
 
   foreach(tool encode decode transform example)
-    add_executable(jpeg-${tool}${sfx} tools/jpeg_${tool}.cpp)
+    add_executable(jpeg-${tool}${sfx} jpeg/tools/jpeg_${tool}.cpp)
     target_link_libraries(jpeg-${tool}${sfx} PRIVATE vio)
     target_compile_definitions(jpeg-${tool}${sfx} PRIVATE ${defs})
   endforeach()
 
-  add_executable(png-test${sfx} tools/png_test.cpp)
+  add_executable(png-test${sfx} png/png_test.cpp)
   target_link_libraries(png-test${sfx} PRIVATE vio)
   target_compile_definitions(png-test${sfx} PRIVATE ${defs})
 
-  add_executable(bmpsizetest${sfx} bmpsizetest.cpp)
-  target_link_libraries(bmpsizetest${sfx} PRIVATE vio)
-  target_compile_definitions(bmpsizetest${sfx} PRIVATE ${defs})
+  add_executable(bmp-test-size${sfx} jpeg/bmp_test_size.cpp)
+  target_link_libraries(bmp-test-size${sfx} PRIVATE vio)
+  target_compile_definitions(bmp-test-size${sfx} PRIVATE ${defs})
+  add_custom_target(bmpsizetest${sfx} DEPENDS bmp-test-size${sfx})
 
-  add_library(turbojpeg-vio${sfx} STATIC turbojpeg/turbojpeg.cpp)
+  add_library(turbojpeg-vio${sfx} STATIC jpeg/turbojpeg.cpp)
   target_include_directories(turbojpeg-vio${sfx} PUBLIC ${LJT_DIR})
   target_link_libraries(turbojpeg-vio${sfx} PUBLIC vio)
   target_compile_definitions(turbojpeg-vio${sfx} PRIVATE ${defs})
 
-  add_executable(tjunittest${sfx} ${LJT_DIR}/tjunittest.c ${LJT_DIR}/tjutil.c
+  add_executable(jpeg-test${sfx} ${LJT_DIR}/tjunittest.c ${LJT_DIR}/tjutil.c
     ${LJT_DIR}/md5/md5.c ${LJT_DIR}/md5/md5hl.c)
-  add_executable(tjbench${sfx} ${LJT_DIR}/tjbench.c ${LJT_DIR}/tjutil.c)
-  foreach(t tjunittest tjbench)
+  add_executable(jpeg-bench${sfx} ${LJT_DIR}/tjbench.c ${LJT_DIR}/tjutil.c)
+  foreach(t jpeg-test jpeg-bench)
     target_link_libraries(${t}${sfx} PRIVATE turbojpeg-vio${sfx})
     set_target_properties(${t}${sfx} PROPERTIES LINKER_LANGUAGE CXX)
     vio_ljt_program(${t}${sfx})
   endforeach()
+  add_custom_target(tjunittest${sfx} DEPENDS jpeg-test${sfx})
+  add_custom_target(tjbench${sfx} DEPENDS jpeg-bench${sfx})
 endforeach()
 
-add_executable(md5cmp ${LJT_DIR}/md5/md5cmp.c ${LJT_DIR}/md5/md5.c
+add_executable(md5-cmp ${LJT_DIR}/md5/md5cmp.c ${LJT_DIR}/md5/md5.c
   ${LJT_DIR}/md5/md5hl.c)
-vio_ljt_program(md5cmp)
+vio_ljt_program(md5-cmp)
+add_custom_target(md5cmp DEPENDS md5-cmp)
 
-# Optional, for performance comparisons: tjbench on IJG libjpeg (9 or later),
+# Optional, for performance comparisons: jpeg-bench on IJG libjpeg (9 or later),
 # built from an unpacked jpegsrc.v*.tar.gz with the same compiler and flags.
 set(VIO_LIBJPEG_SOURCE_DIR "" CACHE PATH
-  "IJG libjpeg source tree; builds tjbench-libjpeg when set")
+  "IJG libjpeg source tree; builds jpeg-bench-libjpeg when set")
 if(VIO_LIBJPEG_SOURCE_DIR)
   set(IJG_SOURCES jaricom jcapimin jcapistd jcarith jccoefct jccolor jcdctmgr
     jchuff jcinit jcmainct jcmarker jcmaster jcomapi jcparam jcprepct jcsample
@@ -96,26 +111,27 @@ if(VIO_LIBJPEG_SOURCE_DIR)
   list(TRANSFORM IJG_SOURCES PREPEND ${VIO_LIBJPEG_SOURCE_DIR}/)
   list(TRANSFORM IJG_SOURCES APPEND .c)
   add_library(ijg-jpeg STATIC ${IJG_SOURCES})
-  # libjpeg/jconfig.h stands in for the header configure would generate.
+  # jpeg/libjpeg/jconfig.h stands in for the header configure would generate.
   target_include_directories(ijg-jpeg PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/libjpeg ${VIO_LIBJPEG_SOURCE_DIR})
+    ${CMAKE_CURRENT_SOURCE_DIR}/jpeg/libjpeg ${VIO_LIBJPEG_SOURCE_DIR})
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(ijg-jpeg PRIVATE -w)
   endif()
 
-  add_library(turbojpeg-libjpeg STATIC libjpeg/turbojpeg.c)
+  add_library(turbojpeg-libjpeg STATIC jpeg/libjpeg/turbojpeg.c)
   target_include_directories(turbojpeg-libjpeg PUBLIC ${LJT_DIR})
   target_link_libraries(turbojpeg-libjpeg PUBLIC ijg-jpeg)
 
-  add_executable(tjbench-libjpeg ${LJT_DIR}/tjbench.c ${LJT_DIR}/tjutil.c)
-  target_link_libraries(tjbench-libjpeg PRIVATE turbojpeg-libjpeg)
+  add_executable(jpeg-bench-libjpeg ${LJT_DIR}/tjbench.c ${LJT_DIR}/tjutil.c)
+  target_link_libraries(jpeg-bench-libjpeg PRIVATE turbojpeg-libjpeg)
   if(UNIX AND NOT APPLE)
-    target_link_libraries(tjbench-libjpeg PRIVATE m)
+    target_link_libraries(jpeg-bench-libjpeg PRIVATE m)
   endif()
-  vio_ljt_program(tjbench-libjpeg)
+  vio_ljt_program(jpeg-bench-libjpeg)
+  add_custom_target(tjbench-libjpeg DEPENDS jpeg-bench-libjpeg)
 endif()
 
-# Inputs of libjpeg-turbo.cmake.
+# Inputs of jpeg/tests.cmake.
 set(TEST_LIBTYPES ${VIO_VARIANTS})
 # The x86 SIMD variant uses libjpeg-turbo's SSE floating-point DCT kernels
 # for 8-bit samples, whose results differ from the C algorithms'.
@@ -125,10 +141,10 @@ endif()
 set(WITH_TURBOJPEG 1)
 set(WITH_ARITH_ENC 1)
 set(WITH_ARITH_DEC 1)
-include(libjpeg-turbo.cmake)
-include(libpng.cmake)
+include(jpeg/tests.cmake)
+include(png/tests.cmake)
 
-# PNG benchmark (png-bench/): vio, and optionally fpnge (x86 only; it needs
+# PNG benchmark (png/bench/): vio, and optionally fpnge (x86 only; it needs
 # SSE4.1 and PCLMUL, AVX2 in its fastest build), libpng with zlib and Wuffs,
 # built from source trees with the same compiler.  One executable per SIMD
 # level of the other libraries, run with the matching JSIMD_* variable for
@@ -205,7 +221,7 @@ endif()
 
 # png_bench(<target> <level>), level: default, sse or scalar (see above).
 function(png_bench target level)
-  add_executable(${target} png-bench/png_bench.cpp)
+  add_executable(${target} png/bench/png_bench.cpp)
   target_link_libraries(${target} PRIVATE vio)
   if(VIO_FPNGE_SOURCE_DIR AND NOT level STREQUAL "scalar")
     # (a copy of the source per build: the ISA flags apply per file)

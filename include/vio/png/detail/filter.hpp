@@ -14,7 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "simd.hpp"
+#include "../simd/vec.hpp"
 
 #if VIO_SIMD_NEON
 #if VIO_SIMD_NEON_RUNTIME
@@ -708,7 +708,7 @@ VIO_INLINE void unfilter_px_sse2(unsigned filter, std::uint8_t* dst, const std::
           P::store(dst + i, a, bpp);
         }
       } else {
-        if (simd::has(jpeg::simd::kSSE41)) paeth_rows_sse41(dst, src, prev, n, bpp);
+        if (simd::has(simd::kSSE41)) paeth_rows_sse41(dst, src, prev, n, bpp);
         else paeth_rows_sse2<W>(dst, src, prev, n, bpp);
       }
       break;
@@ -828,9 +828,9 @@ struct VecFilter {
 inline void unfilter_row(unsigned filter, std::uint8_t* dst, const std::uint8_t* src,
                          const std::uint8_t* prev, std::size_t n, unsigned bpp) {
 #if VIO_SIMD_NEON
-  if (simd::has(jpeg::simd::kNEON)) return unfilter_row_neon(filter, dst, src, prev, n, bpp);
+  if (simd::has(simd::kNEON)) return unfilter_row_neon(filter, dst, src, prev, n, bpp);
 #elif VIO_SIMD_X86
-  if (simd::has(jpeg::simd::kSSE2)) return unfilter_row_sse2(filter, dst, src, prev, n, bpp);
+  if (simd::has(simd::kSSE2)) return unfilter_row_sse2(filter, dst, src, prev, n, bpp);
 #elif VIO_PNG_GENERIC
   if (simd::has(simd::kGenericIsa)) return VecFilter<simd::GV>::unfilter_row(filter, dst, src, prev, n, bpp);
 #endif
@@ -846,7 +846,7 @@ inline bool can_unfilter_pair(unsigned f0, unsigned f1, unsigned bpp) {
   // (NEON, and Paeth rows in GCC's scalar code on AArch64: no gain with
   // SSE2, whose Paeth chain is short already, nor in other scalar code)
 #if VIO_SIMD_NEON
-  if (simd::has(jpeg::simd::kNEON)) return true;
+  if (simd::has(simd::kNEON)) return true;
 #endif
 #if VIO_PNG_SCALAR_PAETH_PAIRS
   return f0 == kFilterPaeth && f1 == kFilterPaeth && bpp <= 4;
@@ -863,7 +863,7 @@ inline bool can_unfilter_pair(unsigned f0, unsigned f1, unsigned bpp) {
 inline void unfilter_pair(unsigned f0, unsigned f1, std::uint8_t* d0, const std::uint8_t* s0, const std::uint8_t* p0,
                           std::uint8_t* d1, const std::uint8_t* s1, std::size_t n, unsigned bpp) {
 #if VIO_SIMD_NEON
-  if (simd::has(jpeg::simd::kNEON)) {
+  if (simd::has(simd::kNEON)) {
     if (bpp <= 4) unfilter_pair_neon<4>(f0, f1, d0, s0, p0, d1, s1, n, bpp);
     else unfilter_pair_neon<8>(f0, f1, d0, s0, p0, d1, s1, n, bpp);
     return;

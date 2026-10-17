@@ -1,4 +1,4 @@
-// bmpsizetest: verifies that the image readers and writers limit image
+// bmp-test-size: verifies that the image readers and writers limit image
 // dimensions appropriately and do not overflow 32-bit integers.
 //
 // The test table (TESTREAD/TESTWRITE macros and main()) is libjpeg-turbo's

@@ -1,6 +1,6 @@
-// Test cases shared by png-test (tools/png_test.cpp, checks vio) and
-// png-golden (tools/png_golden.cpp, records what libpng produces for the
-// same cases in libpng-expected.txt):
+// Test cases shared by png-test (png/png_test.cpp, checks vio) and
+// png-golden (png/png_golden.cpp, records what libpng produces for the
+// same cases in png/expected.txt):
 //
 //   - read transformation cases (libpng's png_set_* read transforms and
 //     vio's png::Transforms for the same request),
@@ -205,7 +205,7 @@ inline void to_vio(const Xform& x, const vio::png::Info& info, vio::png::Transfo
 }
 
 // Cases libpng cannot run ("internal row size calculation error"), listed
-// in libpng-expected.txt after the hash ("HASH/1,5,9"): left out of the
+// in png/expected.txt after the hash ("HASH/1,5,9"): left out of the
 // hash on both sides.
 inline std::vector<std::size_t> parse_skips(const std::string& value, std::string* hash) {
   std::vector<std::size_t> v;

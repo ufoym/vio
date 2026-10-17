@@ -1,6 +1,6 @@
 // vio::png - PNG decoder.
 //
-// png::Decoder reads every standard chunk into png::Info (png/info.hpp) and
+// png::Decoder reads every standard chunk into png::Info (png/types.hpp) and
 // decodes all standard PNG variants (all bit depths and color types, Adam7
 // interlacing, APNG frames) into the PNG's native sample layout.
 //
@@ -22,11 +22,11 @@
 #include <string>
 #include <vector>
 
-#include "common.hpp"
-#include "filter.hpp"
-#include "inflate.hpp"
-#include "info.hpp"
+#include "detail/common.hpp"
+#include "detail/filter.hpp"
+#include "detail/inflate.hpp"
 #include "transform.hpp"
+#include "types.hpp"
 
 namespace vio::png {
 

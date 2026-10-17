@@ -21,7 +21,7 @@
 
 #include "checksum.hpp"
 #include "filter.hpp"
-#include "simd.hpp"
+#include "../simd/vec.hpp"
 
 #if VIO_SIMD_X86
 #include <immintrin.h>
@@ -584,7 +584,7 @@ struct VecFilterSelect {
 enum class FilterIsa : unsigned char { kScalar, kSse2, kAvx2, kNeon, kVec };
 
 inline FilterIsa filter_isa() {
-  using namespace jpeg::simd;
+  using namespace simd;
 #if VIO_SIMD_AVX2
   if (simd::has(kAVX2) && simd::has(kBMI2)) return FilterIsa::kAvx2;
 #endif

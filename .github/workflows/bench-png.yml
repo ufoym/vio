@@ -3,7 +3,7 @@
 # mode; at the "none" level built without its run-time SIMD checksums),
 # Wuffs (decoding) and libpng 1.6 with zlib, all built on the runner, over
 # the QOI benchmark corpus
-# (tests/png-bench/), at each SIMD level: vio forced by JSIMD_*, the others
+# (tests/png/bench/), at each SIMD level: vio forced by JSIMD_*, the others
 # from their build for that level (tests/CMakeLists.txt).  Each run uploads
 # the per-file results and a summary.
 name: bench-png
@@ -57,9 +57,9 @@ jobs:
           if [ "${{ matrix.level }}" = none ]; then
             py=python3
             [ "$RUNNER_OS" = Windows ] && py=python
-            $py tests/png-bench/image-png/build_portable.py
+            $py tests/png/bench/image-png/build_portable.py
           else
-            cargo build --release --manifest-path tests/png-bench/image-png/Cargo.toml
+            cargo build --release --manifest-path tests/png/bench/image-png/Cargo.toml
           fi
 
       - name: Set up MSVC
@@ -108,13 +108,13 @@ jobs:
           ipdir=release
           [ "${{ matrix.level }}" = none ] && ipdir=portable/release
           mkdir -p results
-          $py tests/png-bench/png_bench.py run --corpus build/corpus \
+          $py tests/png/bench/png_bench.py run --corpus build/corpus \
             --out results/png-$tag.txt --sample ${{ inputs.sample }} --reps 3 \
             --vio build/vio/png-bench$exe --bin none=build/vio/png-bench-scalar$exe \
             --bin sse2=build/vio/png-bench-sse$exe --isa ${{ matrix.isa }} \
-            --image-png tests/png-bench/image-png/target/$ipdir/png-bench-image-png$exe
+            --image-png tests/png/bench/image-png/target/$ipdir/png-bench-image-png$exe
           { echo "### $tag"; echo '```';
-            $py tests/png-bench/png_bench.py report results/png-$tag.txt --by-category;
+            $py tests/png/bench/png_bench.py report results/png-$tag.txt --by-category;
             echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
           uname -a > results/cpu-$tag.txt || true
           if [ "$RUNNER_OS" = Linux ]; then lscpu >> results/cpu-$tag.txt; fi

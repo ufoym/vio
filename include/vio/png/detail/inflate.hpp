@@ -20,7 +20,7 @@
 #include <memory>
 #include <vector>
 
-#include "../core.hpp"
+#include "../../core.hpp"
 #include "checksum.hpp"
 
 
@@ -335,7 +335,7 @@ class Inflater {
  public:
   // raw = true decodes a bare DEFLATE stream (no zlib header/trailer).
   explicit Inflater(bool raw = false, bool verify_adler = true)
-      : raw_(raw), verify_adler_(verify_adler), bmi2_(simd::has(jpeg::simd::kBMI2)) {}
+      : raw_(raw), verify_adler_(verify_adler), bmi2_(simd::has(simd::kBMI2)) {}
 
   // An inflater kept per thread (its tables are large to allocate for
   // every small image), set up for a new stream.
@@ -532,7 +532,7 @@ class Inflater {
     // a maximal match plus a 16-byte overrun (two refills per iteration).
     if (in_end_ - in_ >= 32 && out_end_ - out_ >= 258 + 32) {
       FastState fs{in_, out_, bitbuf_, static_cast<unsigned>(bitcnt_), in_end_ - 16, out_end_ - (258 + 32),
-                   out_begin_, simd::has(jpeg::simd::kNEON)};
+                   out_begin_, simd::has(simd::kNEON)};
 #if VIO_PNG_INFLATE_BMI2
       const bool end_of_block = bmi2_ ? inflate_fast_bmi2(lit, dist, fs) : inflate_fast(lit, dist, fs);
 #else

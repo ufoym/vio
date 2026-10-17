@@ -133,9 +133,9 @@ rely on compiler auto-vectorization.
 
 ### JPEG
 
-Throughput measured by `tjbench`: vio against libjpeg-turbo 3.2 (built from
+Throughput measured by `jpeg-bench`: vio against libjpeg-turbo 3.2 (built from
 the test submodule) and IJG libjpeg 10 (no SIMD; driven through a thin
-TurboJPEG layer, `tests/libjpeg/`), all built on the same machine with the
+TurboJPEG layer, `tests/jpeg/libjpeg/`), all built on the same machine with the
 same compiler (GCC on Linux, Apple Clang on macOS, MSVC on Windows; NASM for
 libjpeg-turbo's x86 SIMD).  The image is a 3632×2384 RGB tiling of
 `testorig.ppm`, each number the best of 5 runs.  +20% means 1.2 times the
@@ -146,7 +146,7 @@ The EPYC 7763 (Linux and Windows), i7-8700B, Neoverse-N2 and virtualized M1
 rows are the GitHub-hosted runners in CI at
 [a3184d7](https://github.com/ufoym/vio/commit/a3184d7).  The other x86-64
 processors that hosted Linux runners come with were measured by the
-on-demand `bench-x64.yml` at `57212e5` (median when a processor came up
+on-demand `bench-jpeg.yml` at `57212e5` (median when a processor came up
 more than once; the JPEG code has not changed since).
 
 JPEG compression:
@@ -333,10 +333,10 @@ image-png).
 - vio's SIMD level is set with `JSIMD_*`.  In the scalar rows libpng (whose
   only SIMD code unfilters rows) is built without SIMD and image-png's
   checksum crates use their portable code
-  (`tests/png-bench/image-png/build_portable.py`); loops the compiler
+  (`tests/png/bench/image-png/build_portable.py`); loops the compiler
   vectorizes by itself stay vectorized in every library.
 
-The benchmark is `tests/png-bench/` (`png_bench.py run`, then `report` or
+The benchmark is `tests/png/bench/` (`png_bench.py run`, then `report` or
 `compare`); `.github/workflows/bench-png.yml` runs it on the GitHub-hosted
 runners, one job per platform and SIMD level, so the CPU can differ between
 rows.  Results from one run at
@@ -486,29 +486,29 @@ cmake --build build/msvc
 ctest --test-dir build/msvc -j 8
 ```
 
-The PNG tests (`tests/libpng.cmake`) mirror libpng's test suite: pngtest,
+The PNG tests (`tests/png/tests.cmake`) mirror libpng's test suite: pngtest,
 pnggetset, pngimage, pngstest, pngunknown and pngvalid, under the same names,
 on libpng's images and on generated ones.  Their reference values,
-`tests/libpng-expected.txt`, are what libpng produces for the same cases;
-to regenerate them after changing the cases (`tests/tools/png_cases.hpp`),
+`tests/png/expected.txt`, are what libpng produces for the same cases;
+to regenerate them after changing the cases (`tests/png/png_cases.hpp`),
 build `png-golden` against the libpng submodule (needs zlib):
 
 ```sh
 cmake --preset native -DVIO_PNG_GOLDEN=ON
 cmake --build build/native --target png-golden
-build/native/png-golden tests/libpng > tests/libpng-expected.txt
+build/native/png-golden tests/libpng > tests/png/expected.txt
 ```
 
 To benchmark against libjpeg-turbo, build it from the submodule into a tree
 of its own; to add IJG libjpeg, unpack its source (`jpegsrc.v10.tar.gz` from
 ijg.org) and point `VIO_LIBJPEG_SOURCE_DIR` at it, which builds
-`tjbench-libjpeg`:
+`jpeg-bench-libjpeg`:
 
 ```sh
 cmake -S tests/libjpeg-turbo -B build/libjpeg-turbo -DCMAKE_BUILD_TYPE=Release
 cmake --build build/libjpeg-turbo -j 8   # tjbench
 cmake --preset native -DVIO_LIBJPEG_SOURCE_DIR=$PWD/build/jpeg-10
-cmake --build build/native --target tjbench-libjpeg
+cmake --build build/native --target jpeg-bench-libjpeg
 ```
 
 ## Repository layout
@@ -520,25 +520,28 @@ include/vio/
 ├── bmp.hpp gif.hpp ppm.hpp targa.hpp one file per format; needs only core.hpp
 ├── png.hpp                           includes the png/ codec; Reader, Writer
 ├── png/
-│   ├── decoder.hpp encoder.hpp       whole-image codec
-│   ├── info.hpp common.hpp           chunk contents, shared types
-│   ├── transform.hpp                 read and write transformations
-│   ├── stream.hpp                    progressive (push) decoding
-│   ├── simple.hpp                    pixel format conversion reader/writer
-│   ├── fast_encoder.hpp              single-pass encoder (SIMD filtering
-│   │                                 and Huffman coding)
-│   ├── inflate.hpp                   DEFLATE decompression (whole buffer,
-│   │                                 or resumable)
-│   ├── inflate_fast.inc              its fast loop (compiled per ISA)
-│   ├── deflate.hpp                   DEFLATE compression, zlib-identical
-│   │                                 output
-│   ├── filter.hpp                    scanline filters (scalar, NEON, SSE2,
-│   │                                 generic vector kernels)
-│   ├── checksum.hpp                  CRC-32, Adler-32 (PCLMUL/PMULL folding,
+│   ├── decoder.hpp encoder.hpp       public API (whole-image codec, read/write
+│   │   transform.hpp stream.hpp      transforms, progressive decoding, pixel
+│   │   simple.hpp types.hpp          format conversion, chunk/header types)
+│   ├── config.hpp                    compiler macros, SIMD back-end selection
+│   │                                 (VIO_NO_SIMD, ...)
+│   ├── detail/                       codec internals
+│   │   ├── common.hpp                byte I/O, Adam7, chunk/sRGB tables
+│   │   ├── fast_encoder.hpp          single-pass encoder (SIMD filtering
+│   │   │                             and Huffman coding)
+│   │   ├── inflate.hpp               DEFLATE decompression (whole buffer,
+│   │   │                             or resumable)
+│   │   ├── inflate_fast.inc          its fast loop (compiled per ISA)
+│   │   ├── deflate.hpp               DEFLATE compression, zlib-identical
+│   │   │                             output
+│   │   ├── filter.hpp                scanline filters (scalar, NEON, SSE2,
+│   │   │                             generic vector kernels)
+│   │   └── checksum.hpp              CRC-32, Adler-32 (PCLMUL/PMULL folding,
 │   │                                 Arm CRC32, SSSE3/NEON/generic sums)
-│   └── simd.hpp                      run-time kernel selection; the JPEG
-│                                     vector interface `V` for AltiVec, MMI
-│                                     and RVV
+│   └── simd/
+│       ├── cpu.hpp                   run-time ISA detection, JSIMD_* env vars
+│       └── vec.hpp                   128-bit vector interface `V` (SSE2,
+│                                     AltiVec, MMI, RVV)
 ├── jpeg.hpp                          includes the jpeg/ public API
 └── jpeg/
     ├── decoder.hpp encoder.hpp       public API
@@ -560,14 +563,15 @@ include/vio/
             mmi/ rvv/ vecext/         kernels, kernels.hpp selects within an
                                       ISA family, v*.inc implements `V`
                                       (vecext/: compiler vector extensions)
-tests/                                conformance suite: test definitions,
-                                      test programs and images (submodule),
-                                      command-line tools the tests run
-                                      (tools/: jpeg-encode, jpeg-decode,
-                                      jpeg-transform, jpeg-example,
-                                      png-test, png-golden);
-                                      png-bench/: PNG benchmark (vio, and
-                                      image-png and fpnge for comparison)
+tests/                                conformance and benchmark suite
+├── libjpeg-turbo/ libpng/            test programs and images (git submodules)
+├── jpeg/                             JPEG tests (jpeg-test, jpeg-bench,
+│   ├── tests.cmake                   bmp-test-size), tools (jpeg-encode,
+│   └── tools/ shim/ libjpeg/         jpeg-decode, jpeg-transform, jpeg-example),
+│                                     TurboJPEG and shims
+└── png/                              PNG tests (png-test, png-golden) and
+    ├── tests.cmake expected.txt      benchmark suite (bench/: vio vs
+    └── bench/                        image-png, fpnge, libpng, Wuffs)
 ```
 
 ## License

@@ -31,7 +31,7 @@
 #endif
 #endif
 
-#if VIO_SIMD_NEON_RUNTIME || (VIO_SIMD_NEON_A64 && defined(__linux__))
+#if VIO_SIMD_NEON_RUNTIME
 #include <sys/auxv.h>
 #endif
 
@@ -50,11 +50,6 @@ enum : unsigned {
   kMMI = 0x100,
   kRVV = 0x200,
   kBMI2 = 0x400,  // x86 BMI1, BMI2 and LZCNT (scalar bit manipulation)
-  kSSSE3 = 0x800,
-  kSSE41 = 0x1000,
-  kPCLMUL = 0x2000,  // x86 carry-less multiplication
-  kCRC32 = 0x4000,   // Arm CRC32 instructions
-  kPMULL = 0x8000,   // Arm 64-bit polynomial multiplication
 };
 
 struct Support {
@@ -101,12 +96,6 @@ inline unsigned detect_x86() {
     if (r[3] & (1u << 26)) flags |= kSSE2;
   }
 #endif
-  if (max_leaf >= 1) {
-    cpuid(1, 0, r);
-    if (r[2] & (1u << 9)) flags |= kSSSE3;
-    if (r[2] & (1u << 19)) flags |= kSSE41;
-    if (r[2] & (1u << 1)) flags |= kPCLMUL;
-  }
 #if VIO_SIMD_AVX2
   // AVX2 needs CPU support (leaf 7 EBX bit 5, leaf 1 ECX bits 27-28) and
   // operating-system management of the YMM state (XCR0 bits 1-2).
@@ -139,20 +128,6 @@ inline unsigned detect() {
   if (getauxval(AT_HWCAP) & (1ul << 12)) flags |= kNEON;  // HWCAP_NEON
 #elif VIO_SIMD_NEON
   flags |= kNEON;  // AArch64, or AArch32 code built for NEON
-#endif
-#if VIO_SIMD_NEON_A64
-#if defined(__linux__)
-  const unsigned long hwcap = getauxval(AT_HWCAP);
-  if (hwcap & (1ul << 7)) flags |= kCRC32;  // HWCAP_CRC32
-  if (hwcap & (1ul << 4)) flags |= kPMULL;  // HWCAP_PMULL
-#else
-#if defined(__ARM_FEATURE_CRC32)
-  flags |= kCRC32;
-#endif
-#if defined(__ARM_FEATURE_AES) || defined(__ARM_FEATURE_CRYPTO)
-  flags |= kPMULL;
-#endif
-#endif
 #endif
 #if VIO_SIMD_ALTIVEC
   flags |= kAltiVec;
@@ -200,8 +175,7 @@ inline Support support() {
 #endif
 #endif
 #if VIO_SIMD_NEON
-  // (keeping the Arm CRC32 and PMULL extensions, which only the PNG code uses)
-  if (env_is_1("JSIMD_FORCENEON")) s.flags = kNEON | (s.flags & (kCRC32 | kPMULL));
+  if (env_is_1("JSIMD_FORCENEON")) s.flags = kNEON;
 #endif
 #if VIO_SIMD_RVV
   if (env_is_1("JSIMD_FORCERVV")) s.flags = kRVV;
