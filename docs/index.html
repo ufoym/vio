@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vio — fast image I/O for C++</title>
+<meta name="description" content="Fast, complete, header-only C++20 image I/O: JPEG, PNG, BMP, GIF, PPM and Targa, with SIMD on every major architecture.">
+<meta property="og:title" content="vio — fast image I/O for C++">
+<meta property="og:description" content="Header-only C++20 JPEG, PNG, BMP, GIF, PPM and Targa codecs with run-time SIMD on x86, Arm, PowerPC, Loongson and RISC-V.">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#0a0b10">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%237c5cff'/%3E%3Cpath d='M8 10l8 13 8-13' fill='none' stroke='white' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script>
+  try { var t = localStorage.getItem('vio-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top" aria-label="vio home">
+      <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M8 10l8 13 8-13"/></svg></span>
+      vio
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="#performance">Performance</a>
+      <a href="#formats">Formats</a>
+      <a href="#simd">SIMD</a>
+      <a href="#start">Quick start</a>
+      <a href="#compare">Compare</a>
+    </nav>
+    <div class="nav-actions">
+      <button class="icon-btn" id="theme-toggle" type="button" aria-label="Toggle color theme">
+        <svg class="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg>
+        <svg class="i-moon" viewBox="0 0 24 24"><path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5a8.5 8.5 0 1 0 10.7 10.7z"/></svg>
+      </button>
+      <a class="btn btn-small" href="https://github.com/ufoym/vio">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</header>
+
+<main id="top">
+
+<!-- ───────────── Hero ───────────── -->
+<section class="hero">
+  <div class="hero-glow" aria-hidden="true"></div>
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <p class="eyebrow"><span class="dot"></span> Header-only · C++20 · MIT</p>
+      <h1>Image I/O at the<br><span class="grad">speed of SIMD.</span></h1>
+      <p class="lede">Fast, complete codecs for <strong>JPEG</strong>, <strong>PNG</strong>, BMP, GIF, PPM and Targa.
+        Drop in <code>include/</code>, include only the formats you need, and get hand-tuned kernels for
+        every major CPU — picked at run time.</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="#start">Get started
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M11 5l5 5-5 5"/></svg></a>
+        <a class="btn btn-ghost" href="#performance">See the benchmarks</a>
+      </div>
+      <div class="install" role="group" aria-label="Clone command">
+        <span class="prompt">$</span>
+        <code id="clone-cmd">git clone https://github.com/ufoym/vio</code>
+        <button class="copy" type="button" data-copy="#clone-cmd" aria-label="Copy command">
+          <svg viewBox="0 0 20 20"><rect x="6.5" y="6.5" width="10" height="10" rx="2"/><path d="M13.5 6.5V5a1.5 1.5 0 0 0-1.5-1.5H5A1.5 1.5 0 0 0 3.5 5v7A1.5 1.5 0 0 0 5 13.5h1.5"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <figure class="hero-art">
+      <div class="window race" id="race">
+        <div class="window-bar">
+          <span class="lights"><i></i><i></i><i></i></span>
+          <span class="window-title">vio bench <em id="race-file">· sunset.jpg</em></span>
+          <span class="race-cpu" id="race-cpu"></span>
+        </div>
+        <div class="race-tabs" id="race-tabs" role="tablist" aria-label="Benchmark"></div>
+        <div class="race-head" aria-live="polite">
+          <span class="race-x" id="race-x">0.00×</span>
+          <span class="race-vs"><span id="race-vs">faster</span><small id="race-sub"></small></span>
+        </div>
+        <div class="race-lanes" id="race-lanes"></div>
+        <div class="race-foot">
+          <div class="race-isa" id="race-isa" aria-label="SIMD back ends">
+            <span data-isa="SSE2">SSE2</span><span data-isa="AVX2">AVX2</span><span data-isa="NEON">NEON</span><span data-isa="AltiVec">AltiVec</span><span data-isa="MMI">MMI</span><span data-isa="RVV">RVV</span>
+          </div>
+        </div>
+      </div>
+      <figcaption>Same image, same machine, one thread: measured speed ratios from the benchmark tables below.</figcaption>
+    </figure>
+  </div>
+
+  <div class="wrap">
+    <ul class="stats">
+      <li><span class="stat-pre">up to</span><span class="stat-num"><span data-count="1.7">1.7</span>×</span><span class="stat-cap">JPEG encoding vs libjpeg-turbo</span></li>
+      <li><span class="stat-pre">up to</span><span class="stat-num"><span data-count="1.5">1.5</span>×</span><span class="stat-cap">JPEG decoding vs libjpeg-turbo</span></li>
+      <li><span class="stat-pre">up to</span><span class="stat-num"><span data-count="3.6">3.6</span>×</span><span class="stat-cap">PNG decoding vs libpng</span></li>
+      <li><span class="stat-pre">exactly</span><span class="stat-num">0</span><span class="stat-cap">dependencies — PNG ships its own DEFLATE</span></li>
+    </ul>
+  </div>
+</section>
+
+<!-- ───────────── Pillars ───────────── -->
+<section class="section pillars-section">
+  <div class="wrap">
+    <div class="pillars">
+      <article class="pillar">
+        <div class="pillar-ico"><svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></div>
+        <h3>Fast</h3>
+        <p>Faster than libjpeg-turbo on every CPU we measured, with and without SIMD. PNG decoding runs 2.2–3.6× libpng, and ahead of image-png, the fastest decoder measured, on 12 of 13 runners.</p>
+      </article>
+      <article class="pillar">
+        <div class="pillar-ico"><svg viewBox="0 0 24 24"><path d="M4 12.5 9 17.5 20 6.5"/></svg></div>
+        <h3>Complete</h3>
+        <p>Sequential, progressive, arithmetic-coded and lossless JPEG at 2- to 16-bit precision, lossless transforms, APNG, every PNG chunk and transformation.</p>
+      </article>
+      <article class="pillar">
+        <div class="pillar-ico"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 1.5V5M15 1.5V5M9 19v3.5M15 19v3.5M1.5 9H5M1.5 15H5M19 9h3.5M19 15h3.5"/></svg></div>
+        <h3>Portable</h3>
+        <p>x86 MMX→AVX2, Arm NEON, PowerPC AltiVec, Loongson MMI and RISC-V Vector — one source, kernels selected at run time, no assembler needed.</p>
+      </article>
+      <article class="pillar">
+        <div class="pillar-ico"><svg viewBox="0 0 24 24"><path d="M8 4H5v16h3M16 4h3v16h-3"/></svg></div>
+        <h3>Header-only</h3>
+        <p>No build step and no zlib. Add <code>include/</code> to your path or link the <code>vio::vio</code> CMake target, and include just the codecs you use.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────── Performance ───────────── -->
+<section class="section" id="performance">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="kicker">Performance</p>
+      <h2>Faster on every machine we could find.</h2>
+      <p class="sub">Single-threaded throughput, measured on GitHub-hosted CI runners and local hardware — all
+        libraries built from source with the same compiler on the same machine. Bars show vio's throughput relative to each library; the dashed line is parity.</p>
+    </div>
+
+    <div class="perf-card">
+      <div class="perf-controls">
+        <div class="seg" role="tablist" aria-label="Benchmark" id="perf-tabs">
+          <button role="tab" data-set="jpeg_enc" aria-selected="true">JPEG encode</button>
+          <button role="tab" data-set="jpeg_dec">JPEG decode</button>
+          <button role="tab" data-set="png_dec">PNG decode</button>
+          <button role="tab" data-set="png_enc">PNG encode</button>
+        </div>
+        <div class="seg seg-sub" role="radiogroup" aria-label="Compared with" id="perf-vs"></div>
+      </div>
+
+      <div class="perf-summary">
+        <div class="big"><span id="perf-geo">1.45</span><small>×</small></div>
+        <div>
+          <p class="big-cap" id="perf-geo-cap">geometric mean</p>
+          <p class="big-range" id="perf-range"></p>
+        </div>
+        <div class="legend">
+          <span><i class="sw sw-simd"></i>SIMD</span>
+          <span><i class="sw sw-scalar"></i>scalar</span>
+          <span><i class="sw sw-par"></i>parity</span>
+        </div>
+      </div>
+
+      <div class="bars" id="perf-bars" aria-live="polite"></div>
+      <p class="perf-note" id="perf-note"></p>
+    </div>
+
+    <div class="heat-card">
+      <div class="heat-head">
+        <div>
+          <h3>Every configuration, every CPU</h3>
+          <p class="sub small" id="heat-sub"></p>
+        </div>
+        <div class="seg" role="tablist" aria-label="Heat map" id="heat-tabs">
+          <button role="tab" data-set="jpeg_enc_cfg" aria-selected="true">JPEG encode</button>
+          <button role="tab" data-set="jpeg_dec_cfg">JPEG decode</button>
+          <button role="tab" data-set="png_cat">PNG by image type</button>
+        </div>
+      </div>
+      <div class="heat-scroll"><table class="heat" id="heat"></table></div>
+      <div class="heat-scale"><span>parity</span><i class="ramp"></i><span id="heat-max">faster</span></div>
+    </div>
+
+    <div class="log-card">
+      <div class="heat-head">
+        <div>
+          <h3><span id="log-count">58</span> measured wins</h3>
+          <p class="sub small">Every kept optimization is A/B-tested on the same machine and logged with its gain over the build before it.</p>
+        </div>
+        <div class="seg" role="tablist" aria-label="Optimization log" id="log-tabs">
+          <button role="tab" data-set="jpeg" aria-selected="true">JPEG</button>
+          <button role="tab" data-set="png">PNG</button>
+        </div>
+      </div>
+      <ol class="log" id="log"></ol>
+      <button class="btn btn-ghost btn-block" id="log-more" type="button">Show all</button>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────── Formats ───────────── -->
+<section class="section" id="formats">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="kicker">Formats</p>
+      <h2>Six formats, one tiny dependency graph.</h2>
+      <p class="sub">Each codec is a header that needs only <code>vio/core.hpp</code>. Packed-pixel readers and writers share
+        <code>vio::ImageReader&lt;T&gt;</code> / <code>ImageWriter&lt;T&gt;</code> over 8-, 12- and 16-bit samples.</p>
+    </div>
+    <div class="formats">
+      <article class="fmt fmt-hero">
+        <header><span class="tag">vio/jpeg.hpp</span><h3>JPEG</h3></header>
+        <ul>
+          <li>Baseline, extended, progressive, arithmetic-coded, lossless</li>
+          <li>8- and 12-bit lossy, 2- to 16-bit lossless</li>
+          <li>Rotate, flip, crop, wipe, drop and roll — losslessly</li>
+          <li>Scaled and partial decoding, raw planar YCbCr</li>
+          <li>ICC profiles, saved markers, quantization &amp; dithering</li>
+        </ul>
+      </article>
+      <article class="fmt fmt-hero">
+        <header><span class="tag">vio/png.hpp</span><h3>PNG &amp; APNG</h3></header>
+        <ul>
+          <li>All color types, bit depths and Adam7 interlacing</li>
+          <li>Built-in SIMD inflate, deflate, CRC-32, Adler-32</li>
+          <li>Single-pass fast encoder, or zlib mode with byte-identical files</li>
+          <li>Progressive (push) decoding, read &amp; write transformations</li>
+          <li>Passes the reference library's own test suite, bit for bit</li>
+        </ul>
+      </article>
+      <article class="fmt"><header><span class="tag">vio/gif.hpp</span><h3>GIF</h3></header><p>Reader and templated writer.</p></article>
+      <article class="fmt"><header><span class="tag">vio/bmp.hpp</span><h3>BMP</h3></header><p>Reader and writer.</p></article>
+      <article class="fmt"><header><span class="tag">vio/ppm.hpp</span><h3>PPM / PGM</h3></header><p>Reader and templated writer, up to 16-bit.</p></article>
+      <article class="fmt"><header><span class="tag">vio/targa.hpp</span><h3>Targa</h3></header><p>Reader and writer.</p></article>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────── SIMD ───────────── -->
+<section class="section" id="simd">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="kicker">SIMD everywhere</p>
+      <h2>Written once. Tuned for every ISA.</h2>
+      <p class="sub">Kernels are written against a small vector interface and instantiated per back end. At start-up vio
+        detects the CPU and dispatches each function to the best kernel; <code>JSIMD_*</code> environment variables cap the level.</p>
+    </div>
+
+    <div class="isa-grid">
+      <div class="isa"><span class="isa-arch">x86 / x86-64</span><div class="chips"><b>MMX</b><b>SSE</b><b>SSE2</b><b>SSSE3</b><b>SSE4.1</b><b>PCLMUL</b><b>AVX2</b><b>BMI2</b></div></div>
+      <div class="isa"><span class="isa-arch">Arm</span><div class="chips"><b>AArch64 NEON</b><b>AArch32 NEON</b><b>CRC32</b><b>PMULL</b></div></div>
+      <div class="isa"><span class="isa-arch">PowerPC</span><div class="chips"><b>AltiVec</b><b>VSX</b></div></div>
+      <div class="isa"><span class="isa-arch">MIPS64</span><div class="chips"><b>Loongson MMI</b></div></div>
+      <div class="isa"><span class="isa-arch">RISC-V 64</span><div class="chips"><b>RVV 1.0</b><b>VLEN 128 / 256</b></div></div>
+    </div>
+
+    <div class="ci">
+      <div class="ci-head">
+        <span class="ci-dot"></span>
+        <strong>CI on every push</strong>
+        <span class="muted">— natively and under QEMU, repeated at lower SIMD levels</span>
+      </div>
+      <div class="ci-grid" id="ci-grid"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────── Quick start ───────────── -->
+<section class="section" id="start">
+  <div class="wrap start-grid">
+    <div class="section-head">
+      <p class="kicker">Quick start</p>
+      <h2>Zero to decoded in a dozen lines.</h2>
+      <p class="sub">Add the include path or pull it in with CMake. The JPEG API follows the classic scanline model;
+        PNG offers whole-image codecs plus row readers, streaming and format conversion.</p>
+      <ul class="checks">
+        <li>Throws <code>vio::Error</code> on malformed input</li>
+        <li>Disable SIMD at build time with <code>VIO_NO_SIMD</code></li>
+        <li>Works with GCC, Clang, Apple Clang, MSVC and clang-cl</li>
+      </ul>
+    </div>
+    <div class="code-card">
+      <div class="code-tabs" role="tablist" aria-label="Code samples">
+        <button role="tab" aria-selected="true" data-code="c-cmake">CMakeLists.txt</button>
+        <button role="tab" data-code="c-jdec">jpeg decode</button>
+        <button role="tab" data-code="c-jenc">jpeg encode</button>
+        <button role="tab" data-code="c-png">png encode/decode</button>
+        <button class="copy code-copy" type="button" aria-label="Copy code">
+          <svg viewBox="0 0 20 20"><rect x="6.5" y="6.5" width="10" height="10" rx="2"/><path d="M13.5 6.5V5a1.5 1.5 0 0 0-1.5-1.5H5A1.5 1.5 0 0 0 3.5 5v7A1.5 1.5 0 0 0 5 13.5h1.5"/></svg>
+        </button>
+      </div>
+<pre class="code" id="c-cmake" data-lang="cmake">include(FetchContent)
+FetchContent_Declare(vio
+  GIT_REPOSITORY https://github.com/ufoym/vio.git
+  GIT_TAG        main)
+FetchContent_MakeAvailable(vio)
+
+add_executable(app main.cpp)
+target_link_libraries(app PRIVATE vio::vio)   # header-only, C++20</pre>
+<pre class="code" id="c-jdec" hidden>#include &lt;vio/jpeg.hpp&gt;
+
+// file: std::vector&lt;std::uint8_t&gt; holding the .jpg
+vio::jpeg::Decoder dec(file);
+dec.set_output_color(vio::ColorSpace::RGB)
+   .set_scale(1, 2);                       // half size, straight from the DCT
+dec.start();
+
+std::size_t stride = std::size_t(dec.output_width()) * 3;
+std::vector&lt;std::uint8_t&gt; rgb(stride * dec.output_height());
+while (dec.output_scanline() &lt; dec.output_height()) {
+  std::uint8_t* row = &amp;rgb[dec.output_scanline() * stride];
+  dec.read_scanlines(&amp;row, 1);
+}
+dec.finish();</pre>
+<pre class="code" id="c-jenc" hidden>#include &lt;vio/jpeg.hpp&gt;
+
+vio::jpeg::Encoder enc;
+enc.set_image(width, height, 3, vio::ColorSpace::RGB)
+   .set_quality(90)
+   .set_progressive();                     // or set_arithmetic(true), set_lossless(1, 0)
+enc.start();
+
+while (enc.next_scanline() &lt; height) {
+  std::uint8_t* row = &amp;rgb[std::size_t(enc.next_scanline()) * width * 3];
+  enc.write_scanlines(&amp;row, 1);
+}
+std::vector&lt;std::uint8_t&gt; jpg = enc.finish();</pre>
+<pre class="code" id="c-png" hidden>#include &lt;vio/png.hpp&gt;
+
+// Decode: checks every CRC-32 and the Adler-32.
+vio::png::Decoder dec;
+dec.decode(file);
+auto [w, h] = std::pair(dec.header.width, dec.header.height);
+std::span&lt;std::uint8_t&gt; pixels = dec.pixels();   // native layout
+
+// Encode: single-pass SIMD fast mode by default.
+vio::png::Encoder enc;
+enc.header = {w, h, 8, vio::png::kTruecolorAlpha};
+std::vector&lt;std::uint8_t&gt; png = enc.encode(rgba.data(), w * 4);
+
+// Or zlib mode, with files byte for byte like libpng's:
+// enc.mode = vio::png::Encoder::Mode::kZlib;</pre>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────── Comparison ───────────── -->
+<section class="section" id="compare">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="kicker">Feature matrix</p>
+      <h2>How it stacks up.</h2>
+      <p class="sub" id="cmp-sub"></p>
+    </div>
+    <div class="cmp-card">
+      <div class="cmp-controls">
+        <div class="seg" role="tablist" aria-label="Feature table" id="cmp-tabs">
+          <button role="tab" data-set="0" aria-selected="true">JPEG</button>
+          <button role="tab" data-set="1">PNG</button>
+        </div>
+        <div class="legend">
+          <span><b class="g g-yes">✓</b>supported</span>
+          <span><b class="g g-part">◐</b>partial</span>
+          <span><b class="g g-no">✗</b>not supported</span>
+        </div>
+      </div>
+      <div class="cmp-scroll"><table class="cmp" id="cmp"></table></div>
+      <ol class="notes" id="cmp-notes"></ol>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────── CTA ───────────── -->
+<section class="section final">
+  <div class="wrap final-inner">
+    <h2>Ship faster pixels.</h2>
+    <p class="sub">MIT licensed. Clone it, include it, benchmark it yourself.</p>
+    <div class="cta center">
+      <a class="btn btn-primary" href="https://github.com/ufoym/vio">Star on GitHub</a>
+      <a class="btn btn-ghost" href="https://github.com/ufoym/vio#building-and-testing">Build &amp; run the tests</a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <span class="brand small"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M8 10l8 13 8-13"/></svg></span>vio</span>
+    <span class="muted">© 2026 Ming · MIT License · Numbers from the project README</span>
+    <a href="https://github.com/ufoym/vio">github.com/ufoym/vio</a>
+  </div>
+</footer>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
