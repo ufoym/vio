@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vio — how it got fast</title>
+<meta name="description" content="Every measured speed-up in vio's JPEG and PNG codecs, one idea at a time: the bottleneck, the fix and a before/after timeline.">
+<meta property="og:title" content="vio — how it got fast">
+<meta property="og:description" content="Every measured speed-up in vio's JPEG and PNG codecs, one idea at a time.">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#0a0b10">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%237c5cff'/%3E%3Cpath d='M8 10l8 13 8-13' fill='none' stroke='white' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script>
+  try { var t = localStorage.getItem('vio-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="index.html" aria-label="vio home">
+      <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M8 10l8 13 8-13"/></svg></span>
+      vio
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="index.html#performance">Performance</a>
+      <a href="#ideas">Ideas</a>
+      <a href="#changes">All changes</a>
+    </nav>
+    <div class="nav-actions">
+      <button class="icon-btn" id="theme-toggle" type="button" aria-label="Toggle color theme">
+        <svg class="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg>
+        <svg class="i-moon" viewBox="0 0 24 24"><path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5a8.5 8.5 0 1 0 10.7 10.7z"/></svg>
+      </button>
+      <a class="btn btn-small" href="https://github.com/ufoym/vio">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</header>
+
+<main id="top">
+
+<section class="section opt-hero">
+  <div class="hero-glow" aria-hidden="true"></div>
+  <div class="wrap">
+    <div class="section-head">
+      <p class="kicker"><a href="index.html#performance">← Performance</a> · Optimization log</p>
+      <h2>How vio got fast, <span class="grad">one idea at a time.</span></h2>
+      <p class="sub">Every kept speed-up was A/B-tested on the same machine against the build before it. Here is each one:
+        the bottleneck it found, the idea that removed it, and a before/after timeline of the work.</p>
+    </div>
+
+    <div class="strip-card">
+      <div class="strip-head">
+        <div>
+          <h3><span id="opt-count">58</span> measured wins</h3>
+          <p class="sub small">In commit order; bar height is the logged gain (log scale), colour is the idea behind it. Click a bar to jump to it.</p>
+        </div>
+        <div class="strip-tip" id="strip-tip" aria-live="polite"></div>
+      </div>
+      <div class="strip" id="strip"></div>
+      <div class="strip-axis"><span>JPEG</span><span>PNG</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="section opt-ideas" id="ideas">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="kicker">Eight recurring ideas</p>
+      <h2>Most wins are one of a few moves.</h2>
+      <p class="sub">Pick an idea to see only its changes. In each timeline, <b class="k-new">teal</b> marks the new step,
+        <b class="k-slow">orange</b> the waste it removed; the shaded tail is the time saved.</p>
+    </div>
+    <div class="ideas" id="ideas-grid"></div>
+  </div>
+</section>
+
+<section class="section opt-list" id="changes">
+  <div class="wrap">
+    <div class="opt-controls">
+      <div class="seg" role="tablist" aria-label="Codec" id="f-codec">
+        <button role="tab" data-v="all" aria-selected="true">All</button>
+        <button role="tab" data-v="jpeg">JPEG</button>
+        <button role="tab" data-v="png">PNG</button>
+      </div>
+      <div class="seg" role="tablist" aria-label="Order" id="f-sort">
+        <button role="tab" data-v="log" aria-selected="true">Commit order</button>
+        <button role="tab" data-v="gain">Biggest gain</button>
+      </div>
+      <p class="opt-showing" id="opt-showing"></p>
+    </div>
+    <ol class="opts" id="opts"></ol>
+    <p class="opt-foot">Timelines are schematic: box widths illustrate where the time goes, they are not measurements.
+      Gains are the numbers logged in the project README, each over the build before it, on the machine named.</p>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <span class="brand small"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M8 10l8 13 8-13"/></svg></span>vio</span>
+    <span class="muted">© 2026 Ming · MIT License · Gains from the project README</span>
+    <a href="index.html">Back to the project page</a>
+  </div>
+</footer>
+
+<script src="data.js"></script>
+<script src="opt-data.js"></script>
+<script src="opt.js"></script>
+</body>
+</html>
