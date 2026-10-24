@@ -141,9 +141,23 @@ if(FLOATTEST12)
   endif()
 endif()
 
+# vio: the programs a libtype runs are vio's stand-ins (VIO_TOOL_<program>)
+# unless VIO_TOOL_<program>_<libtype> names others.
+foreach(t cjpeg djpeg jpegtran example tjunittest tjbench bmpsizetest)
+  set(VIO_DEFAULT_TOOL_${t} ${VIO_TOOL_${t}})
+endforeach()
+
 foreach(libtype ${TEST_LIBTYPES})
-  # vio: each "libtype" is a build variant of the vio executables.
+  # vio: each "libtype" is a build variant of the vio executables, or of
+  # libjpeg-turbo's programs built against vio's libraries.
   set(suffix ${VIO_SUFFIX_${libtype}})
+  foreach(t cjpeg djpeg jpegtran example tjunittest tjbench bmpsizetest)
+    if(DEFINED VIO_TOOL_${t}_${libtype})
+      set(VIO_TOOL_${t} ${VIO_TOOL_${t}_${libtype}})
+    else()
+      set(VIO_TOOL_${t} ${VIO_DEFAULT_TOOL_${t}})
+    endif()
+  endforeach()
   if(WITH_TURBOJPEG)
     add_test(NAME tjunittest-${libtype}
       COMMAND ${VIO_TOOL_tjunittest}${suffix})
@@ -290,7 +304,8 @@ foreach(libtype ${TEST_LIBTYPES})
 
   endif()
 
-  if(UNIX)
+  # vio: when the program was built (it needs fmemopen()).
+  if(UNIX AND TARGET ${VIO_TOOL_bmpsizetest}${suffix})
     add_test(NAME bmpsizetest-${libtype} COMMAND ${VIO_TOOL_bmpsizetest}${suffix})
   endif()
 

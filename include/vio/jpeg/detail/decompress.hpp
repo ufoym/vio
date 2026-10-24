@@ -337,16 +337,7 @@ class Decompressor {
   // finish_decompress()/abort().
   BlockArray* read_coefficients() {
     if (st.lossless) VIO_FAIL("Requested features are incompatible");
-    if (state == State::Ready) {
-      st.buffered_image = true;
-      if (st.arith_code) st.entropy = std::make_unique<ArithDecoder>(st);
-      else if (st.progressive_mode) st.entropy = std::make_unique<PhuffDecoder>(st);
-      else st.entropy = std::make_unique<HuffDecoder>(st);
-      transcoef_ = std::make_unique<CoefController<std::uint8_t>>(st, nullptr, true);
-      st.coef = transcoef_.get();
-      st.start_input_pass();
-      state = State::RdCoefs;
-    }
+    if (state == State::Ready) begin_read_coefficients();
     if (state == State::RdCoefs) {
       for (;;) {
         if (progress_monitor) progress_monitor();
@@ -357,6 +348,19 @@ class Decompressor {
     }
     if (state == State::Stopping && st.buffered_image) return st.coef->coef_arrays;
     VIO_FAIL("Improper call to JPEG library in state %d", static_cast<int>(state));
+  }
+
+  // First step of read_coefficients(): sets up the coefficient buffers, after
+  // which consume_input() absorbs the datastream.
+  void begin_read_coefficients() {
+    st.buffered_image = true;
+    if (st.arith_code) st.entropy = std::make_unique<ArithDecoder>(st);
+    else if (st.progressive_mode) st.entropy = std::make_unique<PhuffDecoder>(st);
+    else st.entropy = std::make_unique<HuffDecoder>(st);
+    transcoef_ = std::make_unique<CoefController<std::uint8_t>>(st, nullptr, true);
+    st.coef = transcoef_.get();
+    st.start_input_pass();
+    state = State::RdCoefs;
   }
 
   // jpeg_start_decompress()

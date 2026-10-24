@@ -18,6 +18,9 @@ Targa, with SIMD on every major architecture.
   PNG brings its own DEFLATE, with no zlib dependency.
 - **C and Python:** a header-only C interface (`bind/c/vio.h`) and a
   NumPy-based Python package (`pip install .`) for whole images.
+- **Drop-in C libraries:** `libjpeg` and `libturbojpeg` (`bind/jpeglib/`)
+  implement the `jpeglib.h` and `turbojpeg.h` APIs on vio, source- and
+  binary-compatible.
 
 ## Using the library
 
@@ -84,6 +87,65 @@ GIF are encoded.  Options: JPEG `quality` (default 90), `subsampling` (444,
 encoder, 1..9: zlib levels).  Formats that cannot hold alpha drop it;
 JPEG, BMP and Targa store 8-bit samples.
 
+### jpeglib.h and turbojpeg.h
+
+`bind/jpeglib/` implements two established C interfaces on vio's codec, as
+shared and static libraries:
+
+- `libjpeg`: the `jpeglib.h` API, with its extensions for extended RGB pixel
+  formats, RGB565 output, 12- and 16-bit samples (`jpeg12_*`, `jpeg16_*`),
+  lossless JPEG, partial decoding (`jpeg_skip_scanlines`,
+  `jpeg_crop_scanline`), ICC profiles and in-memory sources and
+  destinations;
+- `libturbojpeg`: the TurboJPEG API (`turbojpeg.h`, version 3.2, with the
+  1.x and 2.x functions).
+
+The headers have the standard structure layouts and message codes, and the
+shared libraries the usual names, versions and versioned symbols
+(`libjpeg.so.62`, `libturbojpeg.so.0`; on Windows `jpeg62.dll`), so existing
+programs work unchanged: rebuilt against these headers, or as they are with
+these libraries in place of others.  `VIO_JPEG_LIB_VERSION` selects the
+`jpeglib.h` ABI level: 62 (the default), 70 or 80 (`libjpeg.so.7`,
+`libjpeg.so.8`).  CMake targets: `vio::jpeg`, `vio::jpeg-static`,
+`vio::turbojpeg`, `vio::turbojpeg-static`; `cmake --install` installs the
+libraries and headers.
+
+```c
+#include <stdio.h>
+#include "jpeglib.h"
+
+struct jpeg_decompress_struct cinfo;
+struct jpeg_error_mgr jerr;
+cinfo.err = jpeg_std_error(&jerr);
+jpeg_create_decompress(&cinfo);
+jpeg_stdio_src(&cinfo, infile);
+jpeg_read_header(&cinfo, TRUE);
+cinfo.out_color_space = JCS_EXT_RGBA;
+jpeg_start_decompress(&cinfo);
+while (cinfo.output_scanline < cinfo.output_height)
+  jpeg_read_scanlines(&cinfo, &row, 1);
+jpeg_finish_decompress(&cinfo);
+jpeg_destroy_decompress(&cinfo);
+```
+
+All of `jpeglib.h` is implemented, including buffered-image mode, suspending
+data sources and destinations, marker processors, abbreviated datastreams,
+raw (downsampled) data, coefficient access for transcoding, color
+quantization, the memory manager's virtual arrays and the standard error
+manager's message tables.  Differences from other implementations:
+
+- The private processing modules (`cinfo->cconvert`, `cinfo->upsample`,
+  ...) are opaque: applications cannot install modules of their own.
+- Before decoding an image, its compressed data are read from the data source
+  up to the end of the image (in place when the source's buffer already holds
+  them, as with `jpeg_mem_src()`), so `jpeg_start_decompress()` consumes
+  the whole image; `jpeg_read_header()` reads only the header.
+- Virtual arrays are always kept in memory; `max_memory_to_use` (and the
+  `JPEGMEM` environment variable) limits their total size.
+- Not implemented, as in the 6.2 ABI: compression scaling and SmartScale
+  (`scale_num`/`scale_denom` and `block_size` of the 7 and 8 ABIs are
+  ignored), CCIR 601 sampling, and arithmetic-coded lossless JPEG.
+
 ### Python
 
 ```sh
@@ -147,8 +209,8 @@ of compilers and systems, while vio needs a C++20 compiler.
 | Integration: header-only, no build step                    |  ✓  |       ✗       |    ✗    |     ✓     |
 | Integration: no assembler needed                           |  ✓  |       ✗⁵      |    ✓    |     ✓     |
 | Integration: C++ API                                       |  ✓  |       ✗       |    ✗    |     ✗     |
-| Integration: libjpeg C API                                 |  ✗  |       ✓       |    ✓    |     ✗     |
-| Integration: TurboJPEG C API                               |  ✗  |       ✓       |    ✗    |     ✗     |
+| Integration: libjpeg C API                                 |  ✓  |       ✓       |    ✓    |     ✗     |
+| Integration: TurboJPEG C API                               |  ✓  |       ✓       |    ✗    |     ✗     |
 | Integration: Java binding                                  |  ✗  |       ✓       |    ✗    |     ✗     |
 | Integration: simple whole-image C API                      |  ✓  |       ✓       |    ✗    |     ✓     |
 | Integration: Python binding                                |  ✓  |       ✗       |    ✗    |     ✗     |
@@ -539,7 +601,23 @@ Other presets: `debug`, `x64` (macOS x86-64 under Rosetta), `a32` (AArch32
 NEON code paths on an AArch64 host).  Every build tree lives under `build/`.
 Options: `VIO_BUILD_TESTS` (on when vio is the top-level project),
 `VIO_TEST_SCALAR` (also test every program with SIMD disabled, as the
-`-scalar` variant).
+`-scalar` variant), `VIO_BUILD_JPEGLIB` (the `bind/jpeglib/` libraries; on
+when vio is the top-level project), `VIO_JPEG_LIB_VERSION` (their ABI
+level), `VIO_TEST_EXTENDED` (the script-based tests below).
+
+The JPEG tests run twice over: on vio's own command-line tools and
+TurboJPEG layer (variants `simd` and `scalar`), and on libjpeg-turbo's
+programs -- cjpeg, djpeg, jpegtran, example, tjunittest, tjbench and
+bmpsizetest, compiled unchanged against `bind/jpeglib/` -- linked with its
+shared and static libraries (the `shared` and `static` test names, as in
+libjpeg-turbo's own build).  `jpeglib-test` checks the rest of the
+`jpeglib.h` API (suspending sources and destinations, buffered-image mode,
+marker processors, abbreviated datastreams, error recovery, raw data).  With
+`-DVIO_TEST_EXTENDED=ON`, `ctest -L extended` also runs libjpeg-turbo's
+script-based tests (its tjtest, tjtest12, tjtest16 and tjexampletest targets,
+and with ImageMagick croptest and indexedcolortest), which compare the
+TurboJPEG programs' output with cjpeg's, djpeg's and jpegtran's (bash needed;
+about 20 minutes).
 
 CI (`.github/workflows/ci.yml`) runs the whole suite on every push: natively
 with GCC and Clang on Linux x86-64, GCC on Linux i686 and AArch64, Apple
@@ -548,7 +626,8 @@ under QEMU 10.2 on AArch32 (NEON at build time, and detected at run time),
 PowerPC 64 LE (AltiVec, VSX) and 32 BE (AltiVec), MIPS64 Loongson MMI and
 RISC-V 64 RVV (VLEN 128 and 256).  On x86 the suite is repeated at the lower
 SIMD levels (`JSIMD_FORCESSE2`, and `JSIMD_FORCESSE` on i686).  All 23 runs
-pass at `d72c74b`, as do the 742 tests of the native build on an Apple M4.
+pass at `d72c74b`.  The native build on an Apple M4 runs 1409 tests (plus
+18 extended ones), all passing.
 
 On Windows, configure from a Visual Studio developer command prompt with
 Ninja (add `-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl` for
@@ -639,6 +718,9 @@ include/vio/
                                       (vecext/: compiler vector extensions)
 bind/
 ├── c/vio.h                           header-only C interface
+├── jpeglib/                          libjpeg and libturbojpeg: jpeglib.h,
+│                                     turbojpeg.h and their implementations
+│                                     (jpeglib.cpp, turbojpeg.cpp)
 └── python/vio/                       Python package: __init__.py over the
                                       _vio extension (_vio.cpp, on vio.h)
 tests/                                conformance and benchmark suite

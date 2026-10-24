@@ -14,8 +14,11 @@ namespace vio::jpeg::detail {
 
 
 
+// REACHED_CUSTOM_MARKER: an APPn/COM marker registered with
+// custom_markers is pending (unread_marker); the caller processes its data
+// segment, resets unread_marker and consumes input again.
 enum Status { SUSPENDED = 0, REACHED_SOS = 1, REACHED_EOI = 2, ROW_COMPLETED = 3,
-              SCAN_COMPLETED = 4 };
+              SCAN_COMPLETED = 4, REACHED_CUSTOM_MARKER = 5 };
 
 struct DState;
 
@@ -153,6 +156,8 @@ struct DState {
   unsigned length_limit_COM = 0;
   bool save_APPn[16]{};
   bool save_COM = false;
+  // Markers left to the caller: APP0..APP15 (bits 0..15) and COM (bit 16).
+  std::uint32_t custom_markers = 0;
 
   // ---- input controller state ----------------------------------------------
   bool has_multiple_scans = false;
@@ -509,6 +514,7 @@ struct DState {
         case M_DQT: get_dqt(); break;
         case M_DRI: get_dri(); break;
         case M_COM:
+          if (custom_markers & (1u << 16)) return REACHED_CUSTOM_MARKER;
           if (save_COM) save_marker();
           else skip_variable();
           break;
@@ -519,6 +525,7 @@ struct DState {
         default:
           if (unread_marker >= M_APP0 && unread_marker <= M_APP15) {
             int n = unread_marker - M_APP0;
+            if (custom_markers & (1u << n)) return REACHED_CUSTOM_MARKER;
             if (save_APPn[n]) save_marker();
             else if (n == 0 || n == 14) get_interesting_appn();
             else skip_variable();

@@ -1,10 +1,12 @@
-// TurboJPEG API (turbojpeg.h, version 3.2) implemented on top of vio.
+// turbojpeg.cpp - the TurboJPEG API (turbojpeg.h, version 3.2, with the 1.x
+// and 2.x functions) implemented on vio's codecs.
 //
-// This compatibility layer lets programs written against libjpeg-turbo's
-// TurboJPEG API -- in particular libjpeg-turbo's own tjunittest and tjbench
-// (built as jpeg-test and jpeg-bench) --
-// run unchanged on vio.  The logic follows libjpeg-turbo's turbojpeg.c and
-// turbojpeg-mp.c so that results are identical.
+// The functions follow the API's documented behavior in detail (parameter
+// validation, error strings, buffer handling, warnings), so that programs
+// written for the API run unchanged and produce identical results.
+#if defined(__GNUC__) && !defined(_WIN32)
+#define DLLEXPORT __attribute__((visibility("default")))
+#endif
 #include "turbojpeg.h"
 
 #include <cerrno>
@@ -96,7 +98,7 @@ struct tjinstance {
 
   tjinstance() {
     auto on_warning = [this](vio::Diagnostics& d, const std::string& msg) {
-      // libjpeg's emit_message(-1) prints only the first warning.
+      // As with the standard error manager, only the first warning is kept.
       if (d.num_warnings == 1) {
         isInstanceError = true;
         std::snprintf(errStr, JMSG_LENGTH_MAX, "%s", msg.c_str());
@@ -117,8 +119,8 @@ struct tjinstance {
   vd::Decompressor& d() { return dec.core(); }
   vd::DState& ds() { return dec.core().st; }
 
-  // Error reporting helpers (THROW/THROWI/THROWG in turbojpeg.c).  Messages
-  // are truncated to JMSG_LENGTH_MAX, as in turbojpeg.c.
+  // Error reporting: messages are "function(): message", truncated to
+  // JMSG_LENGTH_MAX.
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
@@ -137,7 +139,7 @@ struct tjinstance {
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
-  // A libjpeg error (my_output_message): instance error string only.
+  // A codec error: the instance error string only, without function name.
   void library_error(const char* msg) {
     isInstanceError = true;
     std::snprintf(errStr, JMSG_LENGTH_MAX, "%s", msg);
@@ -155,7 +157,7 @@ struct tjinstance {
   throw TjThrow{};
 }
 
-// Runs `body` with turbojpeg.c's error semantics; returns `error_value` on
+// Runs `body` with the API's error semantics; returns `error_value` on
 // failure.  `cleanup` runs on every exit (the "bailout" label).
 template <class R, class F, class C>
 R guarded(tjinstance* self, R error_value, F&& body, C&& cleanup) {
@@ -186,7 +188,7 @@ R guarded(tjinstance* self, R error_value, F&& body, C&& cleanup) {
 #define THROW(m) self->fail(FUNCTION_NAME, "%s", m)
 
 // ---------------------------------------------------------------------------
-// Memory destination (jdatadst-tj.c semantics)
+// Memory destination: the caller's buffer, or one (re)allocated with malloc()
 void store_output(tjinstance* self, std::span<const std::uint8_t> data, unsigned char** buf,
                   size_t* size, bool alloc) {
   if (data.data() == *buf && data.size() <= *size) {  // written in place (use_dest())
@@ -698,6 +700,48 @@ int save_image_impl(tjhandle handle, const char* filename, const T* buffer, int 
     if (!out.empty() && std::fwrite(out.data(), 1, out.size(), file) != out.size())
       throw vio::Error("Output file write error --- out of disk space?");
     return 0;
+  }, [] {});
+}
+
+// Reports an argument error of a 1.x/2.x function; returns -1.
+int legacy_error(tjinstance* self, const char* FUNCTION_NAME, const char* msg) {
+  try {
+    self->fail(FUNCTION_NAME, "%s", msg);
+  } catch (const TjThrow&) {
+  }
+  return -1;
+}
+
+// Reads the header of a JPEG image and selects the largest scaling factor
+// whose result fits in width x height (0: the image dimension), as the
+// 1.x/2.x decompression functions do.  Returns its index, or -1.
+int legacy_scaling(tjinstance* self, const char* FUNCTION_NAME, const unsigned char* jpegBuf,
+                   unsigned long jpegSize, int width, int height, bool check_lossless) {
+  return guarded<int>(self, -1, [&]() -> int {
+    if ((self->init & DECOMPRESS) == 0)
+      THROW("Instance has not been initialized for decompression");
+    if (jpegBuf == nullptr || jpegSize <= 0 || width < 0 || height < 0)
+      THROW("Invalid argument");
+    vd::Decompressor& d = self->d();
+    if (d.state != vd::Decompressor::State::Start) d.abort();
+    d.set_source(jpegBuf, jpegSize);
+    d.read_header(true);
+    int jpegwidth = static_cast<int>(d.st.image_width);
+    int jpegheight = static_cast<int>(d.st.image_height);
+    bool lossless = d.st.lossless;
+    d.abort();
+    if (width == 0) width = jpegwidth;
+    if (height == 0) height = jpegheight;
+    int i, scaledw = 0, scaledh = 0;
+    for (i = 0; i < NUMSF; i++) {
+      scaledw = TJSCALED(jpegwidth, sf[i]);
+      scaledh = TJSCALED(jpegheight, sf[i]);
+      if (scaledw <= width && scaledh <= height) break;
+    }
+    if (i >= NUMSF) THROW("Could not scale down to desired image dimensions");
+    if (check_lossless && lossless && (scaledw != jpegwidth || scaledh != jpegheight))
+      THROW("Cannot use decompression scaling with lossless JPEG images");
+    return i;
   }, [] {});
 }
 
@@ -1941,7 +1985,7 @@ DLLEXPORT int tj3SaveImage16(tjhandle handle, const char* filename, const unsign
                                         pixelFormat, "tj3SaveImage16");
 }
 
-// ---- TurboJPEG 1.x/2.x convenience wrappers --------------------------------
+// ---- 1.x/2.x API --------------------------------------------------------------
 DLLEXPORT char* tjGetErrorStr2(tjhandle handle) { return tj3GetErrorStr(handle); }
 DLLEXPORT char* tjGetErrorStr(void) { return errStr; }
 DLLEXPORT int tjGetErrorCode(tjhandle handle) { return tj3GetErrorCode(handle); }
@@ -1963,6 +2007,288 @@ DLLEXPORT unsigned char* tjAlloc(int bytes) {
 DLLEXPORT void tjFree(unsigned char* buf) { tj3Free(buf); }
 DLLEXPORT tjscalingfactor* tjGetScalingFactors(int* numScalingFactors) {
   return tj3GetScalingFactors(numScalingFactors);
+}
+
+// Compression
+DLLEXPORT int tjCompress2(tjhandle handle, const unsigned char* srcBuf, int width, int pitch,
+                          int height, int pixelFormat, unsigned char** jpegBuf,
+                          unsigned long* jpegSize, int jpegSubsamp, int jpegQual, int flags) {
+  static const char FUNCTION_NAME[] = "tjCompress2";
+  GET_TJINSTANCE(handle, -1)
+  if (jpegSize == nullptr || jpegSubsamp < 0 || jpegSubsamp >= self->numSamp || jpegQual < 0 ||
+      jpegQual > 100)
+    return legacy_error(self, FUNCTION_NAME, "Invalid argument");
+  self->quality = jpegQual;
+  self->subsamp = jpegSubsamp;
+  processFlags(self, flags, COMPRESS);
+  size_t size = static_cast<size_t>(*jpegSize);
+  if (self->noRealloc) size = tj3JPEGBufSize(width, height, self->subsamp);
+  int retval = tj3Compress8(handle, srcBuf, width, pitch, height, pixelFormat, jpegBuf, &size);
+  *jpegSize = static_cast<unsigned long>(size);
+  return retval;
+}
+
+DLLEXPORT int tjCompress(tjhandle handle, unsigned char* srcBuf, int width, int pitch, int height,
+                         int pixelSize, unsigned char* jpegBuf, unsigned long* jpegSize,
+                         int jpegSubsamp, int jpegQual, int flags) {
+  int retval;
+  unsigned long size = jpegSize ? *jpegSize : 0;
+  if (flags & TJ_YUV) {
+    size = tjBufSizeYUV(width, height, jpegSubsamp);
+    retval = tjEncodeYUV2(handle, srcBuf, width, pitch, height, getPixelFormat(pixelSize, flags),
+                          jpegBuf, jpegSubsamp, flags);
+  } else {
+    retval = tjCompress2(handle, srcBuf, width, pitch, height, getPixelFormat(pixelSize, flags),
+                         &jpegBuf, &size, jpegSubsamp, jpegQual, flags | TJFLAG_NOREALLOC);
+  }
+  *jpegSize = size;
+  return retval;
+}
+
+DLLEXPORT int tjCompressFromYUVPlanes(tjhandle handle, const unsigned char** srcPlanes, int width,
+                                      const int* strides, int height, int subsamp,
+                                      unsigned char** jpegBuf, unsigned long* jpegSize,
+                                      int jpegQual, int flags) {
+  static const char FUNCTION_NAME[] = "tjCompressFromYUVPlanes";
+  GET_TJINSTANCE(handle, -1)
+  if (subsamp < 0 || subsamp >= self->numSamp || jpegSize == nullptr || jpegQual < 0 ||
+      jpegQual > 100)
+    return legacy_error(self, FUNCTION_NAME, "Invalid argument");
+  self->quality = jpegQual;
+  self->subsamp = subsamp;
+  processFlags(self, flags, COMPRESS);
+  size_t size = static_cast<size_t>(*jpegSize);
+  if (self->noRealloc) size = tj3JPEGBufSize(width, height, self->subsamp);
+  int retval =
+      tj3CompressFromYUVPlanes8(handle, srcPlanes, width, strides, height, jpegBuf, &size);
+  *jpegSize = static_cast<unsigned long>(size);
+  return retval;
+}
+
+DLLEXPORT int tjCompressFromYUV(tjhandle handle, const unsigned char* srcBuf, int width,
+                                int align, int height, int subsamp, unsigned char** jpegBuf,
+                                unsigned long* jpegSize, int jpegQual, int flags) {
+  static const char FUNCTION_NAME[] = "tjCompressFromYUV";
+  GET_TJINSTANCE(handle, -1)
+  if (subsamp < 0 || subsamp >= self->numSamp || jpegSize == nullptr)
+    return legacy_error(self, FUNCTION_NAME, "Invalid argument");
+  self->quality = jpegQual;
+  self->subsamp = subsamp;
+  processFlags(self, flags, COMPRESS);
+  size_t size = static_cast<size_t>(*jpegSize);
+  if (self->noRealloc) size = tj3JPEGBufSize(width, height, self->subsamp);
+  int retval = tj3CompressFromYUV8(handle, srcBuf, width, align, height, jpegBuf, &size);
+  *jpegSize = static_cast<unsigned long>(size);
+  return retval;
+}
+
+DLLEXPORT int tjEncodeYUVPlanes(tjhandle handle, const unsigned char* srcBuf, int width,
+                                int pitch, int height, int pixelFormat,
+                                unsigned char** dstPlanes, int* strides, int subsamp, int flags) {
+  static const char FUNCTION_NAME[] = "tjEncodeYUVPlanes";
+  GET_TJINSTANCE(handle, -1)
+  if (subsamp < 0 || subsamp >= self->numSamp)
+    return legacy_error(self, FUNCTION_NAME, "Invalid argument");
+  self->subsamp = subsamp;
+  processFlags(self, flags, COMPRESS);
+  return tj3EncodeYUVPlanes8(handle, srcBuf, width, pitch, height, pixelFormat, dstPlanes,
+                             strides);
+}
+
+DLLEXPORT int tjEncodeYUV3(tjhandle handle, const unsigned char* srcBuf, int width, int pitch,
+                           int height, int pixelFormat, unsigned char* dstBuf, int align,
+                           int subsamp, int flags) {
+  static const char FUNCTION_NAME[] = "tjEncodeYUV3";
+  GET_TJINSTANCE(handle, -1)
+  if (subsamp < 0 || subsamp >= self->numSamp)
+    return legacy_error(self, FUNCTION_NAME, "Invalid argument");
+  self->subsamp = subsamp;
+  processFlags(self, flags, COMPRESS);
+  return tj3EncodeYUV8(handle, srcBuf, width, pitch, height, pixelFormat, dstBuf, align);
+}
+
+DLLEXPORT int tjEncodeYUV2(tjhandle handle, unsigned char* srcBuf, int width, int pitch,
+                           int height, int pixelFormat, unsigned char* dstBuf, int subsamp,
+                           int flags) {
+  return tjEncodeYUV3(handle, srcBuf, width, pitch, height, pixelFormat, dstBuf, 4, subsamp,
+                      flags);
+}
+
+DLLEXPORT int tjEncodeYUV(tjhandle handle, unsigned char* srcBuf, int width, int pitch,
+                          int height, int pixelSize, unsigned char* dstBuf, int subsamp,
+                          int flags) {
+  return tjEncodeYUV2(handle, srcBuf, width, pitch, height, getPixelFormat(pixelSize, flags),
+                      dstBuf, subsamp, flags);
+}
+
+// Decompression
+DLLEXPORT int tjDecompressHeader3(tjhandle handle, const unsigned char* jpegBuf,
+                                  unsigned long jpegSize, int* width, int* height,
+                                  int* jpegSubsamp, int* jpegColorspace) {
+  static const char FUNCTION_NAME[] = "tjDecompressHeader3";
+  GET_TJINSTANCE(handle, -1)
+  if (width == nullptr || height == nullptr || jpegSubsamp == nullptr ||
+      jpegColorspace == nullptr)
+    return legacy_error(self, FUNCTION_NAME, "Invalid argument");
+  int retval = tj3DecompressHeader(handle, jpegBuf, jpegSize);
+  *width = tj3Get(handle, TJPARAM_JPEGWIDTH);
+  *height = tj3Get(handle, TJPARAM_JPEGHEIGHT);
+  *jpegSubsamp = tj3Get(handle, TJPARAM_SUBSAMP);
+  if (*jpegSubsamp == TJSAMP_UNKNOWN)
+    return legacy_error(self, FUNCTION_NAME, "Could not determine subsampling level of JPEG image");
+  *jpegColorspace = tj3Get(handle, TJPARAM_COLORSPACE);
+  return retval;
+}
+
+DLLEXPORT int tjDecompressHeader2(tjhandle handle, unsigned char* jpegBuf,
+                                  unsigned long jpegSize, int* width, int* height,
+                                  int* jpegSubsamp) {
+  int jpegColorspace;
+  return tjDecompressHeader3(handle, jpegBuf, jpegSize, width, height, jpegSubsamp,
+                             &jpegColorspace);
+}
+
+DLLEXPORT int tjDecompressHeader(tjhandle handle, unsigned char* jpegBuf, unsigned long jpegSize,
+                                 int* width, int* height) {
+  int jpegSubsamp;
+  return tjDecompressHeader2(handle, jpegBuf, jpegSize, width, height, &jpegSubsamp);
+}
+
+DLLEXPORT int tjDecompress2(tjhandle handle, const unsigned char* jpegBuf, unsigned long jpegSize,
+                            unsigned char* dstBuf, int width, int pitch, int height,
+                            int pixelFormat, int flags) {
+  static const char FUNCTION_NAME[] = "tjDecompress2";
+  GET_TJINSTANCE(handle, -1)
+  int i = legacy_scaling(self, FUNCTION_NAME, jpegBuf, jpegSize, width, height, true);
+  if (i < 0) return -1;
+  processFlags(self, flags, DECOMPRESS);
+  if (tj3SetScalingFactor(handle, sf[i]) == -1) return -1;
+  if (tj3SetCroppingRegion(handle, TJUNCROPPED) == -1) return -1;
+  return tj3Decompress8(handle, jpegBuf, jpegSize, dstBuf, pitch, pixelFormat);
+}
+
+DLLEXPORT int tjDecompress(tjhandle handle, unsigned char* jpegBuf, unsigned long jpegSize,
+                           unsigned char* dstBuf, int width, int pitch, int height,
+                           int pixelSize, int flags) {
+  if (flags & TJ_YUV) return tjDecompressToYUV(handle, jpegBuf, jpegSize, dstBuf, flags);
+  return tjDecompress2(handle, jpegBuf, jpegSize, dstBuf, width, pitch, height,
+                       getPixelFormat(pixelSize, flags), flags);
+}
+
+DLLEXPORT int tjDecompressToYUVPlanes(tjhandle handle, const unsigned char* jpegBuf,
+                                      unsigned long jpegSize, unsigned char** dstPlanes,
+                                      int width, int* strides, int height, int flags) {
+  static const char FUNCTION_NAME[] = "tjDecompressToYUVPlanes";
+  GET_TJINSTANCE(handle, -1)
+  int i = legacy_scaling(self, FUNCTION_NAME, jpegBuf, jpegSize, width, height, false);
+  if (i < 0) return -1;
+  processFlags(self, flags, DECOMPRESS);
+  if (tj3SetScalingFactor(handle, sf[i]) == -1) return -1;
+  return tj3DecompressToYUVPlanes8(handle, jpegBuf, jpegSize, dstPlanes, strides);
+}
+
+DLLEXPORT int tjDecompressToYUV2(tjhandle handle, const unsigned char* jpegBuf,
+                                 unsigned long jpegSize, unsigned char* dstBuf, int width,
+                                 int align, int height, int flags) {
+  static const char FUNCTION_NAME[] = "tjDecompressToYUV2";
+  GET_TJINSTANCE(handle, -1)
+  int i = legacy_scaling(self, FUNCTION_NAME, jpegBuf, jpegSize, width, height, false);
+  if (i < 0) return -1;
+  processFlags(self, flags, DECOMPRESS);
+  if (tj3SetScalingFactor(handle, sf[i]) == -1) return -1;
+  return tj3DecompressToYUV8(handle, jpegBuf, static_cast<size_t>(jpegSize), dstBuf, align);
+}
+
+DLLEXPORT int tjDecompressToYUV(tjhandle handle, unsigned char* jpegBuf, unsigned long jpegSize,
+                                unsigned char* dstBuf, int flags) {
+  return tjDecompressToYUV2(handle, jpegBuf, jpegSize, dstBuf, 0, 4, 0, flags);
+}
+
+DLLEXPORT int tjDecodeYUVPlanes(tjhandle handle, const unsigned char** srcPlanes,
+                                const int* strides, int subsamp, unsigned char* dstBuf,
+                                int width, int pitch, int height, int pixelFormat, int flags) {
+  static const char FUNCTION_NAME[] = "tjDecodeYUVPlanes";
+  GET_TJINSTANCE(handle, -1)
+  if (subsamp < 0 || subsamp >= self->numSamp)
+    return legacy_error(self, FUNCTION_NAME, "Invalid argument");
+  self->subsamp = subsamp;
+  processFlags(self, flags, DECOMPRESS);
+  return tj3DecodeYUVPlanes8(handle, srcPlanes, strides, dstBuf, width, pitch, height,
+                             pixelFormat);
+}
+
+DLLEXPORT int tjDecodeYUV(tjhandle handle, const unsigned char* srcBuf, int align, int subsamp,
+                          unsigned char* dstBuf, int width, int pitch, int height,
+                          int pixelFormat, int flags) {
+  static const char FUNCTION_NAME[] = "tjDecodeYUV";
+  GET_TJINSTANCE(handle, -1)
+  if (subsamp < 0 || subsamp >= self->numSamp)
+    return legacy_error(self, FUNCTION_NAME, "Invalid argument");
+  self->subsamp = subsamp;
+  processFlags(self, flags, DECOMPRESS);
+  return tj3DecodeYUV8(handle, srcBuf, align, dstBuf, width, pitch, height, pixelFormat);
+}
+
+// Transformation
+DLLEXPORT int tjTransform(tjhandle handle, const unsigned char* jpegBuf, unsigned long jpegSize,
+                          int n, unsigned char** dstBufs, unsigned long* dstSizes,
+                          tjtransform* t, int flags) {
+  static const char FUNCTION_NAME[] = "tjTransform";
+  GET_TJINSTANCE(handle, -1)
+  if ((self->init & DECOMPRESS) == 0)
+    return legacy_error(self, FUNCTION_NAME, "Instance has not been initialized for decompression");
+  if (n < 1 || dstSizes == nullptr) return legacy_error(self, FUNCTION_NAME, "Invalid argument");
+  processFlags(self, flags, COMPRESS);
+  std::vector<size_t> sizes;
+  int r = guarded<int>(self, -1, [&]() -> int {
+    int srcWidth = 0, srcHeight = 0, srcSubsamp = TJSAMP_UNKNOWN;
+    if (self->noRealloc) {
+      vd::Decompressor& d = self->d();
+      if (d.state != vd::Decompressor::State::Start) d.abort();
+      d.set_source(jpegBuf, jpegSize);
+      d.read_header(true);
+      srcWidth = static_cast<int>(d.st.image_width);
+      srcHeight = static_cast<int>(d.st.image_height);
+      srcSubsamp = getSubsamp(self);
+      d.abort();
+    }
+    sizes.resize(static_cast<std::size_t>(n));
+    for (int i = 0; i < n; i++) {
+      sizes[i] = static_cast<size_t>(dstSizes[i]);
+      if (self->noRealloc) {
+        int w = srcWidth, h = srcHeight, s = srcSubsamp;
+        getTransformedSpecs(self, &w, &h, &s, &t[i], FUNCTION_NAME);
+        sizes[i] = tj3JPEGBufSize(w, h, s);
+      }
+    }
+    return 0;
+  }, [] {});
+  if (r == -1) return -1;
+  int retval = tj3Transform(handle, jpegBuf, static_cast<size_t>(jpegSize), n, dstBufs,
+                            sizes.data(), t);
+  for (int i = 0; i < n; i++) dstSizes[i] = static_cast<unsigned long>(sizes[i]);
+  return retval;
+}
+
+// Image files
+DLLEXPORT unsigned char* tjLoadImage(const char* filename, int* width, int align, int* height,
+                                     int* pixelFormat, int flags) {
+  tjhandle handle = tj3Init(TJINIT_COMPRESS);
+  if (!handle) return nullptr;
+  processFlags(static_cast<tjinstance*>(handle), flags, COMPRESS);
+  unsigned char* dstBuf = tj3LoadImage8(handle, filename, width, align, height, pixelFormat);
+  tj3Destroy(handle);
+  return dstBuf;
+}
+
+DLLEXPORT int tjSaveImage(const char* filename, unsigned char* buffer, int width, int pitch,
+                          int height, int pixelFormat, int flags) {
+  tjhandle handle = tj3Init(TJINIT_DECOMPRESS);
+  if (!handle) return -1;
+  processFlags(static_cast<tjinstance*>(handle), flags, DECOMPRESS);
+  int retval = tj3SaveImage8(handle, filename, buffer, width, pitch, height, pixelFormat);
+  tj3Destroy(handle);
+  return retval;
 }
 
 }  // extern "C"

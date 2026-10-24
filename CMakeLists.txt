@@ -62,11 +62,25 @@ if(VIO_TEST_SCALAR)
   set(VIO_DEFS_scalar VIO_NO_SIMD)
 endif()
 
+# bind/jpeglib: the jpeglib.h and turbojpeg.h interfaces as C libraries.
+option(VIO_BUILD_JPEGLIB "Build the jpeglib.h/turbojpeg.h compatible libraries"
+  ${VIO_IS_TOP_LEVEL})
+if(VIO_BUILD_TESTS AND NOT VIO_BUILD_JPEGLIB)
+  message(FATAL_ERROR "VIO_BUILD_TESTS requires VIO_BUILD_JPEGLIB")
+endif()
+
 if(VIO_BUILD_TESTS)
-  # Executables go to the top of the build tree (scripts run them there).
+  # Executables (and DLLs) go to the top of the build tree (scripts run them
+  # there).
   if(NOT CMAKE_RUNTIME_OUTPUT_DIRECTORY)
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
   endif()
+endif()
+if(VIO_BUILD_JPEGLIB)
+  add_subdirectory(bind/jpeglib)
+endif()
+
+if(VIO_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
 endif()

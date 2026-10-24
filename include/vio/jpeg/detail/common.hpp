@@ -153,15 +153,24 @@ class BlockArray {
     per_row_ = blocks_per_row;
     rows_ = rows;
     data_ = aligned_alloc_zeroed<Block>(blocks_per_row * rows);
+    base_ = data_.get();
   }
-  Block* row(std::size_t r) { return data_.get() + r * per_row_; }
-  const Block* row(std::size_t r) const { return data_.get() + r * per_row_; }
+  // Refers to caller-owned rows of `blocks_per_row` blocks at `base`.
+  void view(Block* base, std::size_t blocks_per_row, std::size_t rows) {
+    data_.reset();
+    per_row_ = blocks_per_row;
+    rows_ = rows;
+    base_ = base;
+  }
+  Block* row(std::size_t r) { return base_ + r * per_row_; }
+  const Block* row(std::size_t r) const { return base_ + r * per_row_; }
   std::size_t blocks_per_row() const { return per_row_; }
   std::size_t num_rows() const { return rows_; }
-  bool empty() const { return !data_; }
+  bool empty() const { return !base_; }
 
  private:
   AlignedPtr<Block> data_;
+  Block* base_ = nullptr;
   std::size_t per_row_ = 0, rows_ = 0;
 };
 

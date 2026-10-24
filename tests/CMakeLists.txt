@@ -7,10 +7,8 @@
 #     tests.cmake         libjpeg-turbo's test definitions, adapted to vio
 #     tools/              jpeg-encode/-decode/-transform/-example: command-line
 #                         compatible stand-ins for cjpeg/djpeg/jpegtran/example
-#     turbojpeg.cpp       the TurboJPEG API implemented on vio, for jpeg-test
-#                         and jpeg-bench
-#     shim/               stand-ins for the libjpeg-turbo internal headers that
-#                         the test programs include
+#     shim/               stand-ins for the generated libjpeg-turbo headers
+#                         (jconfigint.h, jversion.h) that the programs include
 #     libjpeg/            TurboJPEG layer and config for IJG libjpeg benchmarks
 #     bmp_test_size.cpp   port of libjpeg-turbo's bmpsizetest.c
 #   c/                    tests of the C interface (bind/c/vio.h)
@@ -31,19 +29,30 @@ if(NOT EXISTS ${LJT_SOURCE_DIR}/src/turbojpeg.h OR
     "or configure with -DVIO_BUILD_TESTS=OFF.")
 endif()
 
-# The libjpeg-turbo sources are compiled from a copy so that their quoted
-# includes of cdjpeg.h and jconfigint.h resolve to jpeg/shim/ rather than to the
-# real headers next to them in the submodule.
+# libjpeg-turbo's programs are compiled from a copy so that their quoted
+# includes of the library headers (jpeglib.h, turbojpeg.h, ...) resolve to
+# bind/jpeglib/, and of jconfigint.h/jversion.h to jpeg/shim/, rather than
+# to the real headers next to them in the submodule.
 set(LJT_DIR ${CMAKE_CURRENT_BINARY_DIR}/libjpeg-turbo)
-foreach(f tjunittest.c tjbench.c tjutil.c tjutil.h turbojpeg.h
-          md5/md5.c md5/md5.h md5/md5hl.c md5/md5cmp.c)
+set(LJT_PROGRAM_FILES cjpeg.c djpeg.c jpegtran.c example.c bmpsizetest.c
+  strtest.c tjcomp.c tjdecomp.c tjtran.c cdjpeg.c cdjpeg.h cderror.h cmyk.h
+  jinclude.h jsamplecomp.h jpegapicomp.h rdswitch.c rdbmp.c rdgif.c rdpng.c
+  rdppm.c rdtarga.c rdcolmap.c wrbmp.c wrgif.c wrpng.c wrppm.c wrtarga.c
+  transupp.c transupp.h tjunittest.c tjbench.c tjutil.c tjutil.h
+  md5/md5.c md5/md5.h md5/md5hl.c md5/md5cmp.c md5/md5sum.c wrjpgcom.c
+  spng/spng.c spng/spng.h)
+file(GLOB LJT_GLOBBED RELATIVE ${LJT_SOURCE_DIR}/src
+  ${LJT_SOURCE_DIR}/src/wrapper/rd*.c ${LJT_SOURCE_DIR}/src/wrapper/wr*.c
+  ${LJT_SOURCE_DIR}/src/spng/zlib/*.c ${LJT_SOURCE_DIR}/src/spng/zlib/*.h)
+foreach(f ${LJT_PROGRAM_FILES} ${LJT_GLOBBED})
   configure_file(${LJT_SOURCE_DIR}/src/${f} ${LJT_DIR}/${f} COPYONLY)
 endforeach()
 
 # Settings for the libjpeg-turbo C programs.
 macro(vio_ljt_program target)
   target_include_directories(${target} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/jpeg/shim ${LJT_DIR})
+    ${CMAKE_CURRENT_SOURCE_DIR}/jpeg/shim ${PROJECT_SOURCE_DIR}/bind/jpeglib
+    ${LJT_DIR})
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(${target} PRIVATE -w)
   endif()
@@ -77,8 +86,11 @@ foreach(variant ${VIO_VARIANTS})
   target_compile_definitions(bmp-test-size${sfx} PRIVATE ${defs})
   add_custom_target(bmpsizetest${sfx} DEPENDS bmp-test-size${sfx})
 
-  add_library(turbojpeg-vio${sfx} STATIC jpeg/turbojpeg.cpp)
-  target_include_directories(turbojpeg-vio${sfx} PUBLIC ${LJT_DIR})
+  # The TurboJPEG library (bind/jpeglib), built for this variant.
+  add_library(turbojpeg-vio${sfx} STATIC
+    ${PROJECT_SOURCE_DIR}/bind/jpeglib/turbojpeg.cpp)
+  target_include_directories(turbojpeg-vio${sfx} PUBLIC
+    ${PROJECT_SOURCE_DIR}/bind/jpeglib)
   target_link_libraries(turbojpeg-vio${sfx} PUBLIC vio)
   target_compile_definitions(turbojpeg-vio${sfx} PRIVATE ${defs})
 
@@ -98,6 +110,99 @@ add_executable(md5-cmp ${LJT_DIR}/md5/md5cmp.c ${LJT_DIR}/md5/md5.c
   ${LJT_DIR}/md5/md5hl.c)
 vio_ljt_program(md5-cmp)
 add_custom_target(md5cmp DEPENDS md5-cmp)
+
+# libjpeg-turbo's programs (cjpeg, djpeg, jpegtran, example, tjunittest, ...),
+# unchanged, built against the jpeglib.h and turbojpeg.h libraries of
+# bind/jpeglib: test "libtypes" shared and static, as in libjpeg-turbo.
+add_library(ljt-zlib OBJECT ${LJT_DIR}/spng/zlib/adler32.c
+  ${LJT_DIR}/spng/zlib/compress.c ${LJT_DIR}/spng/zlib/crc32.c
+  ${LJT_DIR}/spng/zlib/deflate.c ${LJT_DIR}/spng/zlib/inffast.c
+  ${LJT_DIR}/spng/zlib/inflate.c ${LJT_DIR}/spng/zlib/inftrees.c
+  ${LJT_DIR}/spng/zlib/trees.c ${LJT_DIR}/spng/zlib/zutil.c)
+add_library(ljt-spng OBJECT ${LJT_DIR}/spng/spng.c)
+target_include_directories(ljt-spng PRIVATE ${LJT_DIR}/spng/zlib)
+target_compile_definitions(ljt-spng PRIVATE SPNG_STATIC)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(ljt-zlib PRIVATE -w)
+  target_compile_options(ljt-spng PRIVATE -w)
+endif()
+set(LJT_PNG_OBJECTS $<TARGET_OBJECTS:ljt-spng> $<TARGET_OBJECTS:ljt-zlib>)
+set(CDJPEG_DEFS BMP_SUPPORTED GIF_SUPPORTED PNG_SUPPORTED SPNG_STATIC
+  PPM_SUPPORTED TARGA_SUPPORTED)
+if(WIN32)
+  list(APPEND CDJPEG_DEFS USE_SETMODE)
+endif()
+include(CheckSymbolExists)
+check_symbol_exists(fmemopen "stdio.h" HAVE_FMEMOPEN)
+
+set(VIO_COMPAT_LIBTYPES shared static)
+set(VIO_LIB_shared "")
+set(VIO_LIB_static -static)
+foreach(kind ${VIO_COMPAT_LIBTYPES})
+  set(sfx -${kind})
+  set(jpeglib jpeg${VIO_LIB_${kind}})
+  set(tjlib turbojpeg${VIO_LIB_${kind}})
+  set(VIO_SUFFIX_${kind} ${sfx})
+  macro(ljt_program name lib)
+    add_executable(${name}${sfx} ${ARGN})
+    target_link_libraries(${name}${sfx} PRIVATE ${lib})
+    set_target_properties(${name}${sfx} PROPERTIES LINKER_LANGUAGE CXX)
+    vio_ljt_program(${name}${sfx})
+  endmacro()
+  ljt_program(cjpeg ${jpeglib} ${LJT_DIR}/cjpeg.c ${LJT_DIR}/cdjpeg.c
+    ${LJT_DIR}/rdbmp.c ${LJT_DIR}/rdgif.c ${LJT_DIR}/wrapper/rdpng-8.c
+    ${LJT_DIR}/wrapper/rdpng-12.c ${LJT_DIR}/wrapper/rdpng-16.c
+    ${LJT_DIR}/wrapper/rdppm-8.c ${LJT_DIR}/wrapper/rdppm-12.c
+    ${LJT_DIR}/wrapper/rdppm-16.c ${LJT_DIR}/rdswitch.c ${LJT_DIR}/rdtarga.c
+    ${LJT_PNG_OBJECTS})
+  ljt_program(djpeg ${jpeglib} ${LJT_DIR}/djpeg.c ${LJT_DIR}/cdjpeg.c
+    ${LJT_DIR}/wrapper/rdcolmap-8.c ${LJT_DIR}/wrapper/rdcolmap-12.c
+    ${LJT_DIR}/rdswitch.c ${LJT_DIR}/wrbmp.c ${LJT_DIR}/wrapper/wrgif-8.c
+    ${LJT_DIR}/wrapper/wrgif-12.c ${LJT_DIR}/wrapper/wrpng-8.c
+    ${LJT_DIR}/wrapper/wrpng-12.c ${LJT_DIR}/wrapper/wrpng-16.c
+    ${LJT_DIR}/wrapper/wrppm-8.c ${LJT_DIR}/wrapper/wrppm-12.c
+    ${LJT_DIR}/wrapper/wrppm-16.c ${LJT_DIR}/wrtarga.c ${LJT_PNG_OBJECTS})
+  ljt_program(jpegtran ${jpeglib} ${LJT_DIR}/jpegtran.c ${LJT_DIR}/cdjpeg.c
+    ${LJT_DIR}/rdswitch.c ${LJT_DIR}/transupp.c)
+  ljt_program(example ${jpeglib} ${LJT_DIR}/example.c)
+  foreach(t cjpeg djpeg)
+    target_compile_definitions(${t}${sfx} PRIVATE ${CDJPEG_DEFS})
+  endforeach()
+  if(WIN32)
+    target_compile_definitions(jpegtran${sfx} PRIVATE USE_SETMODE)
+  endif()
+  if(HAVE_FMEMOPEN)
+    ljt_program(bmpsizetest ${jpeglib} ${LJT_DIR}/bmpsizetest.c
+      ${LJT_DIR}/rdbmp.c ${LJT_DIR}/wrbmp.c ${LJT_DIR}/rdgif.c
+      ${LJT_DIR}/wrapper/wrgif-8.c ${LJT_DIR}/wrapper/wrgif-12.c
+      ${LJT_DIR}/wrapper/rdpng-8.c ${LJT_DIR}/wrapper/rdpng-12.c
+      ${LJT_DIR}/wrapper/rdpng-16.c ${LJT_DIR}/wrapper/wrpng-8.c
+      ${LJT_DIR}/wrapper/wrpng-12.c ${LJT_DIR}/wrapper/wrpng-16.c
+      ${LJT_DIR}/wrapper/rdppm-8.c ${LJT_DIR}/wrapper/rdppm-12.c
+      ${LJT_DIR}/wrapper/rdppm-16.c ${LJT_DIR}/wrapper/wrppm-8.c
+      ${LJT_DIR}/wrapper/wrppm-12.c ${LJT_DIR}/wrapper/wrppm-16.c
+      ${LJT_DIR}/rdtarga.c ${LJT_DIR}/wrtarga.c ${LJT_PNG_OBJECTS})
+    target_compile_definitions(bmpsizetest${sfx} PRIVATE ${CDJPEG_DEFS})
+  endif()
+  ljt_program(tjunittest ${tjlib} ${LJT_DIR}/tjunittest.c ${LJT_DIR}/tjutil.c
+    ${LJT_DIR}/md5/md5.c ${LJT_DIR}/md5/md5hl.c)
+  ljt_program(tjbench ${tjlib} ${LJT_DIR}/tjbench.c ${LJT_DIR}/tjutil.c)
+  foreach(t tjcomp tjdecomp tjtran)
+    ljt_program(${t} ${tjlib} ${LJT_DIR}/${t}.c)
+  endforeach()
+  ljt_program(strtest ${jpeglib} ${LJT_DIR}/strtest.c)
+  if(UNIX)
+    target_link_libraries(tjbench${sfx} PRIVATE m)
+  endif()
+  # Checks of the jpeglib.h API beyond libjpeg-turbo's programs
+  ljt_program(jpeglib-test ${jpeglib} jpeg/jpeglib_test.c)
+  target_link_libraries(jpeglib-test${sfx} PRIVATE ${tjlib})
+  add_test(NAME jpeglib-test-${kind}
+    COMMAND jpeglib-test${sfx} ${LJT_SOURCE_DIR}/testimages)
+  foreach(t cjpeg djpeg jpegtran example tjunittest tjbench bmpsizetest)
+    set(VIO_TOOL_${t}_${kind} ${t})
+  endforeach()
+endforeach()
 
 # Optional, for performance comparisons: jpeg-bench on IJG libjpeg (9 or later),
 # built from an unpacked jpegsrc.v*.tar.gz with the same compiler and flags.
@@ -120,30 +225,47 @@ if(VIO_LIBJPEG_SOURCE_DIR)
     target_compile_options(ijg-jpeg PRIVATE -w)
   endif()
 
+  # tjbench.c from a directory of its own, so that it includes the minimal
+  # cdjpeg.h of jpeg/libjpeg/; turbojpeg.h likewise.
+  set(IJG_BENCH_DIR ${CMAKE_CURRENT_BINARY_DIR}/libjpeg-bench)
+  foreach(f tjbench.c tjutil.c tjutil.h)
+    configure_file(${LJT_SOURCE_DIR}/src/${f} ${IJG_BENCH_DIR}/${f} COPYONLY)
+  endforeach()
+  configure_file(${PROJECT_SOURCE_DIR}/bind/jpeglib/turbojpeg.h
+    ${IJG_BENCH_DIR}/turbojpeg.h COPYONLY)
   add_library(turbojpeg-libjpeg STATIC jpeg/libjpeg/turbojpeg.c)
-  target_include_directories(turbojpeg-libjpeg PUBLIC ${LJT_DIR})
+  target_include_directories(turbojpeg-libjpeg PUBLIC ${IJG_BENCH_DIR})
   target_link_libraries(turbojpeg-libjpeg PUBLIC ijg-jpeg)
 
-  add_executable(jpeg-bench-libjpeg ${LJT_DIR}/tjbench.c ${LJT_DIR}/tjutil.c)
+  add_executable(jpeg-bench-libjpeg ${IJG_BENCH_DIR}/tjbench.c
+    ${IJG_BENCH_DIR}/tjutil.c)
   target_link_libraries(jpeg-bench-libjpeg PRIVATE turbojpeg-libjpeg)
   if(UNIX AND NOT APPLE)
     target_link_libraries(jpeg-bench-libjpeg PRIVATE m)
   endif()
-  vio_ljt_program(jpeg-bench-libjpeg)
+  target_include_directories(jpeg-bench-libjpeg PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/jpeg/libjpeg ${CMAKE_CURRENT_SOURCE_DIR}/jpeg/shim
+    ${IJG_BENCH_DIR})
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(jpeg-bench-libjpeg PRIVATE -w)
+  endif()
   add_custom_target(tjbench-libjpeg DEPENDS jpeg-bench-libjpeg)
 endif()
 
 # Inputs of jpeg/tests.cmake.
-set(TEST_LIBTYPES ${VIO_VARIANTS})
-# The x86 SIMD variant uses libjpeg-turbo's SSE floating-point DCT kernels
+set(TEST_LIBTYPES ${VIO_VARIANTS} ${VIO_COMPAT_LIBTYPES})
+# The x86 SIMD builds use libjpeg-turbo's SSE floating-point DCT kernels
 # for 8-bit samples, whose results differ from the C algorithms'.
 if(VIO_TARGET_ARCH MATCHES "^(x86_64|AMD64|amd64|i[3-6]86|x86)$")
-  set(VIO_FLOATTEST8_simd sse)
+  foreach(t simd ${VIO_COMPAT_LIBTYPES})
+    set(VIO_FLOATTEST8_${t} sse)
+  endforeach()
 endif()
 set(WITH_TURBOJPEG 1)
 set(WITH_ARITH_ENC 1)
 set(WITH_ARITH_DEC 1)
 include(jpeg/tests.cmake)
+include(jpeg/extended.cmake)
 include(png/tests.cmake)
 
 add_executable(c-test c/c_test.c c/vio_impl.cpp)

@@ -311,7 +311,8 @@ class CoefController final : public DCoefController<T> {
     while (st_.input_scan_number < st_.output_scan_number ||
            (st_.input_scan_number == st_.output_scan_number &&
             st_.input_iMCU_row <= st_.output_iMCU_row)) {
-      if (st_.consume_input() == SUSPENDED) return SUSPENDED;
+      int ret = st_.consume_input();
+      if (ret == SUSPENDED || ret == REACHED_CUSTOM_MARKER) return SUSPENDED;
     }
     for (int ci = 0; ci < st_.num_components; ci++) {
       ComponentInfo& c = st_.comp_info[ci];
@@ -396,7 +397,8 @@ class CoefController final : public DCoefController<T> {
         unsigned delta = (st_.Ss == 0) ? 2 : 0;
         if (st_.input_iMCU_row > st_.output_iMCU_row + delta) break;
       }
-      if (st_.consume_input() == SUSPENDED) return SUSPENDED;
+      int ret = st_.consume_input();
+      if (ret == SUSPENDED || ret == REACHED_CUSTOM_MARKER) return SUSPENDED;
     }
     Coef* workspace = workspace_.data();
     for (int ci = 0; ci < st_.num_components; ci++) {
@@ -713,7 +715,8 @@ class DiffController final : public DCoefController<T> {
     while (st_.input_scan_number < st_.output_scan_number ||
            (st_.input_scan_number == st_.output_scan_number &&
             st_.input_iMCU_row <= st_.output_iMCU_row)) {
-      if (st_.consume_input() == SUSPENDED) return SUSPENDED;
+      int ret = st_.consume_input();
+      if (ret == SUSPENDED || ret == REACHED_CUSTOM_MARKER) return SUSPENDED;
     }
     for (int ci = 0; ci < st_.num_components; ci++) {
       ComponentInfo& c = st_.comp_info[ci];

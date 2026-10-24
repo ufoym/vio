@@ -52,6 +52,12 @@ class ByteSink {
   }
 
   std::size_t size() const { return static_cast<std::size_t>(next - base_); }
+  // Drops the data written so far (after the caller has consumed it), keeping
+  // the buffer.
+  void rewind() {
+    free_in_buffer += size();
+    next = base_;
+  }
   std::vector<std::uint8_t> take() {
     std::vector<std::uint8_t> out;
     if (base_ == buf_.data()) {
