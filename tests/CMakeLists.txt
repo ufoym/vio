@@ -13,6 +13,8 @@
 #                         the test programs include
 #     libjpeg/            TurboJPEG layer and config for IJG libjpeg benchmarks
 #     bmp_test_size.cpp   port of libjpeg-turbo's bmpsizetest.c
+#   c/                    tests of the C interface (bind/c/vio.h)
+#   python/               tests of the Python package (pytest tests/python)
 #   png/
 #     tests.cmake         libpng's tests, adapted to vio (png/png_test.cpp)
 #     expected.txt        the images as libpng decodes them
@@ -143,6 +145,11 @@ set(WITH_ARITH_ENC 1)
 set(WITH_ARITH_DEC 1)
 include(jpeg/tests.cmake)
 include(png/tests.cmake)
+
+add_executable(c-test c/c_test.c c/vio_impl.cpp)
+target_link_libraries(c-test PRIVATE vio)
+add_test(NAME c-test COMMAND c-test ${LJT_SOURCE_DIR}/testimages
+  ${CMAKE_CURRENT_BINARY_DIR})
 
 # PNG benchmark (png/bench/): vio, and optionally fpnge (x86 only; it needs
 # SSE4.1 and PCLMUL, AVX2 in its fastest build), libpng with zlib and Wuffs,

@@ -16,6 +16,8 @@ Targa, with SIMD on every major architecture.
   Loongson MMI and RISC-V Vector, chosen at run time.
 - **Header-only:** add `include/` and include only the formats you need;
   PNG brings its own DEFLATE, with no zlib dependency.
+- **C and Python:** a header-only C interface (`bind/c/vio.h`) and a
+  NumPy-based Python package (`pip install .`) for whole images.
 
 ## Using the library
 
@@ -35,6 +37,75 @@ The packed-pixel readers and writers implement `vio::ImageReader<T>` /
 `vio::ImageWriter<T>` (`vio/core.hpp`), which exchange rows of
 samples; `T` is `uint8_t`, `int16_t` or `uint16_t` for 8-, 12- and 16-bit
 data.
+
+### C
+
+`bind/c/vio.h` decodes and encodes whole images in one layout: rows of 1
+(gray), 2 (gray + alpha), 3 (RGB) or 4 (RGBA) channels of 8- or 16-bit
+samples.  It is header-only too; its implementation is C++20, so one C++
+file of the program compiles it (with `include/` and `bind/c/` on the include
+path, both of which the `vio::vio` CMake target provides):
+
+```cpp
+// vio.cpp
+#define VIO_IMPLEMENTATION
+#include "vio.h"
+```
+
+and the rest of the program, in C or C++, includes `vio.h` as usual:
+
+```c
+#include "vio.h"
+
+vio_image img;
+if (vio_load("in.png", 0, 0, &img) != VIO_OK) {  /* 0, 0: the file's layout */
+  fprintf(stderr, "%s\n", vio_last_error());
+  return 1;
+}
+vio_options opt = {0};
+opt.quality = 85;                                /* JPEG; 0 = defaults */
+vio_save("out.jpg", &img, &opt);                 /* format from the extension */
+vio_image_free(&img);
+```
+
+| Function                                      | Does                                         |
+| --------------------------------------------- | -------------------------------------------- |
+| `vio_decode(data, size, channels, depth, &img)` | decodes a file in memory; channels 1..4 and depth 8/16 convert, 0 keeps the file's |
+| `vio_load(path, channels, depth, &img)`       | the same from a file                         |
+| `vio_encode(&img, format, &opt, &out, &size)` | encodes into a buffer freed with `vio_free()` |
+| `vio_save(path, &img, &opt)`                  | writes a file, format from the extension     |
+| `vio_probe(data, size, &info)`                | format, size and layout from the header      |
+| `vio_detect(data, size)`, `vio_format_from_path(path)` | the format of a file or file name    |
+| `vio_last_error()`                            | the last error message on this thread        |
+
+JPEG, PNG, BMP, GIF (first image), PPM/PGM and Targa are decoded; all but
+GIF are encoded.  Options: JPEG `quality` (default 90), `subsampling` (444,
+422, 420), `progressive`; PNG `compression` (0: the fast single-pass
+encoder, 1..9: zlib levels).  Formats that cannot hold alpha drop it;
+JPEG, BMP and Targa store 8-bit samples.
+
+### Python
+
+```sh
+pip install .        # builds the extension (needs a C++20 compiler) and installs numpy
+```
+
+```python
+import vio
+
+img = vio.read("photo.jpg")                  # numpy array, (h, w, 3) uint8
+vio.write("photo.png", img)
+data = vio.encode(img, "jpeg", quality=85, subsampling=444, progressive=True)
+rgba = vio.decode(data, channels=4)          # (h, w, 4)
+gray = vio.read("photo.png", channels=1, depth=16)   # (h, w) uint16
+vio.info("photo.jpg")                        # Info(format='jpeg', width=227, ...)
+```
+
+Arrays are `(h, w)` for gray, else `(h, w, c)`, of `uint8` or `uint16`;
+decoded arrays share the decoder's buffer (no copy), and decoding and
+encoding release the GIL.  Errors raise `vio.Error`.  The package lives in
+`bind/python/` (its build files, `pyproject.toml` and `setup.py`, at the top
+so that `pip install` works on the repository).
 
 ## Features
 
@@ -79,6 +150,8 @@ of compilers and systems, while vio needs a C++20 compiler.
 | Integration: libjpeg C API                                 |  ✗  |       ✓       |    ✓    |     ✗     |
 | Integration: TurboJPEG C API                               |  ✗  |       ✓       |    ✗    |     ✗     |
 | Integration: Java binding                                  |  ✗  |       ✓       |    ✗    |     ✗     |
+| Integration: simple whole-image C API                      |  ✓  |       ✓       |    ✗    |     ✓     |
+| Integration: Python binding                                |  ✓  |       ✗       |    ✗    |     ✗     |
 
 ¹ GCC only. ² Little-endian only. ³ GCC ≥ 14 or Clang ≥ 17.
 ⁴ A separate build of the library (8- or 12-bit, not both).
@@ -115,7 +188,8 @@ give libpng's results bit for bit.
 | SIMD: encoding                                     |     ✓¹     |    ✗    |    ✗    |     ✗     |     ✗     |
 | Integration: header-only, no build step            |     ✓      |    ✗    |    ✗    |     ✗     |     ✓     |
 | Integration: no external zlib                      |     ✓      |    ✗    |    ✗    |     ✓     |     ✓     |
-| Integration: C API                                 |     ✗      |    ✓    |    ✓    |     ✗     |     ✓     |
+| Integration: C API                                 |     ✓      |    ✓    |    ✓    |     ✗     |     ✓     |
+| Integration: Python binding                        |     ✓      |    ✗    |    ✗    |     ✗     |     ✗     |
 
 ¹ x86 SSE2/SSSE3/SSE4.1/PCLMUL/AVX2, Arm NEON/CRC32/PMULL (AArch64; NEON
 on AArch32), PowerPC AltiVec, Loongson MMI and RISC-V RVV, chosen at run time
@@ -563,7 +637,12 @@ include/vio/
             mmi/ rvv/ vecext/         kernels, kernels.hpp selects within an
                                       ISA family, v*.inc implements `V`
                                       (vecext/: compiler vector extensions)
+bind/
+├── c/vio.h                           header-only C interface
+└── python/vio/                       Python package: __init__.py over the
+                                      _vio extension (_vio.cpp, on vio.h)
 tests/                                conformance and benchmark suite
+├── c/ python/                        tests of the C and Python interfaces
 ├── libjpeg-turbo/ libpng/            test programs and images (git submodules)
 ├── jpeg/                             JPEG tests (jpeg-test, jpeg-bench,
 │   ├── tests.cmake                   bmp-test-size), tools (jpeg-encode,

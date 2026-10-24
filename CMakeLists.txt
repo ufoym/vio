@@ -12,8 +12,10 @@ endif()
 
 add_library(vio INTERFACE)
 add_library(vio::vio ALIAS vio)
+# bind/c/vio.h: the header-only C interface.
 target_include_directories(vio INTERFACE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/bind/c>
   $<INSTALL_INTERFACE:include>)
 target_compile_features(vio INTERFACE cxx_std_20)
 
@@ -70,5 +72,6 @@ if(VIO_BUILD_TESTS)
 endif()
 
 install(DIRECTORY include/ DESTINATION include)
+install(FILES bind/c/vio.h DESTINATION include)
 install(TARGETS vio EXPORT vioTargets)
 install(EXPORT vioTargets NAMESPACE vio:: DESTINATION lib/cmake/vio)
