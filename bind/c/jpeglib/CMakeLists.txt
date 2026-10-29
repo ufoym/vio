@@ -60,6 +60,10 @@ macro(vio_c_library target type output source)
       $<BUILD_INTERFACE:JPEG_LIB_VERSION=${VIO_JPEG_LIB_VERSION}>)
   endif()
   target_link_libraries(${target} PRIVATE vio)
+  # (the standard C I/O functions that the MSVC runtime marks as deprecated)
+  if(MSVC)
+    target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)
+  endif()
   set_target_properties(${target} PROPERTIES
     OUTPUT_NAME ${output}
     CXX_VISIBILITY_PRESET hidden
