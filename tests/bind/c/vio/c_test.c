@@ -1,4 +1,4 @@
-/* Tests of the C interface (bind/c/vio.h).  Usage: c-test <testimages dir> <scratch dir> */
+/* Tests of the C interface (bind/c/vio/vio.h).  Usage: c-test <testimages dir> <scratch dir> */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

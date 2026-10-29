@@ -1,5 +1,5 @@
 /* jconfigint.h for building libjpeg-turbo's programs against vio's
-   jpeglib.h/turbojpeg.h libraries (bind/jpeglib). */
+   jpeglib.h/turbojpeg.h libraries (bind/c/jpeglib). */
 #ifndef VIO_TESTS_JCONFIGINT_H
 #define VIO_TESTS_JCONFIGINT_H
 #include <stdint.h>

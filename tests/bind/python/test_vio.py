@@ -1,4 +1,4 @@
-# Tests of the Python package (bind/python/vio).  Run: pytest tests/python
+# Tests of the Python package (bind/python/vio).  Run: pytest tests/bind/python
 import pathlib
 
 import numpy as np
@@ -6,7 +6,7 @@ import pytest
 
 import vio
 
-IMAGES = pathlib.Path(__file__).resolve().parents[1] / "libjpeg-turbo" / "testimages"
+IMAGES = pathlib.Path(__file__).resolve().parents[2] / "libjpeg-turbo" / "testimages"
 
 
 def sample(channels, dtype):

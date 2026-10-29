@@ -1,4 +1,4 @@
-// vio._vio - CPython extension over the C interface (bind/c/vio.h).  The Python
+// vio._vio - CPython extension over the C interface (bind/c/vio/vio.h).  The Python
 // layer (vio/__init__.py) turns its results into NumPy arrays.
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>

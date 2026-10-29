@@ -12,10 +12,10 @@ endif()
 
 add_library(vio INTERFACE)
 add_library(vio::vio ALIAS vio)
-# bind/c/vio.h: the header-only C interface.
+# bind/c/vio/vio.h: the header-only C interface.
 target_include_directories(vio INTERFACE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/bind/c>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/bind/c/vio>
   $<INSTALL_INTERFACE:include>)
 target_compile_features(vio INTERFACE cxx_std_20)
 
@@ -62,7 +62,7 @@ if(VIO_TEST_SCALAR)
   set(VIO_DEFS_scalar VIO_NO_SIMD)
 endif()
 
-# bind/jpeglib: the jpeglib.h and turbojpeg.h interfaces as C libraries.
+# bind/c/jpeglib: the jpeglib.h and turbojpeg.h interfaces as C libraries.
 option(VIO_BUILD_JPEGLIB "Build the jpeglib.h/turbojpeg.h compatible libraries"
   ${VIO_IS_TOP_LEVEL})
 if(VIO_BUILD_TESTS AND NOT VIO_BUILD_JPEGLIB)
@@ -77,7 +77,7 @@ if(VIO_BUILD_TESTS)
   endif()
 endif()
 if(VIO_BUILD_JPEGLIB)
-  add_subdirectory(bind/jpeglib)
+  add_subdirectory(bind/c/jpeglib)
 endif()
 
 if(VIO_BUILD_TESTS)
@@ -86,6 +86,6 @@ if(VIO_BUILD_TESTS)
 endif()
 
 install(DIRECTORY include/ DESTINATION include)
-install(FILES bind/c/vio.h DESTINATION include)
+install(FILES bind/c/vio/vio.h DESTINATION include)
 install(TARGETS vio EXPORT vioTargets)
 install(EXPORT vioTargets NAMESPACE vio:: DESTINATION lib/cmake/vio)

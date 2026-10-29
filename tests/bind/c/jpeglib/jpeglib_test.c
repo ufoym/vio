@@ -1,5 +1,5 @@
 /*
- * jpeglib-test: checks of the jpeglib.h API (bind/jpeglib) beyond what
+ * jpeglib-test: checks of the jpeglib.h API (bind/c/jpeglib) beyond what
  * libjpeg-turbo's programs exercise: suspending data sources, buffered-image
  * mode, marker processors, abbreviated datastreams, error recovery,
  * concatenated images, raw (downsampled) data and progress monitoring.

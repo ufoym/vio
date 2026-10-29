@@ -16,9 +16,9 @@ Targa, with SIMD on every major architecture.
   Loongson MMI and RISC-V Vector, chosen at run time.
 - **Header-only:** add `include/` and include only the formats you need;
   PNG brings its own DEFLATE, with no zlib dependency.
-- **C and Python:** a header-only C interface (`bind/c/vio.h`) and a
+- **C and Python:** a header-only C interface (`bind/c/vio/vio.h`) and a
   NumPy-based Python package (`pip install .`) for whole images.
-- **Drop-in C libraries:** `libjpeg` and `libturbojpeg` (`bind/jpeglib/`)
+- **Drop-in C libraries:** `libjpeg` and `libturbojpeg` (`bind/c/jpeglib/`)
   implement the `jpeglib.h` and `turbojpeg.h` APIs on vio, source- and
   binary-compatible.
 
@@ -43,10 +43,10 @@ data.
 
 ### C
 
-`bind/c/vio.h` decodes and encodes whole images in one layout: rows of 1
+`bind/c/vio/vio.h` decodes and encodes whole images in one layout: rows of 1
 (gray), 2 (gray + alpha), 3 (RGB) or 4 (RGBA) channels of 8- or 16-bit
 samples.  It is header-only too; its implementation is C++20, so one C++
-file of the program compiles it (with `include/` and `bind/c/` on the include
+file of the program compiles it (with `include/` and `bind/c/vio/` on the include
 path, both of which the `vio::vio` CMake target provides):
 
 ```cpp
@@ -89,7 +89,7 @@ JPEG, BMP and Targa store 8-bit samples.
 
 ### jpeglib.h and turbojpeg.h
 
-`bind/jpeglib/` implements two established C interfaces on vio's codec, as
+`bind/c/jpeglib/` implements two established C interfaces on vio's codec, as
 shared and static libraries:
 
 - `libjpeg`: the `jpeglib.h` API, with its extensions for extended RGB pixel
@@ -601,14 +601,14 @@ Other presets: `debug`, `x64` (macOS x86-64 under Rosetta), `a32` (AArch32
 NEON code paths on an AArch64 host).  Every build tree lives under `build/`.
 Options: `VIO_BUILD_TESTS` (on when vio is the top-level project),
 `VIO_TEST_SCALAR` (also test every program with SIMD disabled, as the
-`-scalar` variant), `VIO_BUILD_JPEGLIB` (the `bind/jpeglib/` libraries; on
+`-scalar` variant), `VIO_BUILD_JPEGLIB` (the `bind/c/jpeglib/` libraries; on
 when vio is the top-level project), `VIO_JPEG_LIB_VERSION` (their ABI
 level), `VIO_TEST_EXTENDED` (the script-based tests below).
 
 The JPEG tests run twice over: on vio's own command-line tools and
 TurboJPEG layer (variants `simd` and `scalar`), and on libjpeg-turbo's
 programs -- cjpeg, djpeg, jpegtran, example, tjunittest, tjbench and
-bmpsizetest, compiled unchanged against `bind/jpeglib/` -- linked with its
+bmpsizetest, compiled unchanged against `bind/c/jpeglib/` -- linked with its
 shared and static libraries (the `shared` and `static` test names, as in
 libjpeg-turbo's own build).  `jpeglib-test` checks the rest of the
 `jpeglib.h` API (suspending sources and destinations, buffered-image mode,
@@ -717,14 +717,17 @@ include/vio/
                                       ISA family, v*.inc implements `V`
                                       (vecext/: compiler vector extensions)
 bind/
-├── c/vio.h                           header-only C interface
-├── jpeglib/                          libjpeg and libturbojpeg: jpeglib.h,
+├── c/                                C interfaces
+│   ├── vio/vio.h                     header-only C interface
+│   └── jpeglib/                      libjpeg and libturbojpeg: jpeglib.h,
 │                                     turbojpeg.h and their implementations
 │                                     (jpeglib.cpp, turbojpeg.cpp)
 └── python/vio/                       Python package: __init__.py over the
                                       _vio extension (_vio.cpp, on vio.h)
 tests/                                conformance and benchmark suite
-├── c/ python/                        tests of the C and Python interfaces
+├── bind/                             tests of bind/, in the same layout:
+│   ├── c/vio/ c/jpeglib/             c-test, jpeglib-test
+│   └── python/                       pytest tests/bind/python
 ├── libjpeg-turbo/ libpng/            test programs and images (git submodules)
 ├── jpeg/                             JPEG tests (jpeg-test, jpeg-bench,
 │   ├── tests.cmake                   bmp-test-size), tools (jpeg-encode,

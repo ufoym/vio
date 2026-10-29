@@ -1,5 +1,5 @@
 # Source distribution of the Python package: the headers and the binding
 # (the tests and benchmarks stay in the repository).
 graft include
-include bind/c/vio.h bind/python/README.md LICENSE
+include bind/c/vio/vio.h bind/python/README.md LICENSE
 global-exclude .DS_Store

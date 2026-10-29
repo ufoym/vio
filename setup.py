@@ -1,5 +1,5 @@
 # Builds the vio._vio extension (bind/python/vio/_vio.cpp, which compiles the
-# header-only C interface bind/c/vio.h) as C++20.  Package metadata is in
+# header-only C interface bind/c/vio/vio.h) as C++20.  Package metadata is in
 # pyproject.toml.
 from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext
@@ -21,8 +21,8 @@ setup(
         Extension(
             "vio._vio",
             sources=["bind/python/vio/_vio.cpp"],
-            include_dirs=["include", "bind/c"],
-            depends=["bind/c/vio.h"],
+            include_dirs=["include", "bind/c/vio"],
+            depends=["bind/c/vio/vio.h"],
             language="c++",
         )
     ],

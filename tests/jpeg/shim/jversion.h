@@ -1,5 +1,5 @@
 /* jversion.h for building libjpeg-turbo's programs against vio's jpeglib.h
-   library (bind/jpeglib). */
+   library (bind/c/jpeglib). */
 #if JPEG_LIB_VERSION >= 80
 #define JVERSION  "8d  15-Jan-2012"
 #elif JPEG_LIB_VERSION >= 70

@@ -11,8 +11,10 @@
 #                         (jconfigint.h, jversion.h) that the programs include
 #     libjpeg/            TurboJPEG layer and config for IJG libjpeg benchmarks
 #     bmp_test_size.cpp   port of libjpeg-turbo's bmpsizetest.c
-#   c/                    tests of the C interface (bind/c/vio.h)
-#   python/               tests of the Python package (pytest tests/python)
+#   bind/                 tests of bind/, in the same layout:
+#     c/vio/              c-test: the C interface (bind/c/vio/vio.h)
+#     c/jpeglib/          jpeglib-test: the jpeglib.h API (bind/c/jpeglib)
+#     python/             the Python package (pytest tests/bind/python)
 #   png/
 #     tests.cmake         libpng's tests, adapted to vio (png/png_test.cpp)
 #     expected.txt        the images as libpng decodes them
@@ -31,7 +33,7 @@ endif()
 
 # libjpeg-turbo's programs are compiled from a copy so that their quoted
 # includes of the library headers (jpeglib.h, turbojpeg.h, ...) resolve to
-# bind/jpeglib/, and of jconfigint.h/jversion.h to jpeg/shim/, rather than
+# bind/c/jpeglib/, and of jconfigint.h/jversion.h to jpeg/shim/, rather than
 # to the real headers next to them in the submodule.
 set(LJT_DIR ${CMAKE_CURRENT_BINARY_DIR}/libjpeg-turbo)
 set(LJT_PROGRAM_FILES cjpeg.c djpeg.c jpegtran.c example.c bmpsizetest.c
@@ -51,7 +53,7 @@ endforeach()
 # Settings for the libjpeg-turbo C programs.
 macro(vio_ljt_program target)
   target_include_directories(${target} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/jpeg/shim ${PROJECT_SOURCE_DIR}/bind/jpeglib
+    ${CMAKE_CURRENT_SOURCE_DIR}/jpeg/shim ${PROJECT_SOURCE_DIR}/bind/c/jpeglib
     ${LJT_DIR})
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(${target} PRIVATE -w)
@@ -86,11 +88,11 @@ foreach(variant ${VIO_VARIANTS})
   target_compile_definitions(bmp-test-size${sfx} PRIVATE ${defs})
   add_custom_target(bmpsizetest${sfx} DEPENDS bmp-test-size${sfx})
 
-  # The TurboJPEG library (bind/jpeglib), built for this variant.
+  # The TurboJPEG library (bind/c/jpeglib), built for this variant.
   add_library(turbojpeg-vio${sfx} STATIC
-    ${PROJECT_SOURCE_DIR}/bind/jpeglib/turbojpeg.cpp)
+    ${PROJECT_SOURCE_DIR}/bind/c/jpeglib/turbojpeg.cpp)
   target_include_directories(turbojpeg-vio${sfx} PUBLIC
-    ${PROJECT_SOURCE_DIR}/bind/jpeglib)
+    ${PROJECT_SOURCE_DIR}/bind/c/jpeglib)
   target_link_libraries(turbojpeg-vio${sfx} PUBLIC vio)
   target_compile_definitions(turbojpeg-vio${sfx} PRIVATE ${defs})
 
@@ -113,7 +115,7 @@ add_custom_target(md5cmp DEPENDS md5-cmp)
 
 # libjpeg-turbo's programs (cjpeg, djpeg, jpegtran, example, tjunittest, ...),
 # unchanged, built against the jpeglib.h and turbojpeg.h libraries of
-# bind/jpeglib: test "libtypes" shared and static, as in libjpeg-turbo.
+# bind/c/jpeglib: test "libtypes" shared and static, as in libjpeg-turbo.
 add_library(ljt-zlib OBJECT ${LJT_DIR}/spng/zlib/adler32.c
   ${LJT_DIR}/spng/zlib/compress.c ${LJT_DIR}/spng/zlib/crc32.c
   ${LJT_DIR}/spng/zlib/deflate.c ${LJT_DIR}/spng/zlib/inffast.c
@@ -195,7 +197,7 @@ foreach(kind ${VIO_COMPAT_LIBTYPES})
     target_link_libraries(tjbench${sfx} PRIVATE m)
   endif()
   # Checks of the jpeglib.h API beyond libjpeg-turbo's programs
-  ljt_program(jpeglib-test ${jpeglib} jpeg/jpeglib_test.c)
+  ljt_program(jpeglib-test ${jpeglib} bind/c/jpeglib/jpeglib_test.c)
   target_link_libraries(jpeglib-test${sfx} PRIVATE ${tjlib})
   add_test(NAME jpeglib-test-${kind}
     COMMAND jpeglib-test${sfx} ${LJT_SOURCE_DIR}/testimages)
@@ -231,7 +233,7 @@ if(VIO_LIBJPEG_SOURCE_DIR)
   foreach(f tjbench.c tjutil.c tjutil.h)
     configure_file(${LJT_SOURCE_DIR}/src/${f} ${IJG_BENCH_DIR}/${f} COPYONLY)
   endforeach()
-  configure_file(${PROJECT_SOURCE_DIR}/bind/jpeglib/turbojpeg.h
+  configure_file(${PROJECT_SOURCE_DIR}/bind/c/jpeglib/turbojpeg.h
     ${IJG_BENCH_DIR}/turbojpeg.h COPYONLY)
   add_library(turbojpeg-libjpeg STATIC jpeg/libjpeg/turbojpeg.c)
   target_include_directories(turbojpeg-libjpeg PUBLIC ${IJG_BENCH_DIR})
@@ -268,7 +270,7 @@ include(jpeg/tests.cmake)
 include(jpeg/extended.cmake)
 include(png/tests.cmake)
 
-add_executable(c-test c/c_test.c c/vio_impl.cpp)
+add_executable(c-test bind/c/vio/c_test.c bind/c/vio/vio_impl.cpp)
 target_link_libraries(c-test PRIVATE vio)
 add_test(NAME c-test COMMAND c-test ${LJT_SOURCE_DIR}/testimages
   ${CMAKE_CURRENT_BINARY_DIR})
