@@ -1207,7 +1207,7 @@ JEXPORT void jpeg_mem_src(j_decompress_ptr cinfo, const unsigned char* inbuffer,
   if (!cinfo->src) {
     cinfo->src = static_cast<jpeg_source_mgr*>((*cinfo->mem->alloc_small)(
         reinterpret_cast<j_common_ptr>(cinfo), JPOOL_PERMANENT, sizeof(jpeg_source_mgr)));
-  } else if (cinfo->src->init_source != init_mem_source) {
+  } else if (cinfo->src->fill_input_buffer != fill_mem_input_buffer) {
     ERREXIT(cinfo, JERR_BUFFER_SIZE);
   }
   jpeg_source_mgr* src = cinfo->src;
@@ -2133,7 +2133,8 @@ bool gather(j_decompress_ptr cinfo, bool to_eoi) {
       // in-memory source always does: its end is the end of the data).
       Scanner probe = m->scan;
       std::size_t k = probe.feed(p, n);
-      if (probe.done() || src->init_source == init_mem_source) {
+      // Empty init callbacks can share an address after identical code folding.
+      if (probe.done() || src->fill_input_buffer == fill_mem_input_buffer) {
         m->scan = probe;
         m->zero_copy = true;
         m->zc_base = p;

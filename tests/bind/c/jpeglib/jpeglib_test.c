@@ -174,11 +174,6 @@ struct trickle_src {
   int calls;
 };
 
-static void trickle_init(j_decompress_ptr cinfo)
-{
-  (void)cinfo;
-}
-
 static boolean trickle_fill(j_decompress_ptr cinfo)
 {
   struct trickle_src *src = (struct trickle_src *)cinfo->src;
@@ -238,7 +233,11 @@ static void test_suspension(const buffer *jpeg, const char *name)
   }
   jpeg_create_decompress(&d);
   memset(&src, 0, sizeof(src));
-  src.pub.init_source = trickle_init;
+  /* Reuse the memory source's no-op initializer, reproducing the callback
+     aliasing that Windows identical COMDAT folding can produce.  The refill
+     callback still belongs to our suspending source. */
+  jpeg_mem_src(&d, jpeg->data, (unsigned long)jpeg->size);
+  src.pub.init_source = d.src->init_source;
   src.pub.fill_input_buffer = trickle_fill;
   src.pub.skip_input_data = trickle_skip;
   src.pub.resync_to_restart = jpeg_resync_to_restart;
