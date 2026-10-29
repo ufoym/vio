@@ -173,7 +173,7 @@ def main():
     ap.add_argument("--libjpeg")
     ap.add_argument("--platform", required=True)
     ap.add_argument("--isa", action="append", required=True)
-    ap.add_argument("--src", default="tests/libjpeg-turbo/testimages/testorig.ppm")
+    ap.add_argument("--src", default="tests/third_party/libjpeg-turbo/testimages/testorig.ppm")
     ap.add_argument("--reps", type=int, default=5)
     ap.add_argument("--benchtime", type=float, default=1.0)
     ap.add_argument("--out", required=True)

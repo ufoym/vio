@@ -7,7 +7,7 @@
 // probe parses (or emits) only the file header.
 //
 // Copyright (C)2024-2025 D. R. Commander (original test).  See
-// tests/libjpeg-turbo/LICENSE.md.
+// tests/third_party/libjpeg-turbo/LICENSE.md.
 #include <cstdio>
 #include <cstring>
 #include <memory>

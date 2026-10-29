@@ -2,7 +2,7 @@
 # "enable_testing()" section): identical commands and expected MD5 sums.
 # Local adaptations (marked "vio:") select vio's build variants, programs and
 # floating-point expectations.  Test names are libjpeg-turbo's.  See
-# tests/libjpeg-turbo/LICENSE.md.
+# tests/third_party/libjpeg-turbo/LICENSE.md.
 #
 # Inputs: TEST_LIBTYPES (variant names), VIO_SUFFIX_<variant> (executable
 # suffix), VIO_TOOL_<program> (vio's program standing in for libjpeg-turbo's

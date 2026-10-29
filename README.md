@@ -271,7 +271,7 @@ rely on compiler auto-vectorization.
 
 Throughput measured by `jpeg-bench`: vio against libjpeg-turbo 3.2 (built from
 the test submodule) and IJG libjpeg 10 (no SIMD; driven through a thin
-TurboJPEG layer, `tests/jpeg/libjpeg/`), all built on the same machine with the
+TurboJPEG layer, `bench/jpeg/libjpeg/`), all built on the same machine with the
 same compiler (GCC on Linux, Apple Clang on macOS, MSVC on Windows; NASM for
 libjpeg-turbo's x86 SIMD).  The image is a 3632×2384 RGB tiling of
 `testorig.ppm`, each number the best of 5 runs.  +20% means 1.2 times the
@@ -469,10 +469,10 @@ image-png).
 - vio's SIMD level is set with `JSIMD_*`.  In the scalar rows libpng (whose
   only SIMD code unfilters rows) is built without SIMD and image-png's
   checksum crates use their portable code
-  (`tests/png/bench/image-png/build_portable.py`); loops the compiler
+  (`bench/png/image-png/build_portable.py`); loops the compiler
   vectorizes by itself stay vectorized in every library.
 
-The benchmark is `tests/png/bench/` (`png_bench.py run`, then `report` or
+The benchmark is `bench/png/` (`png_bench.py run`, then `report` or
 `compare`); `.github/workflows/bench-png.yml` runs it on the GitHub-hosted
 runners, one job per platform and SIMD level, so the CPU can differ between
 rows.  Results from one run at
@@ -649,7 +649,7 @@ build `png-golden` against the libpng submodule (needs zlib):
 ```sh
 cmake --preset native -DVIO_PNG_GOLDEN=ON
 cmake --build build/native --target png-golden
-build/native/png-golden tests/libpng > tests/png/expected.txt
+build/native/png-golden tests/third_party/libpng > tests/png/expected.txt
 ```
 
 To benchmark against libjpeg-turbo, build it from the submodule into a tree
@@ -658,7 +658,7 @@ ijg.org) and point `VIO_LIBJPEG_SOURCE_DIR` at it, which builds
 `jpeg-bench-libjpeg`:
 
 ```sh
-cmake -S tests/libjpeg-turbo -B build/libjpeg-turbo -DCMAKE_BUILD_TYPE=Release
+cmake -S tests/third_party/libjpeg-turbo -B build/libjpeg-turbo -DCMAKE_BUILD_TYPE=Release
 cmake --build build/libjpeg-turbo -j 8   # tjbench
 cmake --preset native -DVIO_LIBJPEG_SOURCE_DIR=$PWD/build/jpeg-10
 cmake --build build/native --target jpeg-bench-libjpeg
@@ -724,18 +724,26 @@ bind/
 │                                     (jpeglib.cpp, turbojpeg.cpp)
 └── python/vio/                       Python package: __init__.py over the
                                       _vio extension (_vio.cpp, on vio.h)
-tests/                                conformance and benchmark suite
-├── bind/                             tests of bind/, in the same layout:
-│   ├── c/vio/ c/jpeglib/             c-test, jpeglib-test
-│   └── python/                       pytest tests/bind/python
-├── libjpeg-turbo/ libpng/            test programs and images (git submodules)
-├── jpeg/                             JPEG tests (jpeg-test, jpeg-bench,
-│   ├── tests.cmake                   bmp-test-size), tools (jpeg-encode,
-│   └── tools/ shim/ libjpeg/         jpeg-decode, jpeg-transform, jpeg-example),
-│                                     TurboJPEG and shims
-└── png/                              PNG tests (png-test, png-golden) and
-    ├── tests.cmake expected.txt      benchmark suite (bench/: vio vs
-    └── bench/                        image-png, fpnge, libpng, Wuffs)
+tests/                                conformance suite
+├── third_party/                      test programs and images (git
+│   └── libjpeg-turbo/ libpng/        submodules)
+├── jpeg/                             JPEG tests: build.cmake (jpeg-test,
+│   ├── build.cmake tests.cmake       jpeg-bench, bmp-test-size, tools and
+│   │   extended.cmake                libjpeg-turbo's programs), tests.cmake,
+│   └── tools/ shim/                  tools (jpeg-encode, jpeg-decode,
+│                                     jpeg-transform, jpeg-example), shims
+├── png/                              PNG tests (png-test, png-golden)
+│   └── build.cmake tests.cmake
+│       expected.txt
+└── bind/                             tests of bind/, in the same layout:
+    ├── tests.cmake                   c-test, jpeglib-test
+    ├── c/vio/ c/jpeglib/
+    └── python/                       pytest tests/bind/python
+bench/                                benchmarks against other libraries
+├── jpeg/                             jpeg_bench.py (vs libjpeg-turbo, IJG
+│   └── libjpeg/                      libjpeg), TurboJPEG layer for libjpeg
+└── png/                              png-bench, png_bench.py (vs image-png,
+    └── image-png/                    fpnge, libpng, Wuffs)
 ```
 
 ## License

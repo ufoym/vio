@@ -410,7 +410,7 @@ jobs:
         run: |
           gen=""
           [ "$RUNNER_OS" = Windows ] && gen="-G Ninja"
-          cmake -S tests/libjpeg-turbo -B build/ljt $gen -DCMAKE_BUILD_TYPE=Release
+          cmake -S tests/third_party/libjpeg-turbo -B build/ljt $gen -DCMAKE_BUILD_TYPE=Release
           cmake --build build/ljt --parallel --target tjbench
 
       - name: Benchmark
@@ -419,7 +419,7 @@ jobs:
           if [ -x build/vio/jpeg-bench-libjpeg ]; then libjpeg="--libjpeg build/vio/jpeg-bench-libjpeg"; fi
           py=python3
           [ "$RUNNER_OS" = Windows ] && py=python
-          $py .github/scripts/jpeg_bench.py --platform ${{ matrix.name }} \
+          $py bench/jpeg/jpeg_bench.py --platform ${{ matrix.name }} \
             --vio build/vio/jpeg-bench --ref build/ljt/tjbench ${{ matrix.isas }} \
             $libjpeg --out results/bench-${{ matrix.name }}.json
 
