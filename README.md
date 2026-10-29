@@ -17,7 +17,7 @@ Targa, with SIMD on every major architecture.
 - **Header-only:** add `include/` and include only the formats you need;
   PNG brings its own DEFLATE, with no zlib dependency.
 - **C and Python:** a header-only C interface (`bind/c/vio/vio.h`) and a
-  NumPy-based Python package (`pip install .`) for whole images.
+  NumPy-based Python package (`pip install ./bind/python`) for whole images.
 - **Drop-in C libraries:** `libjpeg` and `libturbojpeg` (`bind/c/jpeglib/`)
   implement the `jpeglib.h` and `turbojpeg.h` APIs on vio, source- and
   binary-compatible.
@@ -149,7 +149,7 @@ manager's message tables.  Differences from other implementations:
 ### Python
 
 ```sh
-pip install .        # builds the extension (needs a C++20 compiler) and installs numpy
+pip install ./bind/python  # builds the extension (needs a C++20 compiler) and installs numpy
 ```
 
 ```python
@@ -166,8 +166,7 @@ vio.info("photo.jpg")                        # Info(format='jpeg', width=227, ..
 Arrays are `(h, w)` for gray, else `(h, w, c)`, of `uint8` or `uint16`;
 decoded arrays share the decoder's buffer (no copy), and decoding and
 encoding release the GIL.  Errors raise `vio.Error`.  The package lives in
-`bind/python/` (its build files, `pyproject.toml` and `setup.py`, at the top
-so that `pip install` works on the repository).
+`bind/python/` (including its `pyproject.toml` and `setup.py` build files).
 
 ## Features
 

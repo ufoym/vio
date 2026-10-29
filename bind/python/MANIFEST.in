@@ -1,0 +1,3 @@
+# Headers are added by the sdist command in setup.py.
+include README.md LICENSE
+global-exclude .DS_Store
