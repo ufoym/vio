@@ -286,7 +286,8 @@ jobs:
                    -DCMAKE_C_COMPILER=$t-gcc$s -DCMAKE_CXX_COMPILER=$t-g++$s
                    "-DCMAKE_C_FLAGS=${{ matrix.flags }}"
                    "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}"
-                   -DCMAKE_EXE_LINKER_FLAGS=-static)
+                   -DCMAKE_EXE_LINKER_FLAGS=-static
+                   -DVIO_TEST_SHARED=OFF)
             if [ -n "${{ matrix.emulator }}" ]; then
               args+=(-DCMAKE_CROSSCOMPILING_EMULATOR=$RUNNER_TEMP/qemu/usr/bin/${{ matrix.emulator }})
             fi

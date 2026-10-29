@@ -111,7 +111,12 @@ endif()
 include(CheckSymbolExists)
 check_symbol_exists(fmemopen "stdio.h" HAVE_FMEMOPEN)
 
-set(VIO_COMPAT_LIBTYPES shared static)
+# Static cross builds cannot link the shared-library test programs.
+option(VIO_TEST_SHARED "Also test the shared jpeglib.h/turbojpeg.h libraries" ON)
+set(VIO_COMPAT_LIBTYPES static)
+if(VIO_TEST_SHARED)
+  list(PREPEND VIO_COMPAT_LIBTYPES shared)
+endif()
 set(VIO_LIB_shared "")
 set(VIO_LIB_static -static)
 foreach(kind ${VIO_COMPAT_LIBTYPES})

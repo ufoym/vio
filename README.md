@@ -591,13 +591,11 @@ The test programs and images come from a submodule:
 
 ```sh
 git submodule update --init
-cmake --preset native            # build tree in build/native
-cmake --build --preset native
-ctest --preset native -j 8
+cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Release
+cmake --build build/native
+ctest --test-dir build/native -j 8
 ```
 
-Other presets: `debug`, `x64` (macOS x86-64 under Rosetta), `a32` (AArch32
-NEON code paths on an AArch64 host).  Every build tree lives under `build/`.
 Options: `VIO_BUILD_TESTS` (on when vio is the top-level project),
 `VIO_TEST_SCALAR` (also test every program with SIMD disabled, as the
 `-scalar` variant), `VIO_BUILD_JPEGLIB` (the `bind/c/jpeglib/` libraries; on
@@ -609,12 +607,14 @@ TurboJPEG layer (variants `simd` and `scalar`), and on libjpeg-turbo's
 programs -- cjpeg, djpeg, jpegtran, example, tjunittest, tjbench and
 bmpsizetest, compiled unchanged against `bind/c/jpeglib/` -- linked with its
 shared and static libraries (the `shared` and `static` test names, as in
-libjpeg-turbo's own build).  `jpeglib-test` checks the rest of the
+libjpeg-turbo's own build).  Use `-DVIO_TEST_SHARED=OFF` for fully static
+cross builds, as CI does.  `jpeglib-test` checks the rest of the
 `jpeglib.h` API (suspending sources and destinations, buffered-image mode,
 marker processors, abbreviated datastreams, error recovery, raw data).  With
 `-DVIO_TEST_EXTENDED=ON`, `ctest -L extended` also runs libjpeg-turbo's
-script-based tests (its tjtest, tjtest12, tjtest16 and tjexampletest targets,
-and with ImageMagick croptest and indexedcolortest), which compare the
+script-based tests (requires `VIO_TEST_SHARED`; its tjtest, tjtest12,
+tjtest16 and tjexampletest targets, and with ImageMagick croptest and
+indexedcolortest), which compare the
 TurboJPEG programs' output with cjpeg's, djpeg's and jpegtran's (bash needed;
 about 20 minutes).
 
@@ -646,7 +646,7 @@ to regenerate them after changing the cases (`tests/png/png_cases.hpp`),
 build `png-golden` against the libpng submodule (needs zlib):
 
 ```sh
-cmake --preset native -DVIO_PNG_GOLDEN=ON
+cmake -S . -B build/native -DVIO_PNG_GOLDEN=ON
 cmake --build build/native --target png-golden
 build/native/png-golden tests/third_party/libpng > tests/png/expected.txt
 ```
@@ -659,7 +659,7 @@ ijg.org) and point `VIO_LIBJPEG_SOURCE_DIR` at it, which builds
 ```sh
 cmake -S tests/third_party/libjpeg-turbo -B build/libjpeg-turbo -DCMAKE_BUILD_TYPE=Release
 cmake --build build/libjpeg-turbo -j 8   # tjbench
-cmake --preset native -DVIO_LIBJPEG_SOURCE_DIR=$PWD/build/jpeg-10
+cmake -S . -B build/native -DVIO_LIBJPEG_SOURCE_DIR=$PWD/build/jpeg-10
 cmake --build build/native --target jpeg-bench-libjpeg
 ```
 

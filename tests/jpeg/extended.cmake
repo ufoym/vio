@@ -8,6 +8,9 @@
 
 option(VIO_TEST_EXTENDED
   "Add libjpeg-turbo's script-based tests (label extended; about 20 minutes)" OFF)
+if(VIO_TEST_EXTENDED AND NOT VIO_TEST_SHARED)
+  message(FATAL_ERROR "VIO_TEST_EXTENDED requires VIO_TEST_SHARED")
+endif()
 find_program(BASH bash)
 find_program(MAGICK magick)
 if(NOT VIO_TEST_EXTENDED OR NOT UNIX OR NOT BASH)
