@@ -13,7 +13,7 @@ class CPipelineBase {
  public:
   virtual ~CPipelineBase() = default;
   virtual int sample_bits() const = 0;
-  virtual void start_main_pass(bool multipass) = 0;
+  virtual void start_main_pass() = 0;
   virtual void start_coef_pass(bool crank) = 0;
   virtual void crank_imcu_row() = 0;
 };
@@ -47,7 +47,7 @@ class CPipeline final : public CPipelineBase {
     main = std::make_unique<MainControllerC<T>>(cs, prep.get(), coef.get());
   }
 
-  void start_main_pass(bool multipass) override {
+  void start_main_pass() override {
     if (!cs_.raw_data_in) {
       cconvert->start_pass();
       prep->start_pass();
@@ -158,7 +158,8 @@ class Compressor {
   // jpeg_write_icc_profile()
   void write_icc_profile(const std::uint8_t* icc, unsigned icc_len) {
     if (!icc || icc_len == 0) VIO_FAIL("Buffer passed to JPEG library is too small");
-    if (state == State::Start)
+    if (cs.next_scanline != 0 ||
+        (state != State::Scanning && state != State::RawOk && state != State::WrCoefs))
       VIO_FAIL("Improper call to JPEG library in state %d", static_cast<int>(state));
     constexpr unsigned MAX_DATA = 65533 - 14;
     unsigned num_markers = icc_len / MAX_DATA;
@@ -167,13 +168,8 @@ class Compressor {
     while (icc_len > 0) {
       unsigned length = std::min(icc_len, MAX_DATA);
       icc_len -= length;
-      if (cs.next_scanline != 0 ||
-          (state != State::Scanning && state != State::RawOk && state != State::WrCoefs))
-        VIO_FAIL("Improper call to JPEG library in state %d", static_cast<int>(state));
       cs.write_marker_header(M_APP2, length + 14);
-      static const std::uint8_t id[12] = {0x49, 0x43, 0x43, 0x5F, 0x50, 0x52,
-                                          0x4F, 0x46, 0x49, 0x4C, 0x45, 0x00};
-      for (std::uint8_t b : id) cs.emit_byte(b);
+      for (char b : icc_signature) cs.emit_byte(b);
       cs.emit_byte(cur_marker);
       cs.emit_byte(static_cast<int>(num_markers));
       for (unsigned i = 0; i < length; i++) cs.emit_byte(icc[i]);
@@ -285,7 +281,7 @@ class Compressor {
       case CState::main_pass:
         cs.select_scan_parameters();
         cs.per_scan_setup();
-        pipeline_->start_main_pass(cs.total_passes > 1);
+        pipeline_->start_main_pass();
         entropy_->start_pass(cs.optimize_coding);
         pipeline_->start_coef_pass(false);
         cs.call_pass_startup = !cs.optimize_coding;

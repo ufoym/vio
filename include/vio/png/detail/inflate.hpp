@@ -22,6 +22,7 @@
 
 #include "../../core.hpp"
 #include "checksum.hpp"
+#include "deflate_tables.hpp"
 
 
 namespace vio::png::zlib {
@@ -55,15 +56,47 @@ inline constexpr int kDistTableSize = (1 << kDistBits) + 32 * (1 << (15 - kDistB
 inline constexpr std::uint16_t len_base[29] = {3,  4,  5,  6,  7,  8,  9,  10,  11,  13,
                                                15, 17, 19, 23, 27, 31, 35, 43,  51,  59,
                                                67, 83, 99, 115, 131, 163, 195, 227, 258};
-inline constexpr std::uint8_t len_extra[29] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2,
-                                               2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
 inline constexpr std::uint16_t dist_base[30] = {
     1,   2,   3,   4,   5,   7,    9,    13,   17,   25,   33,   49,   65,    97,    129,
     193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
-inline constexpr std::uint8_t dist_extra[30] = {0, 0, 0, 0, 1, 1, 2, 2,  3,  3,  4,  4,  5,  5,  6,
-                                                6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
 
 enum class Code { kLitLen, kDist, kCodeLen };
+
+inline void check_header(unsigned cmf, unsigned flg) {
+  if ((cmf & 0x0f) != 8 || (cmf >> 4) > 7 || ((cmf << 8) | flg) % 31 != 0)
+    VIO_FAIL("zlib: incorrect header check");
+  if (flg & 0x20) VIO_FAIL("zlib: need dictionary");
+}
+
+template <class Refill, class ReadBits>
+VIO_INLINE void read_code_lengths(std::uint8_t* lengths, unsigned total, const std::uint32_t* cl,
+                                  const std::uint64_t& bitbuf, Refill&& refill, ReadBits&& bits) {
+  unsigned idx = 0;
+  while (idx < total) {
+    refill();
+    const std::uint32_t e = cl[bitbuf & ((1u << kCodeLenBits) - 1)];
+    if (e & kEntExceptional) VIO_FAIL("zlib: invalid code lengths set");
+    bits(static_cast<int>(e & 63));
+    const unsigned sym = e >> 16;
+    if (sym < 16) {
+      lengths[idx++] = static_cast<std::uint8_t>(sym);
+    } else {
+      unsigned rep;
+      std::uint8_t val = 0;
+      if (sym == 16) {
+        if (idx == 0) VIO_FAIL("zlib: invalid bit length repeat");
+        val = lengths[idx - 1];
+        rep = 3 + bits(2);
+      } else if (sym == 17) {
+        rep = 3 + bits(3);
+      } else {
+        rep = 11 + bits(7);
+      }
+      if (idx + rep > total) VIO_FAIL("zlib: invalid bit length repeat");
+      while (rep--) lengths[idx++] = val;
+    }
+  }
+}
 
 // Entry for `sym` with a code of `len` bits, before the length fields.
 inline std::uint32_t symbol_entry(Code kind, unsigned sym, unsigned& extra) {
@@ -205,15 +238,6 @@ struct FixedTables {
 inline const FixedTables& fixed_tables() {
   static const FixedTables t;
   return t;
-}
-
-VIO_INLINE std::uint64_t load_le64(const std::uint8_t* p) {
-  std::uint64_t v;
-  std::memcpy(&v, p, 8);
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-  v = __builtin_bswap64(v);
-#endif
-  return v;
 }
 
 // Plain data movement (16-byte copies, byte fills) uses vector registers
@@ -365,9 +389,7 @@ class Inflater {
     stream_end_ = false;
     if (!raw_) {
       unsigned cmf = header_byte(), flg = header_byte();
-      if ((cmf & 0x0f) != 8 || (cmf >> 4) > 7 || ((cmf << 8) | flg) % 31 != 0)
-        fail("incorrect header check");
-      if (flg & 0x20) fail("need dictionary");
+      detail::check_header(cmf, flg);
     }
     bool last = false;
     while (!last) {
@@ -392,8 +414,6 @@ class Inflater {
     stream_end_ = true;
     // Return whole bytes still in the bit buffer to the input.
     in_ -= bitcnt_ >> 3;
-    bitbuf_ = 0;
-    bitcnt_ = 0;
     if (!raw_) {
       std::uint32_t check = 0;
       for (int i = 0; i < 4; i++) check = check << 8 | header_byte();
@@ -477,45 +497,20 @@ class Inflater {
   }
 
   void dynamic() {
-    static constexpr std::uint8_t order[19] = {16, 17, 18, 0, 8,  7, 9,  6, 10, 5,
-                                               11, 4,  12, 3, 13, 2, 14, 1, 15};
     refill();
     unsigned nlen = bits(5) + 257, ndist = bits(5) + 1, ncode = bits(4) + 4;
     if (nlen > 286 || ndist > 30) fail("too many length or distance symbols");
     std::uint8_t lengths[320] = {};
     for (unsigned i = 0; i < ncode; i++) {
       if (bitcnt_ < 3) refill();
-      lengths[order[i]] = static_cast<std::uint8_t>(bits(3));
+      lengths[detail::kCodeLengthOrder[i]] = static_cast<std::uint8_t>(bits(3));
     }
     std::uint32_t cl[1 << detail::kCodeLenBits];
     if (!detail::build_table(cl, lengths, 19, detail::Code::kCodeLen, detail::kCodeLenBits))
       fail("invalid code lengths set");
-    unsigned idx = 0;
-    std::memset(lengths, 0, sizeof(lengths));
-    while (idx < nlen + ndist) {
-      if (bitcnt_ < 14) refill();
-      std::uint32_t e = cl[bitbuf_ & ((1u << detail::kCodeLenBits) - 1)];
-      if (e & detail::kEntExceptional) fail("invalid code lengths set");
-      bits(static_cast<int>(e & 63));
-      unsigned sym = e >> 16;
-      if (sym < 16) {
-        lengths[idx++] = static_cast<std::uint8_t>(sym);
-      } else {
-        unsigned rep;
-        std::uint8_t val = 0;
-        if (sym == 16) {
-          if (idx == 0) fail("invalid bit length repeat");
-          val = lengths[idx - 1];
-          rep = 3 + bits(2);
-        } else if (sym == 17) {
-          rep = 3 + bits(3);
-        } else {
-          rep = 11 + bits(7);
-        }
-        if (idx + rep > nlen + ndist) fail("invalid bit length repeat");
-        while (rep--) lengths[idx++] = val;
-      }
-    }
+    detail::read_code_lengths(lengths, nlen + ndist, cl, bitbuf_,
+                              [&] { if (bitcnt_ < 14) refill(); },
+                              [&](int n) { return bits(n); });
     if (lengths[256] == 0) fail("invalid code -- missing end-of-block");
     if (!detail::build_table(lit_, lengths, nlen, detail::Code::kLitLen, detail::kLitBits))
       fail("invalid literal/lengths set");
@@ -641,14 +636,14 @@ class StreamInflater {
     in_.insert(in_.end(), data, data + n);
     run();
     flush();
-    // keep only the input not yet consumed
-    if (pos_ > 0) {
+    if (state_ == kDone || state_ == kFull) {
+      extra_ += in_.size() - pos_;
+      in_.clear();
+      pos_ = 0;
+    } else if (pos_ > 0) {
+      // keep only the input not yet consumed
       in_.erase(in_.begin(), in_.begin() + static_cast<std::ptrdiff_t>(pos_));
       pos_ = 0;
-    }
-    if (state_ == kDone || state_ == kFull) {
-      extra_ += in_.size();
-      in_.clear();
     }
   }
 
@@ -723,9 +718,7 @@ class StreamInflater {
           switch (state_) {
             case kHeader: {
               const unsigned cmf = bits(8), flg = bits(8);
-              if ((cmf & 0x0f) != 8 || (cmf >> 4) > 7 || ((cmf << 8) | flg) % 31 != 0)
-                fail("incorrect header check");
-              if (flg & 0x20) fail("need dictionary");
+              detail::check_header(cmf, flg);
               state_ = kBlock;
               break;
             }
@@ -769,8 +762,6 @@ class StreamInflater {
         if (state_ == kDone) {
           // give back whole bytes still in the bit buffer
           pos_ -= static_cast<std::size_t>(bitcnt_ >> 3);
-          bitbuf_ = 0;
-          bitcnt_ = 0;
           return;
         }
       }
@@ -804,40 +795,15 @@ class StreamInflater {
   }
 
   void dynamic() {
-    static constexpr std::uint8_t order[19] = {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
     const unsigned nlen = bits(5) + 257, ndist = bits(5) + 1, ncode = bits(4) + 4;
     if (nlen > 286 || ndist > 30) fail("too many length or distance symbols");
     std::uint8_t lengths[320] = {};
-    for (unsigned i = 0; i < ncode; i++) lengths[order[i]] = static_cast<std::uint8_t>(bits(3));
+    for (unsigned i = 0; i < ncode; i++) lengths[detail::kCodeLengthOrder[i]] = static_cast<std::uint8_t>(bits(3));
     std::uint32_t cl[1 << detail::kCodeLenBits];
     if (!detail::build_table(cl, lengths, 19, detail::Code::kCodeLen, detail::kCodeLenBits))
       fail("invalid code lengths set");
-    std::memset(lengths, 0, sizeof(lengths));
-    unsigned idx = 0;
-    while (idx < nlen + ndist) {
-      fill();
-      const std::uint32_t e = cl[bitbuf_ & ((1u << detail::kCodeLenBits) - 1)];
-      if (e & detail::kEntExceptional) fail("invalid code lengths set");
-      bits(static_cast<int>(e & 63));
-      const unsigned sym = e >> 16;
-      if (sym < 16) {
-        lengths[idx++] = static_cast<std::uint8_t>(sym);
-        continue;
-      }
-      unsigned rep;
-      std::uint8_t val = 0;
-      if (sym == 16) {
-        if (idx == 0) fail("invalid bit length repeat");
-        val = lengths[idx - 1];
-        rep = 3 + bits(2);
-      } else if (sym == 17) {
-        rep = 3 + bits(3);
-      } else {
-        rep = 11 + bits(7);
-      }
-      if (idx + rep > nlen + ndist) fail("invalid bit length repeat");
-      while (rep--) lengths[idx++] = val;
-    }
+    detail::read_code_lengths(lengths, nlen + ndist, cl, bitbuf_,
+                              [&] { fill(); }, [&](int n) { return bits(n); });
     if (lengths[256] == 0) fail("invalid code -- missing end-of-block");
     dyn_lit_.resize(detail::kLitTableSize);
     dyn_dist_.resize(detail::kDistTableSize);

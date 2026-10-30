@@ -190,9 +190,7 @@ class FormatReader {
     const Header& h = in.header;
     width = h.width;
     height = h.height;
-    if (h.color_type & 2) format |= kFormatColor;
-    if ((h.color_type & 4) || in.has_trns()) format |= kFormatAlpha;
-    if (h.bit_depth == 16) format |= kFormatLinear;
+    format = source_format(in);
     if (h.color_type == kIndexed) format |= kFormatColormap;
     if ((format & kFormatColor) && not_srgb()) flags |= kImageNotSrgb;
     colormap_entries = h.color_type == kGray ? 1u << h.bit_depth
@@ -228,15 +226,14 @@ class FormatReader {
     if ((format & kFormatColormap) && (!colormap || colormap_entries == 0))
       VIO_FAIL("FormatReader::read: no colormap");
     d_.decode(file_);
-    buffer_ = static_cast<std::uint8_t*>(buffer);
     colormap_ = colormap;
     background_ = background;
     // first row and step in bytes
     step_ = row_stride * static_cast<std::ptrdiff_t>(pixel_component_size(format));
-    first_ = buffer_ + (step_ < 0 ? (static_cast<std::ptrdiff_t>(height) - 1) * -step_ : 0);
+    first_ = static_cast<std::uint8_t*>(buffer) +
+             (step_ < 0 ? (static_cast<std::ptrdiff_t>(height) - 1) * -step_ : 0);
     if (format & kFormatColormap) {
-      read_colormap();
-      read_colormapped();
+      read_colormapped(read_colormap());
     } else {
       read_direct();
     }
@@ -245,6 +242,13 @@ class FormatReader {
  private:
   enum Encoding { kNotSet, kSrgb, kLinear, kFile, kLinear8 };
   enum Processing { kCmapNone, kCmapGa, kCmapTrans, kCmapRgb, kCmapRgbAlpha };
+
+  static std::uint32_t source_format(const Info& in) {
+    const Header& h = in.header;
+    return ((h.color_type & 2) ? kFormatColor : 0) |
+           (((h.color_type & 4) || in.has_trns()) ? kFormatAlpha : 0) |
+           (h.bit_depth == 16 ? kFormatLinear : 0);
+  }
 
   static bool match_srgb(const Chromaticities& c) {
     auto out = [](std::int32_t v, std::int32_t ref) { return v < ref - 1000 || v > ref + 1000; };
@@ -255,16 +259,13 @@ class FormatReader {
     const Info& in = d_.info;
     Chromaticities c{};
     if (in.mastering) {
-      const MasteringDisplay& m = *in.mastering;
-      c = Chromaticities{m.white_x * 2, m.white_y * 2, m.red_x * 2,  m.red_y * 2,
-                         m.green_x * 2, m.green_y * 2, m.blue_x * 2, m.blue_y * 2};
+      c = detail::mastering_chromaticities(*in.mastering);
     } else if (in.chromaticities) {
       c = *in.chromaticities;
     }
     if (in.cicp || in.mastering) return !match_srgb(c);
     if (in.srgb_intent) return false;
-    if (in.chromaticities) return !match_srgb(c);
-    return false;
+    return in.chromaticities && !match_srgb(c);
   }
   std::int32_t chunk_gamma() const {
     const Info& in = d_.info;
@@ -284,8 +285,7 @@ class FormatReader {
   void init_plan(const Transforms& t) { plan_.init(d_.info, t, [this](const std::string& m) { d_.warn(m); }); }
   template <typename F>
   void run_rows(F f) {
-    const RowInfo& o = plan_.output();
-    const std::size_t orb = (static_cast<std::size_t>(width) * o.channels * o.bit_depth + 7) / 8;
+    const std::size_t orb = plan_.output_row_bytes(width);
     std::vector<std::uint8_t> img(orb * height + plan_.max_row_bytes(width));
     d_.transform_image(plan_, width, height, d_.row(0), d_.row_bytes(), img.data(), orb);
     for (std::uint32_t y = 0; y < height; y++) f(y, img.data() + y * orb);
@@ -295,16 +295,12 @@ class FormatReader {
   // ---- direct (not colormapped) ----------------------------------------------
 
   void read_direct() {
-    const Header& h = d_.info.header;
     std::uint32_t fmt = format;
     const bool linear = (fmt & kFormatLinear) != 0;
     int local_compose = 0, local_background = 0;
     Transforms t;
     t.expand_palette = t.expand_gray = t.trns_to_alpha = true;
-    std::uint32_t base = 0;
-    if (h.color_type & 2) base |= kFormatColor;
-    if ((h.color_type & 4) || d_.info.has_trns()) base |= kFormatAlpha;
-    if (h.bit_depth == 16) base |= kFormatLinear;
+    const std::uint32_t base = source_format(d_.info);
     std::uint32_t change = fmt ^ base;
     if (change & kFormatColor) {
       if (fmt & kFormatColor) {
@@ -402,7 +398,7 @@ class FormatReader {
           for (unsigned c = 0; c < channels; c++) {
             std::uint32_t component = in[c];
             if (alpha < 255) {
-              if (plan_optimized()) {
+              if (plan_.optimize_alpha()) {
                 component *= 257 * 255;
                 component += (255 - alpha) * detail::srgb_to_linear_table()[out[c]];
                 if (component > 255 * 65535) component = 255 * 65535;
@@ -469,8 +465,6 @@ class FormatReader {
       std::memcpy(row_ptr(y), in, bytes);
     });
   }
-  bool plan_optimized() const { return plan_.optimize_alpha(); }
-
   // ---- colormapped ------------------------------------------------------------
 
   unsigned decode_gamma(std::uint32_t value, int encoding) {
@@ -611,20 +605,21 @@ class FormatReader {
     }
   }
 
-  unsigned make_gray_file_colormap() {
-    for (unsigned i = 0; i < 256; i++) cmap_entry(i, i, i, i, 255, kFile);
-    return 256;
-  }
+  template <int encoding>
   unsigned make_gray_colormap() {
-    for (unsigned i = 0; i < 256; i++) cmap_entry(i, i, i, i, 255, kSrgb);
+    for (unsigned i = 0; i < 256; i++) cmap_entry(i, i, i, i, 255, encoding);
     return 256;
   }
-  unsigned make_ga_colormap() {
+  unsigned make_gray_ramp() {
     unsigned i = 0;
     while (i < 231) {
       const unsigned gray = (i * 256 + 115) / 231;
       cmap_entry(i++, gray, gray, gray, 255, kSrgb);
     }
+    return i;
+  }
+  unsigned make_ga_colormap() {
+    unsigned i = make_gray_ramp();
     cmap_entry(i++, 255, 255, 255, 0, kSrgb);
     for (unsigned a = 1; a < 5; ++a)
       for (unsigned g = 0; g < 6; ++g) cmap_entry(i++, g * 51, g * 51, g * 51, a * 51, kSrgb);
@@ -641,7 +636,7 @@ class FormatReader {
     return static_cast<std::uint8_t>(6 * (6 * detail::div51(r) + detail::div51(g)) + detail::div51(b));
   }
 
-  void read_colormap() {
+  int read_colormap() {
     const Header& h = d_.info.header;
     const Info& in = d_.info;
     const std::uint32_t out_fmt = format;
@@ -700,7 +695,7 @@ class FormatReader {
         } else {
           data_encoding = kSrgb;
           if (256 > colormap_entries) VIO_FAIL("gray[16] color-map: too few entries");
-          cmap_entries = make_gray_colormap();
+          cmap_entries = make_gray_colormap<kSrgb>();
           if (num_trans > 0) {
             unsigned back_alpha;
             if (out_fmt & kFormatAlpha) {
@@ -737,7 +732,7 @@ class FormatReader {
         } else if (!(out_fmt & kFormatColor) || (back_r == back_g && back_g == back_b)) {
           std::uint32_t gray = back_g;
           if (256 > colormap_entries) VIO_FAIL("gray-alpha color-map: too few entries");
-          cmap_entries = make_gray_colormap();
+          cmap_entries = make_gray_colormap<kSrgb>();
           if (output_encoding == kLinear) {
             gray = detail::srgb_from_linear(gray * 255);
             cmap_entry(gray, back_g, back_g, back_g, 65535, kLinear);
@@ -746,11 +741,7 @@ class FormatReader {
           processing = kCmapNone;
         } else {
           if (256 > colormap_entries) VIO_FAIL("ga-alpha color-map: too few entries");
-          std::uint32_t i = 0;
-          while (i < 231) {
-            const std::uint32_t gray = (i * 256 + 115) / 231;
-            cmap_entry(i++, gray, gray, gray, 255, kSrgb);
-          }
+          std::uint32_t i = make_gray_ramp();
           background_index = i;
           cmap_entry(i++, back_r, back_g, back_b, output_encoding == kLinear ? 65535U : 255U, output_encoding);
           if (output_encoding == kSrgb) back_r = lin[back_r], back_g = lin[back_g], back_b = lin[back_b];
@@ -783,10 +774,10 @@ class FormatReader {
             const std::int32_t gamma = resolve_file_gamma();
             if (256 > colormap_entries) VIO_FAIL("rgb[gray] color-map: too few entries");
             if (alpha_in && detail::gamma_not_srgb(gamma)) {
-              cmap_entries = make_gray_file_colormap();
+              cmap_entries = make_gray_colormap<kFile>();
               data_encoding = kFile;
             } else {
-              cmap_entries = make_gray_colormap();
+              cmap_entries = make_gray_colormap<kSrgb>();
             }
             if (alpha_in) {
               std::uint32_t gray = back_g;
@@ -887,12 +878,11 @@ class FormatReader {
     colormap_entries = cmap_entries;
     const unsigned expect[] = {256, 231, 254, 256, 216};
     if (background_index != expect[processing]) VIO_FAIL("bad background index");
-    processing_ = processing;
+    return processing;
   }
 
-  void read_colormapped() {
+  void read_colormapped(int proc) {
     const std::uint32_t w = width;
-    const int proc = processing_;
     transform_rows(cmap_t_, [&](std::uint32_t y, const std::uint8_t* in) {
       std::uint8_t* out = row_ptr(y);
       const RowInfo& o = plan_.output();
@@ -947,13 +937,12 @@ class FormatReader {
   Decoder d_;
   detail::TransformPlan plan_;
   Transforms cmap_t_;
-  std::uint8_t* buffer_ = nullptr;
   std::uint8_t* first_ = nullptr;
   std::ptrdiff_t step_ = 0;
   void* colormap_ = nullptr;
   const PaletteEntry* background_ = nullptr;
   std::int32_t default_gamma_ = 0, gamma_to_linear_ = 0;
-  int file_encoding_ = kNotSet, processing_ = kCmapNone;
+  int file_encoding_ = kNotSet;
 };
 
 
@@ -1004,15 +993,9 @@ class FormatWriter {
     }
     WriteTransforms& t = e.transforms;
     t.byte_order = write_16bit ? ByteOrder::kHost : ByteOrder::kBig;
-    std::uint32_t fmt = format;
-    if (fmt & kFormatBgr) {
-      if (!cmap && (fmt & kFormatColor)) t.bgr = true;
-      fmt &= ~kFormatBgr;
-    }
-    if (fmt & kFormatAlphaFirst) {
-      if (!cmap && (fmt & kFormatAlpha)) t.swap_alpha = true;
-      fmt &= ~kFormatAlphaFirst;
-    }
+    t.bgr = !cmap && (format & kFormatBgr) && (format & kFormatColor);
+    t.swap_alpha = !cmap && (format & kFormatAlphaFirst) && (format & kFormatAlpha);
+    std::uint32_t fmt = format & ~(kFormatBgr | kFormatAlphaFirst);
     if (cmap && colormap_entries <= 16) t.packing = true;
     if (fmt & ~(kFormatColor | kFormatLinear | kFormatAlpha | kFormatColormap))
       VIO_FAIL("FormatWriter: unsupported transformation");

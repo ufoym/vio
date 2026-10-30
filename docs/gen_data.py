@@ -55,7 +55,7 @@ def tables(lines):
 
 def pct(cell):
     """'+39%' -> 1.39, '−8%' -> 0.92, '—' -> None."""
-    m = re.match(r"^([+−-])(\d+(?:\.\d+)?)%", cell.replace("−", "−"))
+    m = re.match(r"^([+−-])(\d+(?:\.\d+)?)%", cell)
     if not m:
         return None
     v = float(m.group(2)) / 100

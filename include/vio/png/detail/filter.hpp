@@ -225,19 +225,27 @@ inline void unfilter_row_scalar(unsigned filter, std::uint8_t* dst, const std::u
     }
   }
   switch (filter) {
+    case kFilterUp:
+      if (prev) {
+        for (std::size_t i = 0; i < n; i++) dst[i] = static_cast<std::uint8_t>(src[i] + prev[i]);
+        break;
+      }
+      [[fallthrough]];
     case kFilterNone:
       std::memmove(dst, src, n);
       break;
+    case kFilterPaeth:
+      if (prev) {
+        for (std::size_t i = 0; i < n; i++) {
+          std::uint8_t a = i >= bpp ? dst[i - bpp] : 0, b = prev[i], c = i >= bpp ? prev[i - bpp] : 0;
+          dst[i] = static_cast<std::uint8_t>(src[i] + paeth(a, b, c));
+        }
+        break;
+      }
+      [[fallthrough]];  // b = c = 0: the prediction is a
     case kFilterSub:
       for (std::size_t i = 0; i < n; i++)
         dst[i] = static_cast<std::uint8_t>(src[i] + (i >= bpp ? dst[i - bpp] : 0));
-      break;
-    case kFilterUp:
-      if (!prev) {
-        std::memmove(dst, src, n);
-      } else {
-        for (std::size_t i = 0; i < n; i++) dst[i] = static_cast<std::uint8_t>(src[i] + prev[i]);
-      }
       break;
     case kFilterAvg:
       for (std::size_t i = 0; i < n; i++) {
@@ -245,14 +253,11 @@ inline void unfilter_row_scalar(unsigned filter, std::uint8_t* dst, const std::u
         dst[i] = static_cast<std::uint8_t>(src[i] + ((a + b) >> 1));
       }
       break;
-    case kFilterPaeth:
-      for (std::size_t i = 0; i < n; i++) {
-        std::uint8_t a = i >= bpp ? dst[i - bpp] : 0, b = prev ? prev[i] : 0,
-                     c = i >= bpp && prev ? prev[i - bpp] : 0;
-        dst[i] = static_cast<std::uint8_t>(src[i] + paeth(a, b, c));
-      }
-      break;
   }
+}
+
+VIO_INLINE bool use_scalar_unfilter(unsigned filter, unsigned bpp) {
+  return filter == kFilterNone || filter == kFilterUp || bpp < 3 || bpp == 5 || bpp == 7 || bpp > 8;
 }
 
 #if VIO_SIMD_NEON
@@ -346,6 +351,12 @@ VIO_INLINE void unfilter_px_neon(unsigned filter, std::uint8_t* dst, const std::
   using P = PxNeon<W>;
   uint8x8_t a = vdup_n_u8(0);
   switch (filter) {
+    case kFilterPaeth:
+      if (prev) {
+        paeth_row_neon<W>(dst, src, prev, n, bpp);
+        break;
+      }
+      [[fallthrough]];  // b = c = 0: the prediction is a
     case kFilterSub:
       for (std::size_t i = 0; i < n; i += bpp) {
         a = vadd_u8(P::load(src + i), a);
@@ -365,16 +376,6 @@ VIO_INLINE void unfilter_px_neon(unsigned filter, std::uint8_t* dst, const std::
         }
       }
       break;
-    case kFilterPaeth:
-      if (!prev) {  // b = c = 0: the prediction is a
-        for (std::size_t i = 0; i < n; i += bpp) {
-          a = vadd_u8(P::load(src + i), a);
-          P::store(dst + i, a, bpp);
-        }
-      } else {
-        paeth_row_neon<W>(dst, src, prev, n, bpp);
-      }
-      break;
   }
 }
 
@@ -386,7 +387,7 @@ inline void unfilter_row_neon(unsigned filter, std::uint8_t* dst, const std::uin
     for (; i < n; i++) dst[i] = static_cast<std::uint8_t>(src[i] + prev[i]);
     return;
   }
-  if (filter == kFilterNone || filter == kFilterUp || bpp < 3 || bpp == 5 || bpp == 7 || bpp > 8) {
+  if (use_scalar_unfilter(filter, bpp)) {
     unfilter_row_scalar(filter, dst, src, prev, n, bpp);
     return;
   }
@@ -585,7 +586,7 @@ VIO_TARGET_POP()
 // Paeth as in the NEON kernel (see PaethBlock), with every byte of the pass
 // along the row offset by 0x80 so that signed comparisons order them.
 VIO_TARGET_PUSH_SSE2()
-VIO_INLINE __m128i select8_sse2(__m128i m, __m128i x, __m128i y) {
+VIO_INLINE __m128i select_sse2(__m128i m, __m128i x, __m128i y) {
   return _mm_or_si128(_mm_and_si128(m, x), _mm_andnot_si128(m, y));
 }
 inline void paeth_bounds_sse2(PaethBlock& t, std::size_t j, __m128i x, __m128i b, __m128i c) {
@@ -594,12 +595,12 @@ inline void paeth_bounds_sse2(PaethBlock& t, std::size_t j, __m128i x, __m128i b
   const __m128i gt = _mm_andnot_si128(eq, ge);
   const __m128i e = _mm_or_si128(_mm_subs_epu8(b, c), _mm_subs_epu8(c, b));
   const __m128i e2 = _mm_adds_epu8(e, e), eh = _mm_and_si128(_mm_srli_epi16(e, 1), _mm_set1_epi8(0x7f));
-  const __m128i l = select8_sse2(ge, _mm_subs_epu8(c, _mm_subs_epu8(e2, one)), _mm_add_epi8(b, one));
-  const __m128i u = select8_sse2(ge, _mm_add_epi8(b, gt), _mm_adds_epu8(_mm_sub_epi8(c, one), e2));
+  const __m128i l = select_sse2(ge, _mm_subs_epu8(c, _mm_subs_epu8(e2, one)), _mm_add_epi8(b, one));
+  const __m128i u = select_sse2(ge, _mm_add_epi8(b, gt), _mm_adds_epu8(_mm_sub_epi8(c, one), e2));
   const __m128i t2 = _mm_adds_epu8(c, eh);
-  const __m128i s = select8_sse2(ge, _mm_subs_epu8(c, eh), _mm_adds_epu8(t2, one));
-  const __m128i lo = select8_sse2(ge, c, b);
-  const __m128i hi = select8_sse2(_mm_andnot_si128(ge, _mm_cmpeq_epi8(t2, ff)), lo, select8_sse2(ge, b, c));
+  const __m128i s = select_sse2(ge, _mm_subs_epu8(c, eh), _mm_adds_epu8(t2, one));
+  const __m128i lo = select_sse2(ge, c, b);
+  const __m128i hi = select_sse2(_mm_andnot_si128(ge, _mm_cmpeq_epi8(t2, ff)), lo, select_sse2(ge, b, c));
   _mm_store_si128(reinterpret_cast<__m128i*>(t.l + j), _mm_xor_si128(l, bias));
   _mm_store_si128(reinterpret_cast<__m128i*>(t.u + j), _mm_xor_si128(u, bias));
   _mm_store_si128(reinterpret_cast<__m128i*>(t.s + j), _mm_xor_si128(s, bias));
@@ -644,7 +645,7 @@ VIO_TARGET_POP()
   }
 
 VIO_TARGET_PUSH_SSE2()
-VIO_PNG_PAETH(paeth_rows_sse2, select8_sse2)
+VIO_PNG_PAETH(paeth_rows_sse2, select_sse2)
 VIO_TARGET_POP()
 
 VIO_TARGET_PUSH_("sse4.1")
@@ -665,9 +666,6 @@ VIO_INLINE __m128i absdiff_sse2(__m128i x, __m128i y) {
 }
 // x <= y (unsigned bytes)
 VIO_INLINE __m128i le_sse2(__m128i x, __m128i y) { return _mm_cmpeq_epi8(_mm_min_epu8(x, y), x); }
-VIO_INLINE __m128i select_sse2(__m128i m, __m128i x, __m128i y) {
-  return _mm_or_si128(_mm_and_si128(m, x), _mm_andnot_si128(m, y));
-}
 
 template <unsigned W>
 VIO_INLINE void unfilter_px_sse2(unsigned filter, std::uint8_t* dst, const std::uint8_t* src,
@@ -675,6 +673,13 @@ VIO_INLINE void unfilter_px_sse2(unsigned filter, std::uint8_t* dst, const std::
   using P = PxSse2<W>;
   __m128i a = _mm_setzero_si128();
   switch (filter) {
+    case kFilterPaeth:
+      if (prev) {
+        if (simd::has(simd::kSSE41)) paeth_rows_sse41(dst, src, prev, n, bpp);
+        else paeth_rows_sse2<W>(dst, src, prev, n, bpp);
+        break;
+      }
+      [[fallthrough]];  // b = c = 0: the prediction is a
     case kFilterSub:
       for (std::size_t i = 0; i < n; i += bpp) {
         a = _mm_add_epi8(P::load(src + i), a);
@@ -701,17 +706,6 @@ VIO_INLINE void unfilter_px_sse2(unsigned filter, std::uint8_t* dst, const std::
       }
       break;
     }
-    case kFilterPaeth:
-      if (!prev) {  // b = c = 0: the prediction is a
-        for (std::size_t i = 0; i < n; i += bpp) {
-          a = _mm_add_epi8(P::load(src + i), a);
-          P::store(dst + i, a, bpp);
-        }
-      } else {
-        if (simd::has(simd::kSSE41)) paeth_rows_sse41(dst, src, prev, n, bpp);
-        else paeth_rows_sse2<W>(dst, src, prev, n, bpp);
-      }
-      break;
   }
 }
 
@@ -726,7 +720,7 @@ inline void unfilter_row_sse2(unsigned filter, std::uint8_t* dst, const std::uin
     for (; i < n; i++) dst[i] = static_cast<std::uint8_t>(src[i] + prev[i]);
     return;
   }
-  if (filter == kFilterNone || filter == kFilterUp || bpp < 3 || bpp == 5 || bpp == 7 || bpp > 8) {
+  if (use_scalar_unfilter(filter, bpp)) {
     unfilter_row_scalar(filter, dst, src, prev, n, bpp);
     return;
   }
@@ -816,7 +810,7 @@ struct VecFilter {
       for (; i < n; i++) dst[i] = static_cast<std::uint8_t>(src[i] + prev[i]);
       return;
     }
-    if (filter == kFilterNone || filter == kFilterUp || bpp < 3 || bpp == 5 || bpp == 7 || bpp > 8) {
+    if (use_scalar_unfilter(filter, bpp)) {
       unfilter_row_scalar(filter, dst, src, prev, n, bpp);
       return;
     }

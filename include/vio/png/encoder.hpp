@@ -122,7 +122,7 @@ class Encoder {
     seq_ = 0;
     image_done_ = false;
     image_.reset();
-    streaming_ = false;
+    deflater_.reset();
     write_header_chunks();
     begun_ = true;
   }
@@ -148,7 +148,7 @@ class Encoder {
       row = convert(static_cast<const std::uint8_t*>(row), stride, header.width, 1, row_tmp_);
     }
     if (mode == Mode::kZlib && !header.interlace) {
-      if (!streaming_) start_row_stream();
+      if (!deflater_) start_row_stream();
       stream_row(static_cast<const std::uint8_t*>(row));
       if (++rows_done_ == header.height) {
         finish_row_stream();
@@ -169,7 +169,7 @@ class Encoder {
   void add_frame(const FrameControl& fc, const void* pixels, std::size_t stride) {
     if (!image_done_) fail("add_frame() before the default image");
     if (!info.animation) fail("add_frame() without Info::animation");
-    check_frame(fc);
+    detail::check_frame(header, fc);
     write_fctl(fc);
     std::vector<std::uint8_t> tmp;
     const std::uint8_t* p = convert(static_cast<const std::uint8_t*>(pixels), stride, fc.width, fc.height, tmp);
@@ -203,7 +203,7 @@ class Encoder {
   }
 
   std::size_t row_bytes_for(std::uint32_t w) const {
-    return (static_cast<std::size_t>(w) * num_channels(header.color_type) * header.bit_depth + 7) / 8;
+    return detail::packed_row_bytes(w, num_channels(header.color_type) * header.bit_depth);
   }
 
   void validate() const {
@@ -501,13 +501,6 @@ class Encoder {
     }
   }
 
-  void check_frame(const FrameControl& f) const {
-    if (f.width == 0 || f.height == 0 || f.x > header.width || f.y > header.height ||
-        f.width > header.width - f.x || f.height > header.height - f.y || f.dispose > 2 ||
-        f.blend > 1)
-      fail("Invalid fcTL");
-  }
-
   void write_fctl(const FrameControl& f) {
     using namespace detail;
     std::vector<std::uint8_t> v;
@@ -577,8 +570,8 @@ class Encoder {
       if (w <= static_cast<std::uint32_t>(adam7_x_start[p]) ||
           h <= static_cast<std::uint32_t>(adam7_y_start[p]))
         continue;
-      const std::uint32_t pw = (w - adam7_x_start[p] + adam7_x_delta[p] - 1) / adam7_x_delta[p];
-      const std::uint32_t ph = (h - adam7_y_start[p] + adam7_y_delta[p] - 1) / adam7_y_delta[p];
+      const std::uint32_t pw = adam7_extent(w, adam7_x_start[p], adam7_x_delta[p]);
+      const std::uint32_t ph = adam7_extent(h, adam7_y_start[p], adam7_y_delta[p]);
       const std::size_t prb = row_bytes_for(pw);
       segs.push_back({prb, ph, [=](std::uint32_t y, std::uint8_t* dst) {
                         const std::uint8_t* src =
@@ -683,13 +676,13 @@ class Encoder {
   // Row-by-row kZlib compression of a non-interlaced default image, writing
   // IDAT chunks as the deflater fills its output.
   void start_row_stream() {
-    deflater_ = make_deflater();
+    auto deflater = make_deflater();
     row_filter_.start(row_bytes_, bpp_, filters_);
     filtered_.assign(row_bytes_ + 1, 0);
     zbuf_.resize(options.idat_size ? options.idat_size : 8192);
-    deflater_->next_out = zbuf_.data();
-    deflater_->avail_out = static_cast<unsigned>(zbuf_.size());
-    streaming_ = true;
+    deflater->next_out = zbuf_.data();
+    deflater->avail_out = static_cast<unsigned>(zbuf_.size());
+    deflater_ = std::move(deflater);
   }
   void flush_zbuf() {
     std::size_t n = zbuf_.size() - deflater_->avail_out;
@@ -717,7 +710,6 @@ class Encoder {
       if (z.avail_out == 0 || ret == zlib::kStreamEnd) flush_zbuf();
     }
     deflater_.reset();
-    streaming_ = false;
   }
 
   detail::ByteBuffer out_;
@@ -728,7 +720,7 @@ class Encoder {
   std::size_t row_bytes_ = 0;
   unsigned bpp_ = 1, filters_ = kFilterBitsAll;
   std::uint32_t rows_done_ = 0, seq_ = 0;
-  bool image_done_ = false, streaming_ = false, begun_ = false;
+  bool image_done_ = false, begun_ = false;
 };
 
 }  // namespace vio::png

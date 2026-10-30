@@ -2,6 +2,7 @@
 // chunk validation helpers.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 #include "../types.hpp"
@@ -10,6 +11,10 @@ namespace vio::png {
 
 namespace detail {
 inline constexpr std::uint8_t signature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
+
+inline std::size_t packed_row_bytes(std::uint32_t width, std::size_t bits_per_pixel) {
+  return (static_cast<std::size_t>(width) * bits_per_pixel + 7) / 8;
+}
 
 inline std::uint32_t read_u32(const std::uint8_t* p) {
   return std::uint32_t(p[0]) << 24 | std::uint32_t(p[1]) << 16 | std::uint32_t(p[2]) << 8 | p[3];
@@ -26,7 +31,17 @@ inline constexpr int adam7_y_start[7] = {0, 0, 4, 0, 2, 0, 1};
 inline constexpr int adam7_x_delta[7] = {8, 8, 4, 4, 2, 2, 1};
 inline constexpr int adam7_y_delta[7] = {8, 8, 8, 4, 4, 2, 2};
 
+inline std::uint32_t adam7_extent(std::uint32_t size, unsigned start, unsigned step) {
+  return size <= start ? 0 : (size - start + step - 1) / step;
+}
+
 [[noreturn]] inline void fail(const char* msg) { VIO_FAIL("%s", msg); }
+
+inline void check_frame(const Header& h, const FrameControl& f) {
+  if (f.width == 0 || f.height == 0 || f.x > h.width || f.y > h.height ||
+      f.width > h.width - f.x || f.height > h.height - f.y || f.dispose > 2 || f.blend > 1)
+    fail("Invalid fcTL");
+}
 
 // Chunk type bytes must be ASCII letters.
 inline bool valid_chunk_type(const std::uint8_t* t) {

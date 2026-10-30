@@ -46,7 +46,8 @@ class Reader : public ImageReader<std::uint8_t> {
       default:
         VIO_FAIL("Invalid or unsupported Targa file");
     }
-    while (idlen--) read_byte();
+    if (idlen && !in_.take(static_cast<std::size_t>(idlen)))
+      VIO_FAIL("Premature end of input file");
     if (maplen > 0) {
       if (maplen > 256 || get2(h, 3) != 0) VIO_FAIL("Unsupported Targa colormap format");
       if (h[7] != 24) VIO_FAIL("Unsupported Targa colormap format");
@@ -169,13 +170,9 @@ class Writer : public ImageWriter<std::uint8_t> {
       std::uint8_t* out = out_.grow(quantized() || color == ColorSpace::Gray
                                         ? width
                                         : static_cast<std::size_t>(width) * 3);
-      if (color == ColorSpace::Gray) {
-        if (quantized()) {
-          for (unsigned c = 0; c < width; c++) out[c] = static_cast<std::uint8_t>(colormap[0][in[c]]);
-        } else {
-          std::memcpy(out, in, width);
-        }
-      } else if (quantized()) {
+      if (color == ColorSpace::Gray && quantized()) {
+        for (unsigned c = 0; c < width; c++) out[c] = static_cast<std::uint8_t>(colormap[0][in[c]]);
+      } else if (color == ColorSpace::Gray || quantized()) {
         std::memcpy(out, in, width);
       } else {
         for (unsigned c = 0; c < width; c++, in += 3, out += 3) {
@@ -216,13 +213,13 @@ class Writer : public ImageWriter<std::uint8_t> {
     std::uint8_t h[18] = {};
     if (num_colors > 0) {
       h[1] = 1;
-      h[5] = static_cast<std::uint8_t>(num_colors & 0xFF);
+      h[5] = static_cast<std::uint8_t>(num_colors);
       h[6] = static_cast<std::uint8_t>(num_colors >> 8);
       h[7] = 24;
     }
-    h[12] = static_cast<std::uint8_t>(width & 0xFF);
+    h[12] = static_cast<std::uint8_t>(width);
     h[13] = static_cast<std::uint8_t>(width >> 8);
-    h[14] = static_cast<std::uint8_t>(height & 0xFF);
+    h[14] = static_cast<std::uint8_t>(height);
     h[15] = static_cast<std::uint8_t>(height >> 8);
     h[17] = 0x20;
     if (color == ColorSpace::Gray) {

@@ -412,13 +412,16 @@ void decode_png(Bytes file, Image& img) {
   const png::Header& h = d.header;
   img.width = h.width;
   img.height = h.height;
+  auto copy_rows = [&](const auto& source, uint32_t channels, uint32_t depth) {
+    img.channels = channels;
+    img.depth = depth;
+    img.data = Buffer(checked_size(img.width, img.height, channels, depth / 8));
+    const size_t stride = img.stride();
+    for (uint32_t y = 0; y < img.height; y++) std::memcpy(img.data.p + y * stride, source.row(y), stride);
+  };
   const bool direct = h.color_type != png::kIndexed && h.bit_depth >= 8 && !d.info.has_trns();
   if (direct) {
-    img.channels = png::num_channels(h.color_type);
-    img.depth = h.bit_depth;
-    img.data = Buffer(checked_size(img.width, img.height, img.channels, img.depth / 8));
-    const size_t stride = img.stride();
-    for (uint32_t y = 0; y < img.height; y++) std::memcpy(img.data.p + y * stride, d.row(y), stride);
+    copy_rows(d, png::num_channels(h.color_type), h.bit_depth);
     return;
   }
   png::Transforms t;
@@ -426,11 +429,7 @@ void decode_png(Bytes file, Image& img) {
   t.expand_gray = true;
   t.trns_to_alpha = true;
   const png::Decoder::Image out = d.transform(t);
-  img.channels = out.format.channels;
-  img.depth = out.format.bit_depth;
-  img.data = Buffer(checked_size(img.width, img.height, img.channels, img.depth / 8));
-  const size_t stride = img.stride();
-  for (uint32_t y = 0; y < img.height; y++) std::memcpy(img.data.p + y * stride, out.row(y), stride);
+  copy_rows(out, out.format.channels, out.format.bit_depth);
 }
 
 template <class T>

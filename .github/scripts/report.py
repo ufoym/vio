@@ -7,6 +7,7 @@ report.py <results-dir> <report.md> <report.html>
 and bench.py (bench-*.json), in any subdirectory layout.
 """
 import glob, html, json, math, os, re, sys, xml.etree.ElementTree as ET
+from itertools import zip_longest
 
 root, md_path, html_path = sys.argv[1:4]
 meta = {"sha": os.environ.get("GITHUB_SHA", "")[:10],
@@ -84,12 +85,7 @@ def profile_rows(prof, n=10):
         scale = 1000.0 / p["mpx"] if p.get("mpx") else None
         cols.append([(name, pct / 100 * scale if scale else None)
                      for pct, name in p.get("rows", [])[:n]])
-    rows = []
-    for i in range(max(map(len, cols))):
-        v = cols[0][i] if i < len(cols[0]) else ("", None)
-        r = cols[1][i] if i < len(cols[1]) else ("", None)
-        rows.append((v[0], v[1], r[0], r[1]))
-    return rows
+    return [(v[0], v[1], r[0], r[1]) for v, r in zip_longest(*cols, fillvalue=("", None))]
 
 
 def ms(x):

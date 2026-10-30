@@ -666,83 +666,104 @@ cmake --build build/native --target jpeg-bench-libjpeg
 ## Repository layout
 
 ```
-include/vio/
-├── core.hpp                          shared by all codecs: color spaces,
-│                                     vio::Error, row reader/writer interfaces
-├── bmp.hpp gif.hpp ppm.hpp targa.hpp one file per format; needs only core.hpp
-├── png.hpp                           includes the png/ codec; Reader, Writer
-├── png/
-│   ├── decoder.hpp encoder.hpp       public API (whole-image codec, read/write
-│   │   transform.hpp stream.hpp      transforms, progressive decoding, pixel
-│   │   simple.hpp types.hpp          format conversion, chunk/header types)
-│   ├── config.hpp                    compiler macros, SIMD back-end selection
-│   │                                 (VIO_NO_SIMD, ...)
-│   ├── detail/                       codec internals
-│   │   ├── common.hpp                byte I/O, Adam7, chunk/sRGB tables
-│   │   ├── fast_encoder.hpp          single-pass encoder (SIMD filtering
-│   │   │                             and Huffman coding)
-│   │   ├── inflate.hpp               DEFLATE decompression (whole buffer,
-│   │   │                             or resumable)
-│   │   ├── inflate_fast.inc          its fast loop (compiled per ISA)
-│   │   ├── deflate.hpp               DEFLATE compression, zlib-identical
-│   │   │                             output
-│   │   ├── filter.hpp                scanline filters (scalar, NEON, SSE2,
-│   │   │                             generic vector kernels)
-│   │   └── checksum.hpp              CRC-32, Adler-32 (PCLMUL/PMULL folding,
-│   │                                 Arm CRC32, SSSE3/NEON/generic sums)
-│   └── simd/
-│       ├── cpu.hpp                   run-time ISA detection, JSIMD_* env vars
-│       └── vec.hpp                   128-bit vector interface `V` (SSE2,
-│                                     AltiVec, MMI, RVV)
-├── jpeg.hpp                          includes the jpeg/ public API
-└── jpeg/
-    ├── decoder.hpp encoder.hpp       public API
-    │   transform.hpp types.hpp
-    ├── config.hpp                    compiler macros, SIMD back-end selection
-    │                                 (VIO_NO_SIMD, ...)
-    ├── detail/                       codec internals
-    │   ├── compress*.hpp             compression
-    │   ├── decompress*.hpp           decompression
-    │   ├── huff_*.hpp arith_*.hpp    entropy coding
-    │   └── fdct.hpp idct.hpp         scalar DCTs
-    └── simd/
-        ├── common.hpp                types shared by scalar code and kernels
-        ├── cpu.hpp                   run-time ISA detection, JSIMD_* env vars
-        ├── dispatch.hpp              per-function kernel selection
-        ├── generic/                  kernels written once against a small
-        │                             vector interface `V`
-        └── x86/ neon/ altivec/       back ends: <isa>.hpp instantiates the
-            mmi/ rvv/ vecext/         kernels, kernels.hpp selects within an
-                                      ISA family, v*.inc implements `V`
-                                      (vecext/: compiler vector extensions)
-bind/
-├── c/                                C interfaces
-│   ├── vio/vio.h                     header-only C interface
-│   └── jpeglib/                      libjpeg and libturbojpeg: jpeglib.h,
-│                                     turbojpeg.h and their implementations
-│                                     (jpeglib.cpp, turbojpeg.cpp)
-└── python/vio/                       Python package: __init__.py over the
-                                      _vio extension (_vio.cpp, on vio.h)
-tests/                                conformance suite
-├── third_party/                      test programs and images (git
-│   └── libjpeg-turbo/ libpng/        submodules)
-├── jpeg/                             JPEG tests: build.cmake (jpeg-test,
-│   ├── build.cmake tests.cmake       jpeg-bench, bmp-test-size, tools and
-│   │   extended.cmake                libjpeg-turbo's programs), tests.cmake,
-│   └── tools/ shim/                  tools (jpeg-encode, jpeg-decode,
-│                                     jpeg-transform, jpeg-example), shims
-├── png/                              PNG tests (png-test, png-golden)
-│   └── build.cmake tests.cmake
-│       expected.txt
-└── bind/                             tests of bind/, in the same layout:
-    ├── tests.cmake                   c-test, jpeglib-test
-    ├── c/vio/ c/jpeglib/
-    └── python/                       pytest tests/bind/python
-bench/                                benchmarks against other libraries
-├── jpeg/                             jpeg_bench.py (vs libjpeg-turbo, IJG
-│   └── libjpeg/                      libjpeg), TurboJPEG layer for libjpeg
-└── png/                              png-bench, png_bench.py (vs image-png,
-    └── image-png/                    fpnge, libpng, Wuffs)
+.
+├── include/vio/
+│   ├── config.hpp                        shared compiler and SIMD configuration
+│   ├── core.hpp                          color spaces, errors, row I/O interfaces
+│   ├── detail/
+│   │   └── simd_cpu.inc                  shared run-time CPU detection
+│   ├── bmp.hpp gif.hpp ppm.hpp targa.hpp  one file per format; needs only core.hpp
+│   ├── png.hpp                           includes the PNG codec and Reader/Writer
+│   ├── png/
+│   │   ├── config.hpp                    compiler macros and SIMD selection
+│   │   ├── decoder.hpp encoder.hpp       whole-image codec
+│   │   ├── simple.hpp                    pixel format conversion
+│   │   ├── stream.hpp                    progressive decoding
+│   │   ├── transform.hpp types.hpp       read/write transforms and chunk types
+│   │   ├── detail/
+│   │   │   ├── common.hpp                byte I/O, Adam7, chunk/sRGB tables
+│   │   │   ├── checksum.hpp              CRC-32 and Adler-32
+│   │   │   ├── deflate.hpp               zlib-compatible DEFLATE compression
+│   │   │   ├── deflate_tables.hpp        shared DEFLATE code tables
+│   │   │   ├── fast_encoder.hpp          single-pass encoder and SIMD filtering
+│   │   │   ├── filter.hpp                scanline filters
+│   │   │   ├── inflate.hpp               whole-buffer and resumable decompression
+│   │   │   └── inflate_fast.inc          fast inflate loop (compiled per ISA)
+│   │   └── simd/
+│   │       ├── cpu.hpp                   run-time ISA detection, JSIMD_* env vars
+│   │       └── vec.hpp                   128-bit vector interface `V`
+│   ├── jpeg.hpp                          includes the JPEG public API
+│   └── jpeg/
+│       ├── config.hpp                    compiler macros and SIMD selection
+│       ├── decoder.hpp encoder.hpp       public API
+│       ├── transform.hpp types.hpp       coefficient transforms and JPEG types
+│       ├── detail/
+│       │   ├── common.hpp component.hpp  shared types and component geometry
+│       │   ├── compress*.hpp             compression
+│       │   ├── decompress*.hpp           decompression
+│       │   ├── huff_*.hpp arith_*.hpp    entropy coding
+│       │   ├── fdct.hpp idct.hpp         scalar DCTs
+│       │   └── scan_setup.inc            shared compression/decompression setup
+│       └── simd/
+│           ├── common.hpp cpu.hpp        shared types and run-time ISA detection
+│           ├── dispatch.hpp              per-function kernel selection
+│           ├── generic/                  kernels shared by vector back ends
+│           │   ├── ccolor.inc csample.inc dcolor.inc dsample.inc dct.inc
+│           │   ├── ccolor_select.inc merged_select.inc ycc_rgb_select.inc
+│           │   └── kernels.inc vector_le.inc
+│           ├── x86/                      MMX, SSE, SSE2 and AVX2 kernels
+│           ├── neon/                     ARM NEON kernels
+│           ├── altivec/                  AltiVec/VSX kernels
+│           ├── mmi/                      Loongson MMI kernels
+│           ├── rvv/                      RISC-V vector kernels
+│           └── vecext/                   compiler vector extensions
+├── bind/
+│   ├── c/
+│   │   ├── vio/vio.h                     header-only C interface
+│   │   └── jpeglib/                      libjpeg and TurboJPEG headers and bindings
+│   └── python/                           Python package and build metadata
+│       └── vio/                          __init__.py and _vio.cpp extension
+├── tests/                                conformance suite
+│   ├── CMakeLists.txt                    test and benchmark configuration
+│   ├── third_party/                      test programs and images (git submodules)
+│   │   ├── libjpeg-turbo/
+│   │   └── libpng/
+│   ├── jpeg/
+│   │   ├── build.cmake                   test programs
+│   │   ├── tests.cmake                   JPEG test definitions
+│   │   ├── extended.cmake                optional upstream script-based tests
+│   │   ├── bmp_test_size.cpp             BMP size test
+│   │   ├── tools/                        JPEG tools and shared CLI helpers
+│   │   └── shim/                         generated-header stand-ins
+│   ├── png/
+│   │   ├── build.cmake tests.cmake       PNG test programs and definitions
+│   │   ├── png_cases.hpp                 shared test cases
+│   │   ├── png_test.cpp png_golden.cpp   test runner and reference generator
+│   │   └── expected.txt                  libpng reference results
+│   └── bind/
+│       ├── tests.cmake                   C binding test definitions
+│       ├── c/vio/ c/jpeglib/             C interface tests
+│       └── python/                       Python package tests
+├── bench/                                benchmarks against other libraries
+│   ├── CMakeLists.txt                    benchmark configuration
+│   ├── jpeg/
+│   │   ├── jpeg_bench.py                 comparison with libjpeg-turbo and IJG
+│   │   └── libjpeg/                      TurboJPEG layer for IJG libjpeg
+│   └── png/
+│       ├── png_bench.cpp png_bench.py    PNG benchmark and runner
+│       └── image-png/                    Rust image-png benchmark
+├── docs/                                 project and optimization pages
+│   ├── index.html optimizations.html     page templates
+│   ├── app.js opt.js style.css           page logic and styling
+│   ├── gen_data.py data.js               README data generator and generated data
+│   └── opt-data.js                       hand-written optimization explanations
+├── .github/
+│   ├── workflows/                        CI, benchmarks and Pages deployment
+│   ├── scripts/                          CI test sharding and reporting
+│   └── actions/msvc/                     MSVC environment setup
+├── CMakeLists.txt                        library build and installation
+├── README.md                             project documentation
+└── LICENSE                               license and third-party notices
 ```
 
 ## License

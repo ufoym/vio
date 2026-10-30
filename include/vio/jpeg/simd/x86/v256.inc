@@ -81,16 +81,5 @@ struct V {
 
   static VIO_INLINE T mulhi_u16(T a, T b) { return _mm256_mulhi_epu16(a, b); }
 
-  // Endianness-neutral helpers (byte k = k-th byte in memory).
-  // Bytes 0-7 / 8-15 zero-extended to 16 bits.
-  static VIO_INLINE T widenlo_u8(T a) { return unpacklo_8(a, zero()); }
-  static VIO_INLINE T widenhi_u8(T a) { return unpackhi_8(a, zero()); }
-  // Even- / odd-numbered bytes zero-extended to 16 bits.
-  static VIO_INLINE T even_u8(T a) { return and_(a, set1_16(0xFF)); }
-  static VIO_INLINE T odd_u8(T a) { return srli_16<8>(a); }
-  // Inverse of even_u8/odd_u8 for 16-bit values < 256.
-  static VIO_INLINE T interleave_u8(T even, T odd) { return or_(even, slli_16<8>(odd)); }
-  // 16-bit elements 0-3 / 4-7 as 32-bit values times 65536.
-  static VIO_INLINE T lo16_shl16(T a) { return unpacklo_16(zero(), a); }
-  static VIO_INLINE T hi16_shl16(T a) { return unpackhi_16(zero(), a); }
+#include "../generic/vector_le.inc"
 };

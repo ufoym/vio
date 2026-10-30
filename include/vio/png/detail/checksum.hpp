@@ -46,6 +46,10 @@ namespace vio::png::zlib {
 
 namespace detail {
 
+inline constexpr std::uint16_t kAdlerWeights[32] = {
+    32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17,
+    16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1};
+
 constexpr std::array<std::array<std::uint32_t, 256>, 8> make_crc_tables() {
   std::array<std::array<std::uint32_t, 256>, 8> t{};
   for (std::uint32_t n = 0; n < 256; n++) {
@@ -109,7 +113,7 @@ constexpr std::array<std::array<std::uint32_t, 256>, 8> make_braid_tables() {
 }
 inline constexpr auto braid_tables = make_braid_tables();
 
-inline std::uint64_t crc_load_le64(const std::uint8_t* p) {
+VIO_INLINE std::uint64_t load_le64(const std::uint8_t* p) {
   std::uint64_t v;
   std::memcpy(&v, p, 8);
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
@@ -117,6 +121,7 @@ inline std::uint64_t crc_load_le64(const std::uint8_t* p) {
 #endif
   return v;
 }
+inline std::uint64_t crc_load_le64(const std::uint8_t* p) { return load_le64(p); }
 // The CRC register through one 64-bit word.
 inline std::uint32_t crc_word(std::uint64_t v) {
   for (int k = 0; k < 8; k++) v = (v >> 8) ^ crc_tables[0][v & 0xff];
@@ -356,11 +361,8 @@ inline void adler32_neon(std::uint32_t& s1, std::uint32_t& s2, const std::uint8_
     c2 = vaddw_u8(c2, vget_low_u8(b1));
     c3 = vaddw_u8(c3, vget_high_u8(b1));
   }
-  static constexpr std::uint16_t w[32] = {32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22,
-                                          21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11,
-                                          10, 9,  8,  7,  6,  5,  4,  3,  2,  1};
-  uint16x8_t w0 = vld1q_u16(w), w1 = vld1q_u16(w + 8), w2 = vld1q_u16(w + 16),
-             w3 = vld1q_u16(w + 24);
+  uint16x8_t w0 = vld1q_u16(kAdlerWeights), w1 = vld1q_u16(kAdlerWeights + 8),
+             w2 = vld1q_u16(kAdlerWeights + 16), w3 = vld1q_u16(kAdlerWeights + 24);
   uint32x4_t acc = vmull_u16(vget_low_u16(c0), vget_low_u16(w0));
   acc = vmlal_u16(acc, vget_high_u16(c0), vget_high_u16(w0));
   acc = vmlal_u16(acc, vget_low_u16(c1), vget_low_u16(w1));
@@ -429,11 +431,7 @@ inline void adler32_blocks(std::uint32_t& s1, std::uint32_t& s2, const std::uint
     const std::size_t j1 = std::min(nwords, j0 + 256);
     std::uint64_t even = 0, odd = 0;
     for (std::size_t j = j0; j < j1; j++) {
-      std::uint64_t w;
-      std::memcpy(&w, p + 8 * j, 8);
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-      w = __builtin_bswap64(w);
-#endif
+      const std::uint64_t w = load_le64(p + 8 * j);
       const std::uint64_t e = w & kLow, o = (w >> 8) & kLow;
       even += e;
       odd += o;
@@ -470,10 +468,8 @@ inline void adler32_vec(std::uint32_t& s1, std::uint32_t& s2, const std::uint8_t
     c2 = V::add_16(c2, w2);
     c3 = V::add_16(c3, w3);
   }
-  static constexpr std::int16_t w[32] = {32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17,
-                                         16, 15, 14, 13, 12, 11, 10, 9,  8,  7,  6,  5,  4,  3,  2,  1};
-  const T acc = V::add_32(V::add_32(V::madd_16(c0, V::loadu(w)), V::madd_16(c1, V::loadu(w + 8))),
-                          V::add_32(V::madd_16(c2, V::loadu(w + 16)), V::madd_16(c3, V::loadu(w + 24))));
+  const T acc = V::add_32(V::add_32(V::madd_16(c0, V::loadu(kAdlerWeights)), V::madd_16(c1, V::loadu(kAdlerWeights + 8))),
+                          V::add_32(V::madd_16(c2, V::loadu(kAdlerWeights + 16)), V::madd_16(c3, V::loadu(kAdlerWeights + 24))));
   auto hsum = [](T v) {
     std::uint32_t t[4];
     V::storeu(t, v);

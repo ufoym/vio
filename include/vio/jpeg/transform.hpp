@@ -62,6 +62,11 @@ struct Transform {
 
 namespace detail::xform {
 
+inline bool transposes_axes(TransformOp op) {
+  return op == TransformOp::Transpose || op == TransformOp::Transverse ||
+         op == TransformOp::Rot90 || op == TransformOp::Rot270;
+}
+
 using jpeg::Block;
 using detail::BlockArray;
 using detail::ComponentInfo;
@@ -193,14 +198,8 @@ inline void ext_mcu_counts(DState& src, CState& dst, const Transform& info, unsi
   MCU_cols = src.output_width / (dst.max_h_samp_factor * DCTSIZE);
   MCU_rows = src.output_height / (dst.max_v_samp_factor * DCTSIZE);
   if (!info.trim) {
-    int MCU_width, MCU_height;
-    if (info.num_components == 1) {
-      MCU_width = src.min_DCT_scaled_size;
-      MCU_height = src.min_DCT_scaled_size;
-    } else {
-      MCU_width = src.max_h_samp_factor * src.min_DCT_scaled_size;
-      MCU_height = src.max_v_samp_factor * src.min_DCT_scaled_size;
-    }
+    int MCU_width = (info.num_components == 1 ? 1 : src.max_h_samp_factor) * src.min_DCT_scaled_size;
+    int MCU_height = (info.num_components == 1 ? 1 : src.max_v_samp_factor) * src.min_DCT_scaled_size;
     if (src.output_width % static_cast<unsigned>(MCU_width)) MCU_cols++;
     if (src.output_height % static_cast<unsigned>(MCU_height)) MCU_rows++;
   }
@@ -714,19 +713,14 @@ inline void adjust_exif_parameters(std::uint8_t* data, unsigned length, unsigned
   auto u16 = [&](unsigned o) {
     return motorola ? (unsigned(data[o]) << 8) + data[o + 1] : (unsigned(data[o + 1]) << 8) + data[o];
   };
-  if (motorola) {
-    if (data[2] != 0 || data[3] != 0x2A) return;
-  } else {
-    if (data[3] != 0 || data[2] != 0x2A) return;
-  }
+  auto read_offset = [&](unsigned pos, unsigned& value) {
+    if (u16(pos + (motorola ? 0 : 2)) != 0) return false;
+    value = u16(pos + (motorola ? 2 : 0));
+    return true;
+  };
+  if (u16(2) != 0x2A) return;
   unsigned firstoffset;
-  if (motorola) {
-    if (data[4] != 0 || data[5] != 0) return;
-    firstoffset = (unsigned(data[6]) << 8) + data[7];
-  } else {
-    if (data[7] != 0 || data[6] != 0) return;
-    firstoffset = (unsigned(data[5]) << 8) + data[4];
-  }
+  if (!read_offset(4, firstoffset)) return;
   if (firstoffset > length - 2) return;
   unsigned number_of_tags = u16(firstoffset);
   if (number_of_tags == 0) return;
@@ -738,13 +732,7 @@ inline void adjust_exif_parameters(std::uint8_t* data, unsigned length, unsigned
     firstoffset += 12;
   }
   unsigned offset;
-  if (motorola) {
-    if (data[firstoffset + 8] != 0 || data[firstoffset + 9] != 0) return;
-    offset = (unsigned(data[firstoffset + 10]) << 8) + data[firstoffset + 11];
-  } else {
-    if (data[firstoffset + 11] != 0 || data[firstoffset + 10] != 0) return;
-    offset = (unsigned(data[firstoffset + 9]) << 8) + data[firstoffset + 8];
-  }
+  if (!read_offset(firstoffset + 8, offset)) return;
   if (offset > length - 2) return;
   number_of_tags = u16(offset);
   if (number_of_tags < 2) return;
@@ -796,7 +784,7 @@ inline bool parse_crop_spec(Transform& info, const char* spec) {
   info.crop_width_set = info.crop_height_set = CropCode::Unset;
   info.crop_xoffset_set = info.crop_yoffset_set = CropCode::Unset;
   if (std::isdigit(static_cast<unsigned char>(*spec))) {
-    if (!read_int(spec, info.crop_width)) return false;
+    read_int(spec, info.crop_width);
     suffix(info.crop_width_set);
   }
   if (*spec == 'x' || *spec == 'X') {
@@ -804,16 +792,13 @@ inline bool parse_crop_spec(Transform& info, const char* spec) {
     if (!read_int(spec, info.crop_height)) return false;
     suffix(info.crop_height_set);
   }
-  if (*spec == '+' || *spec == '-') {
-    info.crop_xoffset_set = *spec == '-' ? CropCode::Neg : CropCode::Pos;
-    spec++;
-    if (!read_int(spec, info.crop_xoffset)) return false;
-  }
-  if (*spec == '+' || *spec == '-') {
-    info.crop_yoffset_set = *spec == '-' ? CropCode::Neg : CropCode::Pos;
-    spec++;
-    if (!read_int(spec, info.crop_yoffset)) return false;
-  }
+  auto offset = [&](CropCode& set, unsigned& value) {
+    if (*spec != '+' && *spec != '-') return true;
+    set = *spec++ == '-' ? CropCode::Neg : CropCode::Pos;
+    return read_int(spec, value);
+  };
+  if (!offset(info.crop_xoffset_set, info.crop_xoffset)) return false;
+  if (!offset(info.crop_yoffset_set, info.crop_yoffset)) return false;
   if (*spec != '\0') return false;
   info.crop = true;
   return true;
@@ -871,92 +856,54 @@ inline bool request_workspace(detail::DState& src, Transform& info) {
   if (info.perfect &&
       !perfect_transform(src.output_width, src.output_height, MCU_width, MCU_height, info))
     return false;
-  switch (info.transform) {
-    case TransformOp::Transpose:
-    case TransformOp::Transverse:
-    case TransformOp::Rot90:
-    case TransformOp::Rot270:
-      info.output_width = src.output_height;
-      info.output_height = src.output_width;
-      if (info.num_components == 1) {
-        info.iMCU_sample_width = s;
-        info.iMCU_sample_height = s;
-      } else {
-        info.iMCU_sample_width = src.max_v_samp_factor * s;
-        info.iMCU_sample_height = src.max_h_samp_factor * s;
-      }
-      break;
-    default:
-      info.output_width = src.output_width;
-      info.output_height = src.output_height;
-      if (info.num_components == 1) {
-        info.iMCU_sample_width = s;
-        info.iMCU_sample_height = s;
-      } else {
-        info.iMCU_sample_width = src.max_h_samp_factor * s;
-        info.iMCU_sample_height = src.max_v_samp_factor * s;
-      }
-      break;
+  bool transpose = transposes_axes(info.transform);
+  info.output_width = transpose ? src.output_height : src.output_width;
+  info.output_height = transpose ? src.output_width : src.output_height;
+  if (info.num_components == 1) {
+    info.iMCU_sample_width = s;
+    info.iMCU_sample_height = s;
+  } else {
+    info.iMCU_sample_width = (transpose ? src.max_v_samp_factor : src.max_h_samp_factor) * s;
+    info.iMCU_sample_height = (transpose ? src.max_h_samp_factor : src.max_v_samp_factor) * s;
   }
   auto bad = [] { VIO_FAIL("Invalid crop request"); };
   if (info.crop) {
     if (info.crop_xoffset_set == CropCode::Unset) info.crop_xoffset = 0;
     if (info.crop_yoffset_set == CropCode::Unset) info.crop_yoffset = 0;
-    if (info.crop_width_set == CropCode::Unset) {
-      if (info.crop_xoffset >= info.output_width) bad();
-      info.crop_width =
-          info.transform == TransformOp::Roll ? 0 : info.output_width - info.crop_xoffset;
-    } else if (info.crop_width > info.output_width) {
-      if (info.transform != TransformOp::None || info.crop_xoffset >= info.crop_width ||
-          info.crop_xoffset > info.crop_width - info.output_width)
+    auto check_crop = [&](unsigned& size, CropCode set, unsigned offset, unsigned output,
+                          unsigned input, int mcu) {
+      if (set == CropCode::Unset) {
+        if (offset >= output) bad();
+        size = info.transform == TransformOp::Roll ? 0 : output - offset;
+      } else if (size > output) {
+        if (info.transform != TransformOp::None || offset >= size || offset > size - output) bad();
+        if (info.perfect && input % unsigned(mcu)) return false;
+      } else if (offset >= output || size == 0 || offset > output - size) {
         bad();
-      if (info.perfect && src.output_width % unsigned(MCU_width)) return false;
-    } else if (info.crop_xoffset >= info.output_width || info.crop_width <= 0 ||
-               info.crop_xoffset > info.output_width - info.crop_width) {
-      bad();
-    }
-    if (info.crop_height_set == CropCode::Unset) {
-      if (info.crop_yoffset >= info.output_height) bad();
-      info.crop_height =
-          info.transform == TransformOp::Roll ? 0 : info.output_height - info.crop_yoffset;
-    } else if (info.crop_height > info.output_height) {
-      if (info.transform != TransformOp::None || info.crop_yoffset >= info.crop_height ||
-          info.crop_yoffset > info.crop_height - info.output_height)
-        bad();
-      if (info.perfect && src.output_height % unsigned(MCU_height)) return false;
-    } else if (info.crop_yoffset >= info.output_height || info.crop_height <= 0 ||
-               info.crop_yoffset > info.output_height - info.crop_height) {
-      bad();
-    }
-    unsigned xoffset, yoffset;
-    if (info.crop_xoffset_set != CropCode::Neg) xoffset = info.crop_xoffset;
-    else if (info.crop_width > info.output_width)
-      xoffset = info.crop_width - info.output_width - info.crop_xoffset;
-    else
-      xoffset = info.output_width - info.crop_width - info.crop_xoffset;
-    if (info.crop_yoffset_set != CropCode::Neg) yoffset = info.crop_yoffset;
-    else if (info.crop_height > info.output_height)
-      yoffset = info.crop_height - info.output_height - info.crop_yoffset;
-    else
-      yoffset = info.output_height - info.crop_height - info.crop_yoffset;
+      }
+      return true;
+    };
+    if (!check_crop(info.crop_width, info.crop_width_set, info.crop_xoffset, info.output_width,
+                    src.output_width, MCU_width)) return false;
+    if (!check_crop(info.crop_height, info.crop_height_set, info.crop_yoffset, info.output_height,
+                    src.output_height, MCU_height)) return false;
+    auto crop_offset = [](unsigned offset, CropCode set, unsigned size, unsigned output) {
+      if (set != CropCode::Neg) return offset;
+      return size > output ? size - output - offset : output - size - offset;
+    };
+    unsigned xoffset = crop_offset(info.crop_xoffset, info.crop_xoffset_set, info.crop_width, info.output_width);
+    unsigned yoffset = crop_offset(info.crop_yoffset, info.crop_yoffset_set, info.crop_height, info.output_height);
     switch (info.transform) {
       case TransformOp::Drop: {
-        unsigned itemp = unsigned(info.iMCU_sample_width);
-        unsigned dtemp = itemp - 1 - ((xoffset + itemp - 1) % itemp);
-        xoffset += dtemp;
-        if (info.crop_width <= dtemp) info.drop_width = 0;
-        else if (xoffset + info.crop_width - dtemp == info.output_width)
-          info.drop_width = (info.crop_width - dtemp + itemp - 1) / itemp;
-        else
-          info.drop_width = (info.crop_width - dtemp) / itemp;
-        itemp = unsigned(info.iMCU_sample_height);
-        dtemp = itemp - 1 - ((yoffset + itemp - 1) % itemp);
-        yoffset += dtemp;
-        if (info.crop_height <= dtemp) info.drop_height = 0;
-        else if (yoffset + info.crop_height - dtemp == info.output_height)
-          info.drop_height = (info.crop_height - dtemp + itemp - 1) / itemp;
-        else
-          info.drop_height = (info.crop_height - dtemp) / itemp;
+        auto drop_extent = [](unsigned& offset, unsigned size, unsigned output, unsigned unit) {
+          unsigned delta = unit - 1 - ((offset + unit - 1) % unit);
+          offset += delta;
+          if (size <= delta) return 0u;
+          if (offset + size - delta == output) return (size - delta + unit - 1) / unit;
+          return (size - delta) / unit;
+        };
+        info.drop_width = drop_extent(xoffset, info.crop_width, info.output_width, unsigned(info.iMCU_sample_width));
+        info.drop_height = drop_extent(yoffset, info.crop_height, info.output_height, unsigned(info.iMCU_sample_height));
         if (info.drop_width != 0 && info.drop_height != 0) {
           detail::DState& d = *info.drop_ptr;
           for (int ci = 0; ci < info.num_components && ci < d.num_components; ci++) {
@@ -1144,23 +1091,16 @@ inline detail::BlockArray* adjust_parameters(detail::DState& src, detail::CState
     dst.comp_info[0].h_samp_factor = 1;
     dst.comp_info[0].v_samp_factor = 1;
   }
-  switch (info.transform) {
-    case TransformOp::Transpose:
-    case TransformOp::Transverse:
-    case TransformOp::Rot90:
-    case TransformOp::Rot270:
-      dst.image_width = info.output_height;
-      dst.image_height = info.output_width;
-      transpose_critical_parameters(dst);
-      break;
-    case TransformOp::Drop:
-      if (info.drop_width != 0 && info.drop_height != 0)
-        adjust_quant(src, src_arrays, *info.drop_ptr, info.drop_coef_arrays, info.trim, dst);
-      break;
-    default:
-      dst.image_width = info.output_width;
-      dst.image_height = info.output_height;
-      break;
+  if (transposes_axes(info.transform)) {
+    dst.image_width = info.output_height;
+    dst.image_height = info.output_width;
+    transpose_critical_parameters(dst);
+  } else if (info.transform == TransformOp::Drop) {
+    if (info.drop_width != 0 && info.drop_height != 0)
+      adjust_quant(src, src_arrays, *info.drop_ptr, info.drop_coef_arrays, info.trim, dst);
+  } else {
+    dst.image_width = info.output_width;
+    dst.image_height = info.output_height;
   }
   if (!src.marker_list.empty()) {
     SavedMarker& m = src.marker_list.front();

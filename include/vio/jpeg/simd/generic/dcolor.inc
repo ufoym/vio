@@ -217,37 +217,8 @@ void merged_upsample(unsigned output_width, std::uint8_t*** input_buf, unsigned 
   }
 }
 
-inline ColorDeconvertFn ycc_rgb_kernel(ColorSpace out) {
-  switch (out) {
-    case ColorSpace::RGB:
-    case ColorSpace::ExtRGB: return ycc_rgb_convert<0, 1, 2, 3>;
-    case ColorSpace::ExtRGBX:
-    case ColorSpace::ExtRGBA: return ycc_rgb_convert<0, 1, 2, 4>;
-    case ColorSpace::ExtBGR: return ycc_rgb_convert<2, 1, 0, 3>;
-    case ColorSpace::ExtBGRX:
-    case ColorSpace::ExtBGRA: return ycc_rgb_convert<2, 1, 0, 4>;
-    case ColorSpace::ExtXBGR:
-    case ColorSpace::ExtABGR: return ycc_rgb_convert<3, 2, 1, 4>;
-    case ColorSpace::ExtXRGB:
-    case ColorSpace::ExtARGB: return ycc_rgb_convert<1, 2, 3, 4>;
-    default: return nullptr;
-  }
-}
+#define VIO_YCC_RGB565 0
+#include "ycc_rgb_select.inc"
+#undef VIO_YCC_RGB565
 
-template <bool V2>
-inline MergedUpsampleFn merged_upsample_kernel(ColorSpace out) {
-  switch (out) {
-    case ColorSpace::RGB:
-    case ColorSpace::ExtRGB: return merged_upsample<V2, 0, 1, 2, 3>;
-    case ColorSpace::ExtRGBX:
-    case ColorSpace::ExtRGBA: return merged_upsample<V2, 0, 1, 2, 4>;
-    case ColorSpace::ExtBGR: return merged_upsample<V2, 2, 1, 0, 3>;
-    case ColorSpace::ExtBGRX:
-    case ColorSpace::ExtBGRA: return merged_upsample<V2, 2, 1, 0, 4>;
-    case ColorSpace::ExtXBGR:
-    case ColorSpace::ExtABGR: return merged_upsample<V2, 3, 2, 1, 4>;
-    case ColorSpace::ExtXRGB:
-    case ColorSpace::ExtARGB: return merged_upsample<V2, 1, 2, 3, 4>;
-    default: return nullptr;
-  }
-}
+#include "merged_select.inc"

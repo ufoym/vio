@@ -119,17 +119,14 @@ class ColorDeconverter {
       bool dither = st.dither_mode != DitherMode::None;
       if (in == ColorSpace::YCbCr) {
         tables_.build();
-        convert_ = dither ? &ColorDeconverter::ycc_rgb565D_convert
-                          : &ColorDeconverter::ycc_rgb565_convert;
+        convert_ = dither ? &ColorDeconverter::ycc565<true> : &ColorDeconverter::ycc565<false>;
         if constexpr (kBits<T> == 8) {
           if (!dither) simd_ = simd::ycc_rgb_kernel(st.simd, out);
         }
       } else if (in == ColorSpace::Gray) {
-        convert_ = dither ? &ColorDeconverter::gray_rgb565D_convert
-                          : &ColorDeconverter::gray_rgb565_convert;
+        convert_ = dither ? &ColorDeconverter::gray565<true> : &ColorDeconverter::gray565<false>;
       } else if (in == ColorSpace::RGB) {
-        convert_ = dither ? &ColorDeconverter::rgb_rgb565D_convert
-                          : &ColorDeconverter::rgb_rgb565_convert;
+        convert_ = dither ? &ColorDeconverter::rgb565<true> : &ColorDeconverter::rgb565<false>;
       } else {
         notimpl();
       }
@@ -179,18 +176,9 @@ class ColorDeconverter {
 
   template <Kind K>
   ConvertFn select(ColorSpace out) {
-    switch (out) {
-      case ColorSpace::ExtRGBX:
-      case ColorSpace::ExtRGBA: return &ColorDeconverter::conv<K, 0, 1, 2, 3, 4>;
-      case ColorSpace::ExtBGR: return &ColorDeconverter::conv<K, 2, 1, 0, -1, 3>;
-      case ColorSpace::ExtBGRX:
-      case ColorSpace::ExtBGRA: return &ColorDeconverter::conv<K, 2, 1, 0, 3, 4>;
-      case ColorSpace::ExtXBGR:
-      case ColorSpace::ExtABGR: return &ColorDeconverter::conv<K, 3, 2, 1, 0, 4>;
-      case ColorSpace::ExtXRGB:
-      case ColorSpace::ExtARGB: return &ColorDeconverter::conv<K, 1, 2, 3, 0, 4>;
-      default: return &ColorDeconverter::conv<K, 0, 1, 2, -1, 3>;
-    }
+    return select_rgb_layout(out, []<int R, int G, int B, int A, int PS> {
+      return &ColorDeconverter::conv<K, R, G, B, A, PS>;
+    });
   }
 
   template <Kind K, int R, int G, int B, int A, int PS>
@@ -423,8 +411,6 @@ class ColorDeconverter {
       });
     }
   }
-  void ycc_rgb565_convert(T*** i, unsigned r, T** o, int n) { ycc565<false>(i, r, o, n); }
-  void ycc_rgb565D_convert(T*** i, unsigned r, T** o, int n) { ycc565<true>(i, r, o, n); }
 
   template <bool D>
   void rgb565(T*** input_buf, unsigned input_row, T** output_buf, int num_rows) {
@@ -444,8 +430,6 @@ class ColorDeconverter {
       });
     }
   }
-  void rgb_rgb565_convert(T*** i, unsigned r, T** o, int n) { rgb565<false>(i, r, o, n); }
-  void rgb_rgb565D_convert(T*** i, unsigned r, T** o, int n) { rgb565<true>(i, r, o, n); }
 
   template <bool D>
   void gray565(T*** input_buf, unsigned input_row, T** output_buf, int num_rows) {
@@ -460,8 +444,6 @@ class ColorDeconverter {
       });
     }
   }
-  void gray_rgb565_convert(T*** i, unsigned r, T** o, int n) { gray565<false>(i, r, o, n); }
-  void gray_rgb565D_convert(T*** i, unsigned r, T** o, int n) { gray565<true>(i, r, o, n); }
 
   DState& st_;
   const T* range_limit_;

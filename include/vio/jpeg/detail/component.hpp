@@ -43,6 +43,30 @@ struct ComponentInfo {
   alignas(32) std::int16_t dct_table16[DCTSIZE2]{};
 };
 
+template <class State>
+inline int imcu_rows_in_scan(const State& st, unsigned row) {
+  if (st.comps_in_scan > 1) return 1;
+  const ComponentInfo& c = *st.cur_comp_info[0];
+  return row < st.total_iMCU_rows - 1 ? c.v_samp_factor : c.last_row_height;
+}
+
+inline int component_rows_in_imcu(const ComponentInfo& c, bool full) {
+  if (full) return c.v_samp_factor;
+  int rows = static_cast<int>(c.height_in_blocks % c.v_samp_factor);
+  return rows ? rows : c.v_samp_factor;
+}
+
+template <class Array, class State>
+inline void allocate_component_buffers(std::vector<Array>& buffers, const State& st) {
+  buffers.resize(st.num_components);
+  for (int ci = 0; ci < st.num_components; ci++) {
+    const ComponentInfo& c = st.comp_info[ci];
+    buffers[ci].allocate(
+        static_cast<std::size_t>(round_up(c.width_in_blocks, c.h_samp_factor)),
+        static_cast<std::size_t>(round_up(c.height_in_blocks, c.v_samp_factor)));
+  }
+}
+
 // Returns the 16-bit multiplier table belonging to a dct_table pointer.
 inline const std::int16_t* idct_table16(const void* dct_table) {
   static_assert(offsetof(ComponentInfo, dct_table16) ==

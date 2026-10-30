@@ -152,6 +152,14 @@ struct WriteTransforms {
 
 namespace detail {
 
+inline bool little_byte_order(ByteOrder order) {
+#if !defined(__BYTE_ORDER__) || __BYTE_ORDER__ != __ORDER_BIG_ENDIAN__
+  return order == ByteOrder::kLittle || order == ByteOrder::kHost;
+#else
+  return order == ByteOrder::kLittle;
+#endif
+}
+
 // Fixed-point (x 100000) arithmetic, rounded as the gamma code expects.
 inline std::int32_t fp_round(double r) {
   r = std::floor(r + .5);
@@ -193,6 +201,12 @@ inline std::uint16_t gamma_16bit_correct(unsigned v, std::int32_t g) {
   return static_cast<std::uint16_t>(v);
 }
 
+// Convert mDCV chromaticities from units of 1/50000 to 1/100000.
+inline Chromaticities mastering_chromaticities(const MasteringDisplay& m) {
+  return {m.white_x * 2, m.white_y * 2, m.red_x * 2, m.red_y * 2,
+          m.green_x * 2, m.green_y * 2, m.blue_x * 2, m.blue_y * 2};
+}
+
 // CIE Y of the primaries for xy chromaticities (x 100000); false if the
 // values make no sense.
 inline bool primaries_y(const Chromaticities& xy, std::int32_t* ry, std::int32_t* gy, std::int32_t* by) {
@@ -224,6 +238,24 @@ inline bool primaries_y(const Chromaticities& xy, std::int32_t* ry, std::int32_t
   if (!muldiv(gy, xy.green_y, 100000, green_inverse)) return false;
   if (!muldiv(by, xy.blue_y, blue_scale, 100000)) return false;
   return true;
+}
+
+// Bits not given: gray's for the colors, and the depth's for alpha.
+inline SignificantBits shift_defaults(SignificantBits b, std::uint8_t color_type, std::uint8_t bit_depth) {
+  if (!(color_type & 2)) {
+    if (!b.red) b.red = b.gray;
+    if (!b.green) b.green = b.gray;
+    if (!b.blue) b.blue = b.gray;
+  }
+  if (!b.alpha) b.alpha = color_type == kIndexed ? 8 : bit_depth;
+  return b;
+}
+
+inline bool valid_shift(const SignificantBits& b, std::uint8_t color_type, std::uint8_t bit_depth) {
+  const bool color_ok = (color_type & 2)
+      ? b.red && b.red <= bit_depth && b.green && b.green <= bit_depth && b.blue && b.blue <= bit_depth
+      : b.gray && b.gray <= bit_depth;
+  return color_ok && (!(color_type & 4) || (b.alpha && b.alpha <= bit_depth));
 }
 
 // Transformation plan for one image: what to do, decided once.
@@ -270,6 +302,9 @@ class TransformPlan {
   std::int32_t screen_gamma() const { return screen_gamma_; }
   // An RGB-to-gray conversion met a pixel that was not gray.
   bool rgb_to_gray_found_color() const { return rgb_error_seen_; }
+  std::size_t output_row_bytes(std::uint32_t width) const {
+    return packed_row_bytes(width, out_.channels * out_.bit_depth);
+  }
   // Room needed for a transformed row (it may grow before it shrinks).
   std::size_t max_row_bytes(std::uint32_t width) const { return static_cast<std::size_t>(width) * 8 + 16; }
 
@@ -407,19 +442,12 @@ class TransformPlan {
       bool compose = false;
       switch (t.alpha_mode->mode) {
         case AlphaMode::kPng:
-          tf_ &= ~kEncodeAlpha;
-          optimize_alpha_ = false;
-          break;
         case AlphaMode::kAssociated:
-          compose = true;
-          tf_ &= ~kEncodeAlpha;
-          optimize_alpha_ = false;
-          og = 100000;
-          break;
         case AlphaMode::kOptimized:
-          compose = true;
           tf_ &= ~kEncodeAlpha;
-          optimize_alpha_ = true;
+          compose = t.alpha_mode->mode != AlphaMode::kPng;
+          optimize_alpha_ = t.alpha_mode->mode == AlphaMode::kOptimized;
+          if (t.alpha_mode->mode == AlphaMode::kAssociated) og = 100000;
           break;
         case AlphaMode::kBroken:
           compose = true;
@@ -448,25 +476,8 @@ class TransformPlan {
     }
     if (t.quantize) set_quantize(*t.quantize);
     if (t.shift) {
-      // Bits not given: a gray value's for the colors (an image may be
-      // converted to color), the depth's for alpha.
-      SignificantBits b = *t.shift;
-      const std::uint8_t depth = color_type_ == kIndexed ? 8 : bit_depth_;
-      if (!(color_type_ & 2)) {
-        if (!b.red) b.red = b.gray;
-        if (!b.green) b.green = b.gray;
-        if (!b.blue) b.blue = b.gray;
-      }
-      if (!b.alpha) b.alpha = depth;
-      bool invalid;
-      if (color_type_ & 2) {
-        invalid = b.red == 0 || b.red > bit_depth_ || b.green == 0 || b.green > bit_depth_ || b.blue == 0 ||
-                  b.blue > bit_depth_;
-      } else {
-        invalid = b.gray == 0 || b.gray > bit_depth_;
-      }
-      if ((color_type_ & 4) && (b.alpha == 0 || b.alpha > bit_depth_)) invalid = true;
-      if (invalid) {
+      SignificantBits b = shift_defaults(*t.shift, color_type_, bit_depth_);
+      if (!valid_shift(b, color_type_, bit_depth_)) {
         if (warn_) warn_("invalid shift values");
       } else {
         tf_ |= kShift;
@@ -483,11 +494,7 @@ class TransformPlan {
       tf_ |= kFiller;
       if (t.filler->alpha) tf_ |= kAddAlpha;
     }
-    bool little = t.byte_order == ByteOrder::kLittle;
-#if !defined(__BYTE_ORDER__) || __BYTE_ORDER__ != __ORDER_BIG_ENDIAN__
-    if (t.byte_order == ByteOrder::kHost) little = true;
-#endif
-    if (little) tf_ |= kSwapBytes;
+    if (little_byte_order(t.byte_order)) tf_ |= kSwapBytes;
     if (t.user) tf_ |= kUser;
   }
 
@@ -719,9 +726,7 @@ class TransformPlan {
     if (coefficients_set_) return;
     std::optional<Chromaticities> c;
     if (info.mastering) {
-      const MasteringDisplay& m = *info.mastering;
-      c = Chromaticities{m.white_x * 2, m.white_y * 2, m.red_x * 2,  m.red_y * 2,
-                         m.green_x * 2, m.green_y * 2, m.blue_x * 2, m.blue_y * 2};
+      c = mastering_chromaticities(*info.mastering);
     } else if (!info.srgb_intent && info.chromaticities) {
       c = info.chromaticities;
     }
@@ -805,7 +810,7 @@ class TransformPlan {
   // the correction; each output level covers the inputs closest to it.
   void build_16to8_table(std::vector<std::uint16_t>& t, std::int32_t g) const {
     const unsigned shift = gamma_shift_, max = (1u << (16 - shift)) - 1;
-    t.assign(max + 1, 0);
+    t.resize(max + 1);
     std::uint32_t last = 0;
     for (unsigned i = 0; i < 255; i++) {
       const std::uint16_t out = static_cast<std::uint16_t>(i * 257u);
@@ -1367,34 +1372,17 @@ class WritePlan {
     in_depth_ = t.packing && h.bit_depth < 8 ? 8 : h.bit_depth;
     shift_ = false;
     if (t.shift) {
-      // Bits not given: a gray value's for the colors (an image may be
-      // converted to color), the depth's for alpha.
-      SignificantBits b = *t.shift;
-      const std::uint8_t depth = color_type_ == kIndexed ? 8 : bit_depth_;
-      if (!(color_type_ & 2)) {
-        if (!b.red) b.red = b.gray;
-        if (!b.green) b.green = b.gray;
-        if (!b.blue) b.blue = b.gray;
-      }
-      if (!b.alpha) b.alpha = depth;
-      const unsigned d = h.bit_depth;
-      bool ok = (h.color_type & 2) ? b.red && b.red <= d && b.green && b.green <= d && b.blue && b.blue <= d
-                                   : b.gray && b.gray <= d;
-      if (h.color_type & 4) ok = ok && b.alpha && b.alpha <= d;
-      if (h.color_type == kIndexed) ok = false;
-      shift_ = ok;
+      SignificantBits b = shift_defaults(*t.shift, color_type_, bit_depth_);
+      shift_ = valid_shift(b, h.color_type, h.bit_depth) && h.color_type != kIndexed;
     }
-    swap_in_ = t.byte_order == ByteOrder::kLittle;
-#if !defined(__BYTE_ORDER__) || __BYTE_ORDER__ != __ORDER_BIG_ENDIAN__
-    if (t.byte_order == ByteOrder::kHost) swap_in_ = true;
-#endif
+    swap_in_ = little_byte_order(t.byte_order);
   }
   // Bytes per input row of `width` pixels.
   std::size_t input_row_bytes(std::uint32_t width) const {
-    return (static_cast<std::size_t>(width) * in_channels_ * in_depth_ + 7) / 8;
+    return packed_row_bytes(width, in_channels_ * in_depth_);
   }
   std::size_t row_bytes(std::uint32_t width) const {
-    return (static_cast<std::size_t>(width) * channels_ * bit_depth_ + 7) / 8;
+    return packed_row_bytes(width, channels_ * bit_depth_);
   }
 
   void run(const std::uint8_t* in, std::uint32_t width, std::uint8_t* out) {

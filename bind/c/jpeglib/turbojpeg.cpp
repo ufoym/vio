@@ -165,13 +165,10 @@ R guarded(tjinstance* self, R error_value, F&& body, C&& cleanup) {
   try {
     retval = body();
   } catch (const TjThrow&) {
-    retval = error_value;
   } catch (const vio::Error& e) {
     if (self) self->library_error(e.what());
-    retval = error_value;
   } catch (const std::bad_alloc&) {
     if (self) self->library_error("Insufficient memory");
-    retval = error_value;
   }
   cleanup();
   return retval;
@@ -189,18 +186,15 @@ R guarded(tjinstance* self, R error_value, F&& body, C&& cleanup) {
 
 // ---------------------------------------------------------------------------
 // Memory destination: the caller's buffer, or one (re)allocated with malloc()
-void store_output(tjinstance* self, std::span<const std::uint8_t> data, unsigned char** buf,
+void store_output(std::span<const std::uint8_t> data, unsigned char** buf,
                   size_t* size, bool alloc) {
   if (data.data() == *buf && data.size() <= *size) {  // written in place (use_dest())
     *size = data.size();
     return;
   }
-  if (!alloc) {
-    if (data.size() > *size) {
-      throw vio::Error("Buffer passed to JPEG library is too small");
-    }
-    std::memcpy(*buf, data.data(), data.size());
-  } else if (*buf == nullptr || *size < data.size() || *size == 0) {
+  if (!alloc && data.size() > *size)
+    throw vio::Error("Buffer passed to JPEG library is too small");
+  if (alloc && (*buf == nullptr || *size < data.size() || *size == 0)) {
     unsigned char* nb = static_cast<unsigned char*>(std::malloc(data.size() ? data.size() : 1));
     if (!nb) throw vio::Error("Insufficient memory (case 10)");
     std::memcpy(nb, data.data(), data.size());
@@ -210,7 +204,6 @@ void store_output(tjinstance* self, std::span<const std::uint8_t> data, unsigned
     std::memcpy(*buf, data.data(), data.size());
   }
   *size = data.size();
-  (void)self;
 }
 
 void check_dest(unsigned char** buf, size_t* size, bool alloc) {
@@ -402,6 +395,28 @@ void abort_decompress(tjinstance* self) {
   if (self->d().state != vd::Decompressor::State::Start) self->d().abort();
 }
 
+template <bool legacy, class T>
+void yuv_planes(tjinstance* self, const char* fn, T* buf, int width, int height, int align,
+                T** planes, int* strides) {
+  int pw0 = tj3YUVPlaneWidth(0, width, self->subsamp);
+  int ph0 = tj3YUVPlaneHeight(0, height, self->subsamp);
+  planes[0] = buf;
+  strides[0] = static_cast<int>(PAD(pw0, align));
+  if (self->subsamp == TJSAMP_GRAY) {
+    strides[1] = strides[2] = 0;
+    planes[1] = planes[2] = nullptr;
+  } else {
+    int pw1 = legacy ? tjPlaneWidth(1, width, self->subsamp) : tj3YUVPlaneWidth(1, width, self->subsamp);
+    int ph1 = legacy ? tjPlaneHeight(1, height, self->subsamp) : tj3YUVPlaneHeight(1, height, self->subsamp);
+    strides[1] = strides[2] = static_cast<int>(PAD(pw1, align));
+    if (static_cast<unsigned long long>(strides[0]) * ph0 > INT_MAX ||
+        static_cast<unsigned long long>(strides[1]) * ph1 > INT_MAX)
+      self->fail(fn, "%s", "Image or row alignment is too large");
+    planes[1] = planes[0] + strides[0] * ph0;
+    planes[2] = planes[1] + strides[1] * ph1;
+  }
+}
+
 template <class T>
 constexpr int kBits = std::is_same_v<T, std::uint8_t> ? 8 : std::is_same_v<T, std::int16_t> ? 12 : 16;
 
@@ -444,11 +459,10 @@ int compress_impl(tjhandle handle, const T* srcBuf, int width, int pitch, int he
     while (cs.next_scanline < cs.image_height)
       self->c().write_scanlines<T>(&rows[cs.next_scanline], cs.image_height - cs.next_scanline);
     self->c().finish_compress();
-    store_output(self, self->c().output(), jpegBuf, jpegSize, alloc);
+    store_output(self->c().output(), jpegBuf, jpegSize, alloc);
     return 0;
   }, [&] {
     abort_compress(self);
-    if (self->warning) { /* retval adjusted below */ }
   }) == -1 || self->warning ? -1 : 0;
 }
 
@@ -571,7 +585,7 @@ T* load_image_impl(tjhandle handle, const char* filename, int* width, int align,
     if (!width || align < 1 || !height || !pixelFormat || *pixelFormat < TJPF_UNKNOWN ||
         *pixelFormat >= TJ_NUMPF)
       THROW("Invalid argument");
-    if ((align & (align - 1)) != 0) THROW("Alignment must be a power of 2");
+    if (!IS_POW2(align)) THROW("Alignment must be a power of 2");
     if (data.empty()) THROW("Input file contains no data");
     int tempc = data[0];
     std::unique_ptr<vio::ImageReader<T>> src;
@@ -712,6 +726,31 @@ int legacy_error(tjinstance* self, const char* FUNCTION_NAME, const char* msg) {
   return -1;
 }
 
+int legacy_yuv_setup(tjinstance* self, int subsamp, int flags, int operation, const char* fn) {
+  if (subsamp < 0 || subsamp >= self->numSamp) return legacy_error(self, fn, "Invalid argument");
+  self->subsamp = subsamp;
+  processFlags(self, flags, operation);
+  return 0;
+}
+
+template <bool height>
+int yuv_plane_dimension(int component, int size, int subsamp) {
+  const char* fn = height ? "tj3YUVPlaneHeight" : "tj3YUVPlaneWidth";
+  try {
+    if (size < 1 || subsamp < 0 || subsamp >= TJ_NUMSAMP) throwg(fn, "Invalid argument");
+    int nc = subsamp == TJSAMP_GRAY ? 1 : 3;
+    if (component < 0 || component >= nc) throwg(fn, "Invalid argument");
+    int mcu = height ? tjMCUHeight[subsamp] : tjMCUWidth[subsamp];
+    unsigned long long padded = static_cast<unsigned long long>(PAD(size, mcu / 8));
+    unsigned long long result = component == 0 ? padded : padded * 8 / mcu;
+    if (result > static_cast<unsigned long long>(INT_MAX))
+      throwg(fn, height ? "Height is too large" : "Width is too large");
+    return static_cast<int>(result);
+  } catch (const TjThrow&) {
+    return 0;
+  }
+}
+
 // Reads the header of a JPEG image and selects the largest scaling factor
 // whose result fits in width x height (0: the image dimension), as the
 // 1.x/2.x decompression functions do.  Returns its index, or -1.
@@ -743,6 +782,15 @@ int legacy_scaling(tjinstance* self, const char* FUNCTION_NAME, const unsigned c
       THROW("Cannot use decompression scaling with lossless JPEG images");
     return i;
   }, [] {});
+}
+
+int legacy_decompress_setup(tjinstance* self, tjhandle handle, const char* fn,
+                            const unsigned char* jpegBuf, unsigned long jpegSize,
+                            int width, int height, int flags, bool check_lossless) {
+  int i = legacy_scaling(self, fn, jpegBuf, jpegSize, width, height, check_lossless);
+  if (i < 0) return -1;
+  processFlags(self, flags, DECOMPRESS);
+  return tj3SetScalingFactor(handle, sf[i]);
 }
 
 }  // namespace
@@ -981,33 +1029,11 @@ DLLEXPORT unsigned long TJBUFSIZE(int width, int height) {
 }
 
 DLLEXPORT int tj3YUVPlaneWidth(int componentID, int width, int subsamp) {
-  static const char FUNCTION_NAME[] = "tj3YUVPlaneWidth";
-  try {
-    if (width < 1 || subsamp < 0 || subsamp >= TJ_NUMSAMP) throwg(FUNCTION_NAME, "Invalid argument");
-    int nc = subsamp == TJSAMP_GRAY ? 1 : 3;
-    if (componentID < 0 || componentID >= nc) throwg(FUNCTION_NAME, "Invalid argument");
-    unsigned long long pw = static_cast<unsigned long long>(PAD(width, tjMCUWidth[subsamp] / 8));
-    unsigned long long retval = componentID == 0 ? pw : pw * 8 / tjMCUWidth[subsamp];
-    if (retval > static_cast<unsigned long long>(INT_MAX)) throwg(FUNCTION_NAME, "Width is too large");
-    return static_cast<int>(retval);
-  } catch (const TjThrow&) {
-    return 0;
-  }
+  return yuv_plane_dimension<false>(componentID, width, subsamp);
 }
 
 DLLEXPORT int tj3YUVPlaneHeight(int componentID, int height, int subsamp) {
-  static const char FUNCTION_NAME[] = "tj3YUVPlaneHeight";
-  try {
-    if (height < 1 || subsamp < 0 || subsamp >= TJ_NUMSAMP) throwg(FUNCTION_NAME, "Invalid argument");
-    int nc = subsamp == TJSAMP_GRAY ? 1 : 3;
-    if (componentID < 0 || componentID >= nc) throwg(FUNCTION_NAME, "Invalid argument");
-    unsigned long long ph = static_cast<unsigned long long>(PAD(height, tjMCUHeight[subsamp] / 8));
-    unsigned long long retval = componentID == 0 ? ph : ph * 8 / tjMCUHeight[subsamp];
-    if (retval > static_cast<unsigned long long>(INT_MAX)) throwg(FUNCTION_NAME, "Height is too large");
-    return static_cast<int>(retval);
-  } catch (const TjThrow&) {
-    return 0;
-  }
+  return yuv_plane_dimension<true>(componentID, height, subsamp);
 }
 
 DLLEXPORT int tjPlaneWidth(int componentID, int width, int subsamp) {
@@ -1211,7 +1237,7 @@ DLLEXPORT int tj3CompressFromYUVPlanes8(tjhandle handle, const unsigned char* co
       self->c().write_raw_data<std::uint8_t>(yuvptr, static_cast<unsigned>(cs.max_v_samp_factor * vj::DCTSIZE));
     }
     self->c().finish_compress();
-    store_output(self, self->c().output(), jpegBuf, jpegSize, alloc);
+    store_output(self->c().output(), jpegBuf, jpegSize, alloc);
     return 0;
   }, [&] { abort_compress(self); });
   return (r == -1 || self->warning) ? -1 : 0;
@@ -1228,23 +1254,7 @@ DLLEXPORT int tj3CompressFromYUV8(tjhandle handle, const unsigned char* srcBuf, 
     if (srcBuf == nullptr || width <= 0 || align < 1 || !IS_POW2(align) || height <= 0)
       THROW("Invalid argument");
     if (self->subsamp == TJSAMP_UNKNOWN) THROW("TJPARAM_SUBSAMP must be specified");
-    int pw0 = tj3YUVPlaneWidth(0, width, self->subsamp);
-    int ph0 = tj3YUVPlaneHeight(0, height, self->subsamp);
-    srcPlanes[0] = srcBuf;
-    strides[0] = static_cast<int>(PAD(pw0, align));
-    if (self->subsamp == TJSAMP_GRAY) {
-      strides[1] = strides[2] = 0;
-      srcPlanes[1] = srcPlanes[2] = nullptr;
-    } else {
-      int pw1 = tjPlaneWidth(1, width, self->subsamp);
-      int ph1 = tjPlaneHeight(1, height, self->subsamp);
-      strides[1] = strides[2] = static_cast<int>(PAD(pw1, align));
-      if (static_cast<unsigned long long>(strides[0]) * ph0 > INT_MAX ||
-          static_cast<unsigned long long>(strides[1]) * ph1 > INT_MAX)
-        THROW("Image or row alignment is too large");
-      srcPlanes[1] = srcPlanes[0] + strides[0] * ph0;
-      srcPlanes[2] = srcPlanes[1] + strides[1] * ph1;
-    }
+    yuv_planes<true>(self, FUNCTION_NAME, srcBuf, width, height, align, srcPlanes, strides);
     return 1;
   }, [] {});
   if (r != 1) return -1;
@@ -1339,23 +1349,7 @@ DLLEXPORT int tj3EncodeYUV8(tjhandle handle, const unsigned char* srcBuf, int wi
     if (width <= 0 || height <= 0 || dstBuf == nullptr || align < 1 || !IS_POW2(align))
       THROW("Invalid argument");
     if (self->subsamp == TJSAMP_UNKNOWN) THROW("TJPARAM_SUBSAMP must be specified");
-    int pw0 = tj3YUVPlaneWidth(0, width, self->subsamp);
-    int ph0 = tj3YUVPlaneHeight(0, height, self->subsamp);
-    dstPlanes[0] = dstBuf;
-    strides[0] = static_cast<int>(PAD(pw0, align));
-    if (self->subsamp == TJSAMP_GRAY) {
-      strides[1] = strides[2] = 0;
-      dstPlanes[1] = dstPlanes[2] = nullptr;
-    } else {
-      int pw1 = tj3YUVPlaneWidth(1, width, self->subsamp);
-      int ph1 = tj3YUVPlaneHeight(1, height, self->subsamp);
-      strides[1] = strides[2] = static_cast<int>(PAD(pw1, align));
-      if (static_cast<unsigned long long>(strides[0]) * ph0 > INT_MAX ||
-          static_cast<unsigned long long>(strides[1]) * ph1 > INT_MAX)
-        THROW("Image or row alignment is too large");
-      dstPlanes[1] = dstPlanes[0] + strides[0] * ph0;
-      dstPlanes[2] = dstPlanes[1] + strides[1] * ph1;
-    }
+    yuv_planes<false>(self, FUNCTION_NAME, dstBuf, width, height, align, dstPlanes, strides);
     return 1;
   }, [] {});
   if (r != 1) return -1;
@@ -1575,23 +1569,7 @@ DLLEXPORT int tj3DecompressToYUV8(tjhandle handle, const unsigned char* jpegBuf,
     if (self->subsamp == TJSAMP_UNKNOWN) THROW("Could not determine subsampling level of JPEG image");
     int width = TJSCALED(static_cast<int>(d.st.image_width), self->scalingFactor);
     int height = TJSCALED(static_cast<int>(d.st.image_height), self->scalingFactor);
-    int pw0 = tj3YUVPlaneWidth(0, width, self->subsamp);
-    int ph0 = tj3YUVPlaneHeight(0, height, self->subsamp);
-    dstPlanes[0] = dstBuf;
-    strides[0] = static_cast<int>(PAD(pw0, align));
-    if (self->subsamp == TJSAMP_GRAY) {
-      strides[1] = strides[2] = 0;
-      dstPlanes[1] = dstPlanes[2] = nullptr;
-    } else {
-      int pw1 = tj3YUVPlaneWidth(1, width, self->subsamp);
-      int ph1 = tj3YUVPlaneHeight(1, height, self->subsamp);
-      strides[1] = strides[2] = static_cast<int>(PAD(pw1, align));
-      if (static_cast<unsigned long long>(strides[0]) * ph0 > INT_MAX ||
-          static_cast<unsigned long long>(strides[1]) * ph1 > INT_MAX)
-        THROW("Image or row alignment is too large");
-      dstPlanes[1] = dstPlanes[0] + strides[0] * ph0;
-      dstPlanes[2] = dstPlanes[1] + strides[1] * ph1;
-    }
+    yuv_planes<false>(self, FUNCTION_NAME, dstBuf, width, height, align, dstPlanes, strides);
     return 1;
   }, [&] {});
   if (r != 1) {
@@ -1719,23 +1697,7 @@ DLLEXPORT int tj3DecodeYUV8(tjhandle handle, const unsigned char* srcBuf, int al
     if (srcBuf == nullptr || align < 1 || !IS_POW2(align) || width <= 0 || height <= 0)
       THROW("Invalid argument");
     if (self->subsamp == TJSAMP_UNKNOWN) THROW("TJPARAM_SUBSAMP must be specified");
-    int pw0 = tj3YUVPlaneWidth(0, width, self->subsamp);
-    int ph0 = tj3YUVPlaneHeight(0, height, self->subsamp);
-    srcPlanes[0] = srcBuf;
-    strides[0] = static_cast<int>(PAD(pw0, align));
-    if (self->subsamp == TJSAMP_GRAY) {
-      strides[1] = strides[2] = 0;
-      srcPlanes[1] = srcPlanes[2] = nullptr;
-    } else {
-      int pw1 = tj3YUVPlaneWidth(1, width, self->subsamp);
-      int ph1 = tj3YUVPlaneHeight(1, height, self->subsamp);
-      strides[1] = strides[2] = static_cast<int>(PAD(pw1, align));
-      if (static_cast<unsigned long long>(strides[0]) * ph0 > INT_MAX ||
-          static_cast<unsigned long long>(strides[1]) * ph1 > INT_MAX)
-        THROW("Image or row alignment is too large");
-      srcPlanes[1] = srcPlanes[0] + strides[0] * ph0;
-      srcPlanes[2] = srcPlanes[1] + strides[1] * ph1;
-    }
+    yuv_planes<false>(self, FUNCTION_NAME, srcBuf, width, height, align, srcPlanes, strides);
     return 1;
   }, [] {});
   if (r != 1) return -1;
@@ -1746,11 +1708,15 @@ DLLEXPORT int tj3DecodeYUV8(tjhandle handle, const unsigned char* srcBuf, int al
 
 namespace {
 
+bool swapsAxes(int op) {
+  return op == TJXOP_TRANSPOSE || op == TJXOP_TRANSVERSE || op == TJXOP_ROT90 ||
+         op == TJXOP_ROT270;
+}
+
 int getDstSubsamp(int srcSubsamp, const tjtransform* transform) {
   if (!transform) return srcSubsamp;
   int dstSubsamp = (transform->options & TJXOPT_GRAY) ? TJSAMP_GRAY : srcSubsamp;
-  if (transform->op == TJXOP_TRANSPOSE || transform->op == TJXOP_TRANSVERSE ||
-      transform->op == TJXOP_ROT90 || transform->op == TJXOP_ROT270) {
+  if (swapsAxes(transform->op)) {
     if (dstSubsamp == TJSAMP_422) dstSubsamp = TJSAMP_440;
     else if (dstSubsamp == TJSAMP_440) dstSubsamp = TJSAMP_422;
     else if (dstSubsamp == TJSAMP_411) dstSubsamp = TJSAMP_441;
@@ -1769,8 +1735,7 @@ void getTransformedSpecs(tjinstance* self, int* width, int* height, int* subsamp
       *subsamp < TJSAMP_UNKNOWN || *subsamp >= self->numSamp)
     THROW("Invalid argument");
   int dstWidth = *width, dstHeight = *height;
-  if (transform->op == TJXOP_TRANSPOSE || transform->op == TJXOP_TRANSVERSE ||
-      transform->op == TJXOP_ROT90 || transform->op == TJXOP_ROT270) {
+  if (swapsAxes(transform->op)) {
     dstWidth = *height;
     dstHeight = *width;
   }
@@ -1941,7 +1906,7 @@ DLLEXPORT int tj3Transform(tjhandle handle, const unsigned char* jpegBuf, size_t
       }
       if (output) {
         c.finish_compress();
-        store_output(self, c.output(), &dstBufs[i], &dstSizes[i], alloc);
+        store_output(c.output(), &dstBufs[i], &dstSizes[i], alloc);
       }
     }
     d.finish_decompress();
@@ -2087,10 +2052,7 @@ DLLEXPORT int tjEncodeYUVPlanes(tjhandle handle, const unsigned char* srcBuf, in
                                 unsigned char** dstPlanes, int* strides, int subsamp, int flags) {
   static const char FUNCTION_NAME[] = "tjEncodeYUVPlanes";
   GET_TJINSTANCE(handle, -1)
-  if (subsamp < 0 || subsamp >= self->numSamp)
-    return legacy_error(self, FUNCTION_NAME, "Invalid argument");
-  self->subsamp = subsamp;
-  processFlags(self, flags, COMPRESS);
+  if (legacy_yuv_setup(self, subsamp, flags, COMPRESS, FUNCTION_NAME) < 0) return -1;
   return tj3EncodeYUVPlanes8(handle, srcBuf, width, pitch, height, pixelFormat, dstPlanes,
                              strides);
 }
@@ -2100,10 +2062,7 @@ DLLEXPORT int tjEncodeYUV3(tjhandle handle, const unsigned char* srcBuf, int wid
                            int subsamp, int flags) {
   static const char FUNCTION_NAME[] = "tjEncodeYUV3";
   GET_TJINSTANCE(handle, -1)
-  if (subsamp < 0 || subsamp >= self->numSamp)
-    return legacy_error(self, FUNCTION_NAME, "Invalid argument");
-  self->subsamp = subsamp;
-  processFlags(self, flags, COMPRESS);
+  if (legacy_yuv_setup(self, subsamp, flags, COMPRESS, FUNCTION_NAME) < 0) return -1;
   return tj3EncodeYUV8(handle, srcBuf, width, pitch, height, pixelFormat, dstBuf, align);
 }
 
@@ -2159,10 +2118,8 @@ DLLEXPORT int tjDecompress2(tjhandle handle, const unsigned char* jpegBuf, unsig
                             int pixelFormat, int flags) {
   static const char FUNCTION_NAME[] = "tjDecompress2";
   GET_TJINSTANCE(handle, -1)
-  int i = legacy_scaling(self, FUNCTION_NAME, jpegBuf, jpegSize, width, height, true);
-  if (i < 0) return -1;
-  processFlags(self, flags, DECOMPRESS);
-  if (tj3SetScalingFactor(handle, sf[i]) == -1) return -1;
+  if (legacy_decompress_setup(self, handle, FUNCTION_NAME, jpegBuf, jpegSize,
+                              width, height, flags, true) == -1) return -1;
   if (tj3SetCroppingRegion(handle, TJUNCROPPED) == -1) return -1;
   return tj3Decompress8(handle, jpegBuf, jpegSize, dstBuf, pitch, pixelFormat);
 }
@@ -2180,10 +2137,8 @@ DLLEXPORT int tjDecompressToYUVPlanes(tjhandle handle, const unsigned char* jpeg
                                       int width, int* strides, int height, int flags) {
   static const char FUNCTION_NAME[] = "tjDecompressToYUVPlanes";
   GET_TJINSTANCE(handle, -1)
-  int i = legacy_scaling(self, FUNCTION_NAME, jpegBuf, jpegSize, width, height, false);
-  if (i < 0) return -1;
-  processFlags(self, flags, DECOMPRESS);
-  if (tj3SetScalingFactor(handle, sf[i]) == -1) return -1;
+  if (legacy_decompress_setup(self, handle, FUNCTION_NAME, jpegBuf, jpegSize,
+                              width, height, flags, false) == -1) return -1;
   return tj3DecompressToYUVPlanes8(handle, jpegBuf, jpegSize, dstPlanes, strides);
 }
 
@@ -2192,10 +2147,8 @@ DLLEXPORT int tjDecompressToYUV2(tjhandle handle, const unsigned char* jpegBuf,
                                  int align, int height, int flags) {
   static const char FUNCTION_NAME[] = "tjDecompressToYUV2";
   GET_TJINSTANCE(handle, -1)
-  int i = legacy_scaling(self, FUNCTION_NAME, jpegBuf, jpegSize, width, height, false);
-  if (i < 0) return -1;
-  processFlags(self, flags, DECOMPRESS);
-  if (tj3SetScalingFactor(handle, sf[i]) == -1) return -1;
+  if (legacy_decompress_setup(self, handle, FUNCTION_NAME, jpegBuf, jpegSize,
+                              width, height, flags, false) == -1) return -1;
   return tj3DecompressToYUV8(handle, jpegBuf, static_cast<size_t>(jpegSize), dstBuf, align);
 }
 
@@ -2209,10 +2162,7 @@ DLLEXPORT int tjDecodeYUVPlanes(tjhandle handle, const unsigned char** srcPlanes
                                 int width, int pitch, int height, int pixelFormat, int flags) {
   static const char FUNCTION_NAME[] = "tjDecodeYUVPlanes";
   GET_TJINSTANCE(handle, -1)
-  if (subsamp < 0 || subsamp >= self->numSamp)
-    return legacy_error(self, FUNCTION_NAME, "Invalid argument");
-  self->subsamp = subsamp;
-  processFlags(self, flags, DECOMPRESS);
+  if (legacy_yuv_setup(self, subsamp, flags, DECOMPRESS, FUNCTION_NAME) < 0) return -1;
   return tj3DecodeYUVPlanes8(handle, srcPlanes, strides, dstBuf, width, pitch, height,
                              pixelFormat);
 }
@@ -2222,10 +2172,7 @@ DLLEXPORT int tjDecodeYUV(tjhandle handle, const unsigned char* srcBuf, int alig
                           int pixelFormat, int flags) {
   static const char FUNCTION_NAME[] = "tjDecodeYUV";
   GET_TJINSTANCE(handle, -1)
-  if (subsamp < 0 || subsamp >= self->numSamp)
-    return legacy_error(self, FUNCTION_NAME, "Invalid argument");
-  self->subsamp = subsamp;
-  processFlags(self, flags, DECOMPRESS);
+  if (legacy_yuv_setup(self, subsamp, flags, DECOMPRESS, FUNCTION_NAME) < 0) return -1;
   return tj3DecodeYUV8(handle, srcBuf, align, dstBuf, width, pitch, height, pixelFormat);
 }
 

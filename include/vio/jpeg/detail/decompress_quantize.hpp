@@ -131,14 +131,8 @@ class Quantizer1Pass final : public ColorQuantizer<T> {
   }
 
   void create_colorindex() {
-    int pad;
-    if (st_.dither_mode == DitherMode::Ordered) {
-      pad = kMaxSample<T> * 2;
-      is_padded_ = true;
-    } else {
-      pad = 0;
-      is_padded_ = false;
-    }
+    is_padded_ = st_.dither_mode == DitherMode::Ordered;
+    int pad = is_padded_ ? kMaxSample<T> * 2 : 0;
     colorindex_store_.allocate(kMaxSample<T> + 1 + pad, st_.out_color_components);
     int blksize = sv_actual_;
     for (int i = 0; i < st_.out_color_components; i++) {
@@ -186,7 +180,7 @@ class Quantizer1Pass final : public ColorQuantizer<T> {
         JLong num =
             static_cast<JLong>(ODITHER_CELLS - 1 - 2 * static_cast<int>(base_dither_matrix[j][k])) *
             kMaxSample<T>;
-        (*od)[j][k] = static_cast<int>(num < 0 ? -((-num) / den) : num / den);
+        (*od)[j][k] = static_cast<int>(num / den);
       }
     return od;
   }
@@ -352,7 +346,6 @@ class Quantizer2Pass final : public ColorQuantizer<T> {
     if (st.out_color_components != 3 || st.out_color_space == ColorSpace::RGB565 || st.lossless)
       VIO_FAIL("Requested features are incompatible");
     histogram_.assign(static_cast<std::size_t>(HIST_C0_ELEMS) * HIST_C1_ELEMS * HIST_C2_ELEMS, 0);
-    needs_zeroed_ = true;
     if (st.enable_2pass_quant) {
       int desired = st.desired_number_of_colors;
       if (desired < 8) VIO_FAIL("Cannot quantize to fewer than %d colors", 8);
@@ -644,8 +637,7 @@ class Quantizer2Pass final : public ColorQuantizer<T> {
     JLong minmaxdist = 0x7FFFFFFFL;
     std::vector<JLong>& mindist = mindist_;
     mindist.resize(MAXNUMCOLORS);
-    auto axis = [](int x, int minc, int maxc, int centerc, int scale, JLong& min_d, JLong& max_d,
-                   bool first) {
+    auto axis = [](int x, int minc, int maxc, int centerc, int scale, JLong& min_d, JLong& max_d) {
       JLong tdist, mn, mx;
       if (x < minc) {
         tdist = static_cast<JLong>(x - minc) * scale;
@@ -667,19 +659,14 @@ class Quantizer2Pass final : public ColorQuantizer<T> {
           mx = tdist * tdist;
         }
       }
-      if (first) {
-        min_d = mn;
-        max_d = mx;
-      } else {
-        min_d += mn;
-        max_d += mx;
-      }
+      min_d += mn;
+      max_d += mx;
     };
     for (int i = 0; i < numcolors; i++) {
       JLong min_dist = 0, max_dist = 0;
-      axis(colormap_[0][i], minc0, maxc0, centerc0, C0_SCALE, min_dist, max_dist, true);
-      axis(colormap_[1][i], minc1, maxc1, centerc1, C1_SCALE, min_dist, max_dist, false);
-      axis(colormap_[2][i], minc2, maxc2, centerc2, C2_SCALE, min_dist, max_dist, false);
+      axis(colormap_[0][i], minc0, maxc0, centerc0, C0_SCALE, min_dist, max_dist);
+      axis(colormap_[1][i], minc1, maxc1, centerc1, C1_SCALE, min_dist, max_dist);
+      axis(colormap_[2][i], minc2, maxc2, centerc2, C2_SCALE, min_dist, max_dist);
       mindist[i] = min_dist;
       if (max_dist < minmaxdist) minmaxdist = max_dist;
     }

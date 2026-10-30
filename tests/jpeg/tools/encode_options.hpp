@@ -16,6 +16,20 @@ namespace jpeg = vio::jpeg;
 // per-table quality scale factors here rather than in the compressor.
 inline int q_scale_factor[jpeg::NUM_QUANT_TBLS] = {100, 100, 100, 100};
 
+inline bool parse_restart(const char* arg, jpeg::detail::CState& cs) {
+  long value;
+  char suffix = 'x';
+  if (std::sscanf(arg, "%ld%c", &value, &suffix) < 1 || value < 0 || value > 65535L)
+    return false;
+  if (suffix == 'b' || suffix == 'B') {
+    cs.restart_interval = static_cast<unsigned>(value);
+    cs.restart_in_rows = 0;
+  } else {
+    cs.restart_in_rows = static_cast<int>(value);
+  }
+  return true;
+}
+
 // ---- rdswitch.c ----------------------------------------------------------
 struct TextReader {
   std::vector<std::uint8_t> data;
@@ -35,20 +49,14 @@ struct TextReader {
     int ch;
     do {
       ch = text_getc();
-      if (ch == EOF) {
-        *termchar = ch;
-        return false;
-      }
     } while (std::isspace(ch));
     if (!std::isdigit(ch)) {
       *termchar = ch;
       return false;
     }
     long val = ch - '0';
-    while ((ch = text_getc()) != EOF) {
-      if (!std::isdigit(ch)) break;
+    while (std::isdigit(ch = text_getc()))
       val = val * 10 + (ch - '0');
-    }
     *result = val;
     *termchar = ch;
     return true;
@@ -57,12 +65,8 @@ struct TextReader {
     if (!read_text_integer(result, termchar)) return false;
     int ch = *termchar;
     while (ch != EOF && std::isspace(ch)) ch = text_getc();
-    if (std::isdigit(ch)) {
-      ungetc();
-      ch = ' ';
-    } else if (ch != EOF && ch != ';' && ch != ':') {
-      ch = ' ';
-    }
+    if (std::isdigit(ch)) ungetc();
+    if (ch != EOF && ch != ';' && ch != ':') ch = ' ';
     *termchar = ch;
     return true;
   }
@@ -141,10 +145,7 @@ inline bool read_scan_script(jpeg::detail::CState& cs, const char* filename) {
       if (!r.read_scan_integer(&val, &termchar)) return bogus();
       s.Al = static_cast<int>(val);
     } else {
-      s.Ss = 0;
       s.Se = jpeg::DCTSIZE2 - 1;
-      s.Ah = 0;
-      s.Al = 0;
     }
     if (termchar != ';' && termchar != EOF) return bogus();
     scans.push_back(s);
@@ -167,12 +168,10 @@ inline bool set_quality_ratings(jpeg::detail::CState& cs, const char* arg, bool 
       char ch = ',';
       if (std::sscanf(arg, "%d%c", &val, &ch) < 1) return false;
       if (ch != ',') return false;
-      q_scale_factor[tblno] = jpeg::detail::quality_scaling(val);
       while (*arg && *arg++ != ',') {
       }
-    } else {
-      q_scale_factor[tblno] = jpeg::detail::quality_scaling(val);
     }
+    q_scale_factor[tblno] = jpeg::detail::quality_scaling(val);
   }
   cs.add_quant_table(0, jpeg::detail::std_luminance_quant_tbl, q_scale_factor[0], force_baseline);
   cs.add_quant_table(1, jpeg::detail::std_chrominance_quant_tbl, q_scale_factor[1],
@@ -192,12 +191,10 @@ inline bool set_quant_slots(jpeg::detail::CState& cs, const char* arg) {
                      jpeg::NUM_QUANT_TBLS - 1);
         return false;
       }
-      cs.comp_info[ci].quant_tbl_no = val;
       while (*arg && *arg++ != ',') {
       }
-    } else {
-      cs.comp_info[ci].quant_tbl_no = val;
     }
+    cs.comp_info[ci].quant_tbl_no = val;
   }
   return true;
 }

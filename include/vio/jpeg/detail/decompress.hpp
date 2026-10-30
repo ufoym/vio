@@ -7,6 +7,12 @@
 
 namespace vio::jpeg::detail {
 
+inline void init_lossy_entropy(DState& st) {
+  if (st.arith_code) st.entropy = std::make_unique<ArithDecoder>(st);
+  else if (st.progressive_mode) st.entropy = std::make_unique<PhuffDecoder>(st);
+  else st.entropy = std::make_unique<HuffDecoder>(st);
+}
+
 class PipelineBase {
  public:
   virtual ~PipelineBase() = default;
@@ -77,9 +83,7 @@ class Pipeline final : public PipelineBase {
         VIO_FAIL("Unsupported JPEG data precision %d", st.data_precision);
       } else {
         idct = std::make_unique<IdctManager<T>>(st, range_.limit());
-        if (st.arith_code) st.entropy = std::make_unique<ArithDecoder>(st);
-        else if (st.progressive_mode) st.entropy = std::make_unique<PhuffDecoder>(st);
-        else st.entropy = std::make_unique<HuffDecoder>(st);
+        init_lossy_entropy(st);
         coef = std::make_unique<CoefController<T>>(st, idct.get(), use_c_buffer);
       }
     }
@@ -230,8 +234,6 @@ class Decompressor {
       st.output_height = static_cast<unsigned>(
           div_round_up(static_cast<long>(st.image_height) * size, DCTSIZE));
       st.min_DCT_scaled_size = size;
-      for (auto& c : st.comp_info) c.DCT_scaled_size = size;
-
       for (auto& c : st.comp_info) {
         int ssize = st.min_DCT_scaled_size;
         while (ssize < DCTSIZE &&
@@ -241,8 +243,6 @@ class Decompressor {
                    0)
           ssize = ssize * 2;
         c.DCT_scaled_size = ssize;
-      }
-      for (auto& c : st.comp_info) {
         c.downsampled_width = static_cast<unsigned>(
             div_round_up(static_cast<long>(st.image_width) * (c.h_samp_factor * c.DCT_scaled_size),
                          st.max_h_samp_factor * DCTSIZE));
@@ -354,9 +354,7 @@ class Decompressor {
   // which consume_input() absorbs the datastream.
   void begin_read_coefficients() {
     st.buffered_image = true;
-    if (st.arith_code) st.entropy = std::make_unique<ArithDecoder>(st);
-    else if (st.progressive_mode) st.entropy = std::make_unique<PhuffDecoder>(st);
-    else st.entropy = std::make_unique<HuffDecoder>(st);
+    init_lossy_entropy(st);
     transcoef_ = std::make_unique<CoefController<std::uint8_t>>(st, nullptr, true);
     st.coef = transcoef_.get();
     st.start_input_pass();
@@ -567,14 +565,12 @@ class Decompressor {
     unsigned lines_to_read = lines_after_iMCU_row - lines_to_skip;
 
     if (st.has_multiple_scans || st.buffered_image) {
+      st.output_scanline += lines_to_skip;
+      st.output_iMCU_row += lines_to_skip / lines_per_iMCU_row;
       if (p.upsample->need_context_rows) {
-        st.output_scanline += lines_to_skip;
-        st.output_iMCU_row += lines_to_skip / lines_per_iMCU_row;
         m.iMCU_row_ctr += lines_to_skip / lines_per_iMCU_row;
         read_and_discard_scanlines(p, lines_to_read);
       } else {
-        st.output_scanline += lines_to_skip;
-        st.output_iMCU_row += lines_to_skip / lines_per_iMCU_row;
         increment_simple_rowgroup_ctr(p, lines_to_read);
       }
       if (!st.using_merged_upsample) p.sep_->rows_to_go = st.output_height - st.output_scanline;

@@ -30,11 +30,10 @@ inline std::vector<std::vector<int>> read_color_map(std::span<const std::uint8_t
   };
   int first = in.getc();
   if (first == 'G') {
-    int header[13];
-    for (int i = 1; i < 13; i++) header[i] = getc_or_fail();
-    if (header[1] != 'I' || header[2] != 'F') VIO_FAIL("%s", bad);
-    if ((header[10] & 0x80) == 0) VIO_FAIL("%s", bad);
-    int len = 2 << (header[10] & 0x07);
+    const std::uint8_t* header = in.take(12);
+    if (!header || header[0] != 'I' || header[1] != 'F' || (header[9] & 0x80) == 0)
+      VIO_FAIL("%s", bad);
+    int len = 2 << (header[9] & 0x07);
     for (int i = 0; i < len; i++) {
       int r = getc_or_fail(), g = getc_or_fail(), b = getc_or_fail();
       add(r << (precision - 8), g << (precision - 8), b << (precision - 8));

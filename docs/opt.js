@@ -135,7 +135,7 @@
   }, { rootMargin: "0px 0px -10% 0px" }) : null;
   function render() {
     var list = ITEMS.filter(matches);
-    if (sort === "gain") list = list.slice().sort(function (x, y) { return y.v - x.v; });
+    if (sort === "gain") list.sort(function (x, y) { return y.v - x.v; });
     $("#opts").innerHTML = list.map(card).join("");
     $("#opt-showing").innerHTML = list.length === ITEMS.length ? "All " + ITEMS.length + " changes" :
       list.length + " of " + ITEMS.length + " changes" + (idea ? ' · <button type="button" class="linkish" id="clear-idea">show every idea</button>' : "");

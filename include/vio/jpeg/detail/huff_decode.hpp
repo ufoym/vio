@@ -48,30 +48,9 @@ inline void make_d_derived_tbl(DState& st, bool isDC, int tblno, DerivedTable& d
 
   char huffsize[257];
   unsigned huffcode[257];
+  int numsymbols = make_huffman_codes(htbl, huffsize, huffcode);
+
   int p = 0;
-  for (int l = 1; l <= 16; l++) {
-    int i = htbl.bits[l];
-    if (p + i > 256) VIO_FAIL("Bogus Huffman table definition");
-    while (i--) huffsize[p++] = static_cast<char>(l);
-  }
-  huffsize[p] = 0;
-  int numsymbols = p;
-
-  unsigned code = 0;
-  int si = huffsize[0];
-  p = 0;
-  while (huffsize[p]) {
-    while (huffsize[p] == si) {
-      huffcode[p++] = code;
-      code++;
-    }
-    if (static_cast<JLong>(code) >= (static_cast<JLong>(1) << si))
-      VIO_FAIL("Bogus Huffman table definition");
-    code <<= 1;
-    si++;
-  }
-
-  p = 0;
   for (int l = 1; l <= 16; l++) {
     if (htbl.bits[l]) {
       dtbl.valoffset[l] = static_cast<JLong>(p) - static_cast<JLong>(huffcode[p]);
@@ -543,12 +522,8 @@ class HuffDecoder final : public EntropyDecoder {
       dc_fast_cur_[blkn] = &dc_fast_[c->dc_tbl_no];
       ac_pair_cur_[blkn] = &ac_pair_[c->ac_tbl_no];
       ac_sym_cur_[blkn] = &ac_sym_[c->ac_tbl_no];
-      if (c->component_needed) {
-        dc_needed_[blkn] = true;
-        ac_needed_[blkn] = c->DCT_scaled_size > 1;
-      } else {
-        dc_needed_[blkn] = ac_needed_[blkn] = false;
-      }
+      dc_needed_[blkn] = c->component_needed;
+      ac_needed_[blkn] = c->component_needed && c->DCT_scaled_size > 1;
     }
     br_.reset();
     ff_end_ = nullptr;
@@ -880,6 +855,17 @@ inline void update_progression(DState& st, bool warn_ac_without_dc) {
   }
 }
 
+inline bool prepare_progressive_scan(DState& st) {
+  bool is_dc = st.Ss == 0;
+  bool bad = is_dc ? st.Se != 0 : st.Ss > st.Se || st.Se >= DCTSIZE2 || st.comps_in_scan != 1;
+  if (st.Ah != 0 && st.Al != st.Ah - 1) bad = true;
+  if (st.Al > 13) bad = true;
+  if (bad)
+    VIO_FAIL("Invalid progressive/lossless parameters Ss=%d Se=%d Ah=%d Al=%d", st.Ss, st.Se, st.Ah, st.Al);
+  update_progression(st, true);
+  return is_dc;
+}
+
 // For nibble i of a natural-order coefficient mask, the corresponding
 // zig-zag-order bits.
 struct ZigzagNibbleTable {
@@ -910,20 +896,7 @@ class PhuffDecoder final : public EntropyDecoder {
   }
 
   void start_pass() override {
-    bool is_DC_band = st_.Ss == 0;
-    bool bad = false;
-    if (is_DC_band) {
-      if (st_.Se != 0) bad = true;
-    } else {
-      if (st_.Ss > st_.Se || st_.Se >= DCTSIZE2) bad = true;
-      if (st_.comps_in_scan != 1) bad = true;
-    }
-    if (st_.Ah != 0 && st_.Al != st_.Ah - 1) bad = true;
-    if (st_.Al > 13) bad = true;
-    if (bad)
-      VIO_FAIL("Invalid progressive/lossless parameters Ss=%d Se=%d Ah=%d Al=%d", st_.Ss, st_.Se,
-               st_.Ah, st_.Al);
-    update_progression(st_, true);
+    bool is_DC_band = prepare_progressive_scan(st_);
 
     if (st_.Ah == 0) mode_ = is_DC_band ? DC_FIRST : AC_FIRST;
     else mode_ = is_DC_band ? DC_REFINE : AC_REFINE;

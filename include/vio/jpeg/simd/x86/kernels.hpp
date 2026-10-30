@@ -142,11 +142,11 @@ inline void idct_kernels(const Support& s, IdctKernels& k) {
 }
 template <class Table>
 inline HuffEncodeFn<Table> huff_encode_kernel(const Support& s) {
+  if (!s.has(kSSE2)) return nullptr;
 #if VIO_SIMD_AVX2
-  if (s.has(kSSE2) && s.has(kBMI2)) return vio::jpeg::simd::sse2_bmi2::encode_blocks<Table>;
+  if (s.has(kBMI2)) return vio::jpeg::simd::sse2_bmi2::encode_blocks<Table>;
 #endif
-  if (s.has(kSSE2)) return vio::jpeg::simd::sse2::encode_blocks<Table>;
-  return nullptr;
+  return vio::jpeg::simd::sse2::encode_blocks<Table>;
 }
 
 }  // namespace vio::jpeg::simd::x86

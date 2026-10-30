@@ -29,32 +29,7 @@ VIO_INLINE int16x8_t gather(int16x8_t v, const std::int16_t* block, const int* o
 // from the whole block put in zig-zag order with table lookups.
 template <int S, class F>
 VIO_INLINE void band_rows(const std::int16_t* block, int Sl, F&& f) {
-  using namespace detail_huff;
-  const uint8x16x4_t idx_0123 = {{vld1q_u8(zigzag_idx + 0), vld1q_u8(zigzag_idx + 16),
-                                  vld1q_u8(zigzag_idx + 32), vld1q_u8(zigzag_idx + 48)}};
-  const uint8x16x4_t idx_4567 = {{vld1q_u8(zigzag_idx + 64), vld1q_u8(zigzag_idx + 80),
-                                  vld1q_u8(zigzag_idx + 96), vld1q_u8(zigzag_idx + 112)}};
-  const auto* b8 = reinterpret_cast<const std::int8_t*>(block);
-  const int8x16x4_t t0123 = {{vld1q_s8(b8 + 0), vld1q_s8(b8 + 16), vld1q_s8(b8 + 32),
-                              vld1q_s8(b8 + 48)}};
-  const int8x16x4_t t4567 = {{vld1q_s8(b8 + 64), vld1q_s8(b8 + 80), vld1q_s8(b8 + 96),
-                              vld1q_s8(b8 + 112)}};
-  const int8x16x4_t t2345 = {{t0123.val[2], t0123.val[3], t4567.val[0], t4567.val[1]}};
-  const int8x16x3_t t567 = {{t4567.val[1], t4567.val[2], t4567.val[3]}};
-  int16x8_t z0 = vreinterpretq_s16_s8(vqtbl4q_s8(t0123, idx_0123.val[0]));
-  int16x8_t z1 = vreinterpretq_s16_s8(vqtbl4q_s8(t0123, idx_0123.val[1]));
-  int16x8_t z2 = vreinterpretq_s16_s8(vqtbl4q_s8(t2345, idx_0123.val[2]));
-  int16x8_t z3 = vreinterpretq_s16_s8(vqtbl4q_s8(t0123, idx_0123.val[3]));
-  int16x8_t z4 = vreinterpretq_s16_s8(vqtbl4q_s8(t4567, idx_4567.val[0]));
-  int16x8_t z5 = vreinterpretq_s16_s8(vqtbl4q_s8(t2345, idx_4567.val[1]));
-  int16x8_t z6 = vreinterpretq_s16_s8(vqtbl4q_s8(t4567, idx_4567.val[2]));
-  int16x8_t z7 = vreinterpretq_s16_s8(vqtbl3q_s8(t567, idx_4567.val[3]));
-  z1 = vsetq_lane_s16(vgetq_lane_s16(vreinterpretq_s16_s8(t4567.val[0]), 0), z1, 2);
-  z2 = vsetq_lane_s16(vgetq_lane_s16(vreinterpretq_s16_s8(t0123.val[1]), 4), z2, 0);
-  z2 = vsetq_lane_s16(vgetq_lane_s16(vreinterpretq_s16_s8(t4567.val[2]), 0), z2, 5);
-  z5 = vsetq_lane_s16(vgetq_lane_s16(vreinterpretq_s16_s8(t0123.val[1]), 7), z5, 2);
-  z5 = vsetq_lane_s16(vgetq_lane_s16(vreinterpretq_s16_s8(t4567.val[2]), 3), z5, 7);
-  z6 = vsetq_lane_s16(vgetq_lane_s16(vreinterpretq_s16_s8(t0123.val[3]), 7), z6, 5);
+  const auto [z0, z1, z2, z3, z4, z5, z6, z7] = detail_huff::zigzag_rows(block);
   const int16x8_t zero = vdupq_n_s16(0);
   const int16x8_t lane = {0, 1, 2, 3, 4, 5, 6, 7}, sl = vdupq_n_s16(static_cast<std::int16_t>(Sl));
   auto row = [&](int r, int16x8_t a, int16x8_t b) VIO_LAMBDA_INLINE {

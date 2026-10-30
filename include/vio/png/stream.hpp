@@ -129,8 +129,7 @@ class StreamDecoder {
   // that of the whole image).
   const RowInfo& output() const { return plan_.output(); }
   std::size_t output_row_bytes(std::uint32_t width) const {
-    const RowInfo& o = plan_.output();
-    return (static_cast<std::size_t>(width) * o.channels * o.bit_depth + 7) / 8;
+    return plan_.output_row_bytes(width);
   }
   // The palette of palette output.
   std::vector<PaletteEntry> output_palette() const { return plan_.palette(); }
@@ -142,7 +141,7 @@ class StreamDecoder {
     const RowInfo& o = plan_.output();
     const unsigned bits = static_cast<unsigned>(o.channels * o.bit_depth);
     if (pass < 0) {
-      std::memcpy(row, pass_row, (static_cast<std::size_t>(width) * bits + 7) / 8);
+      std::memcpy(row, pass_row, output_row_bytes(width));
       return;
     }
     const std::uint32_t x0 = adam7_x_start[pass], dx = adam7_x_delta[pass];
@@ -175,8 +174,7 @@ class StreamDecoder {
         const std::uint32_t pw = pass_width(p), ph = pass_height(p);
         if (pw && ph) total += static_cast<std::uint64_t>(ph) * (row_bytes(pw) + 1);
       }
-      expected_ = total;
-      pass_ = interlace_ ? -1 : 0;
+      pass_ = -1;
       next_pass();
       inf_ = std::make_unique<zlib::StreamInflater>(
           [this](const std::uint8_t* d, std::size_t n) { take(d, n); }, false, s.d_.options.verify_adler,
@@ -188,8 +186,7 @@ class StreamDecoder {
       try {
         inf_->feed(p, n);
       } catch (const Error& e) {
-        const char* m = std::strstr(e.what(), "zlib: ");
-        VIO_FAIL("IDAT: %s", m ? m + 6 : e.what());
+        VIO_FAIL("IDAT: %s", Decoder::zlib_error(e));
       }
     }
     bool complete() const { return pass_ >= 7 || (!interlace_ && pass_ > 0); }
@@ -202,25 +199,23 @@ class StreamDecoder {
     }
 
    private:
-    std::size_t row_bytes(std::uint32_t w) const { return (static_cast<std::size_t>(w) * bits_ + 7) / 8; }
+    std::size_t row_bytes(std::uint32_t w) const { return detail::packed_row_bytes(w, bits_); }
     std::uint32_t pass_width(int p) const {
       if (!interlace_) return width_;
       using namespace detail;
-      if (width_ <= static_cast<std::uint32_t>(adam7_x_start[p])) return 0;
-      return (width_ - adam7_x_start[p] + adam7_x_delta[p] - 1) / adam7_x_delta[p];
+      return adam7_extent(width_, adam7_x_start[p], adam7_x_delta[p]);
     }
     std::uint32_t pass_height(int p) const {
       if (!interlace_) return height_;
       using namespace detail;
-      if (height_ <= static_cast<std::uint32_t>(adam7_y_start[p])) return 0;
-      return (height_ - adam7_y_start[p] + adam7_y_delta[p] - 1) / adam7_y_delta[p];
+      return adam7_extent(height_, adam7_y_start[p], adam7_y_delta[p]);
     }
     // Moves to the next pass with pixels (pass_ 7, or 1 when not
     // interlaced, once all are done).
     void next_pass() {
       if (!interlace_) {
-        if (pass_ == 0 && !started_) {
-          started_ = true;
+        if (pass_ < 0) {
+          pass_ = 0;
         } else {
           pass_ = 1;
           return;
@@ -272,11 +267,10 @@ class StreamDecoder {
     StreamDecoder& s_;
     std::uint32_t width_, height_;
     unsigned bits_ = 8, bpp_ = 1;
-    bool interlace_ = false, started_ = false, have_prev_ = false;
+    bool interlace_ = false, have_prev_ = false;
     int pass_ = 0;
     std::uint32_t pw_ = 0, ph_ = 0, y_ = 0;
     std::size_t rb_ = 0, filled_ = 0;
-    std::uint64_t expected_ = 0;
     std::vector<std::uint8_t> cur_, prev_, out_;
     std::unique_ptr<zlib::StreamInflater> inf_;
   };
@@ -285,10 +279,6 @@ class StreamDecoder {
     d_.options = options;
     d_.reset({});
     state_ = kSignature;
-    buf_.clear();
-    image_.reset();
-    info_done_ = false;
-    frame_ = 0;
   }
 
   // Appends input to buf_ until it holds n bytes.

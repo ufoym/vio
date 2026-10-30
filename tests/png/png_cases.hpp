@@ -46,6 +46,12 @@ struct Fnv {
   }
 };
 
+VIO_INLINE std::uint64_t error_hash() {
+  Fnv f;
+  f.add("error", 5);
+  return f.h;
+}
+
 // The result of reading an image with a transformation case: its format,
 // palette and rows, or an error.
 struct Result {
@@ -55,11 +61,8 @@ struct Result {
   std::vector<std::uint8_t> palette;  // RGB triples (palette output only)
   std::vector<std::uint8_t> pixels;   // rows of row_bytes
   std::uint64_t hash() const {
+    if (error) return error_hash();
     Fnv f;
-    if (error) {
-      f.add(std::string("error"));
-      return f.h;
-    }
     f.add(static_cast<std::uint64_t>(row_bytes));
     f.add(static_cast<std::uint64_t>(channels * 65536 + bit_depth * 256 + color_type));
     f.add(palette.data(), palette.size());
@@ -266,6 +269,19 @@ inline int channels(int ct) { return vio::png::num_channels(static_cast<std::uin
 inline std::size_t row_bytes(const vio::png::Header& h, std::uint32_t w) {
   return (static_cast<std::size_t>(w) * channels(h.color_type) * h.bit_depth + 7) / 8;
 }
+inline void clear_padding(std::vector<std::uint8_t>& img, const vio::png::Header& h, std::size_t rb) {
+  const unsigned bits = static_cast<unsigned>(channels(h.color_type) * h.bit_depth);
+  if (const unsigned used = (h.width * bits) % 8)
+    for (std::uint32_t y = 0; y < h.height; y++) img[y * rb + rb - 1] &= static_cast<std::uint8_t>(0xff00u >> used);
+}
+VIO_INLINE void random_color(std::vector<std::uint8_t>& v, std::uint8_t color_type, unsigned max,
+                             std::mt19937& rng) {
+  for (int i = 0; i < ((color_type & 2) ? 3 : 1); i++) {
+    const unsigned sample = rng() & max;
+    v.push_back(static_cast<std::uint8_t>(sample >> 8));
+    v.push_back(static_cast<std::uint8_t>(sample));
+  }
+}
 
 inline void filter_rows(std::vector<std::uint8_t>& out, const std::uint8_t* rows, std::size_t rb, std::uint32_t n,
                         unsigned bpp, std::mt19937& rng) {
@@ -338,11 +354,7 @@ inline std::vector<std::uint8_t> write_png(const vio::png::Header& h, const std:
     }
   } else if (ex.trns && !(h.color_type & 4)) {
     std::vector<std::uint8_t> t;
-    for (int i = 0; i < ((h.color_type & 2) ? 3 : 1); i++) {
-      const unsigned v = rng() & max;
-      t.push_back(static_cast<std::uint8_t>(v >> 8));
-      t.push_back(static_cast<std::uint8_t>(v));
-    }
+    detail::random_color(t, h.color_type, max, rng);
     put_chunk(out, "tRNS", t);
   }
   if (ex.bkgd) {
@@ -350,11 +362,7 @@ inline std::vector<std::uint8_t> write_png(const vio::png::Header& h, const std:
     if (h.color_type == vio::png::kIndexed) {
       b.push_back(static_cast<std::uint8_t>(rng() % (1u << h.bit_depth)));
     } else {
-      for (int i = 0; i < ((h.color_type & 2) ? 3 : 1); i++) {
-        const unsigned v = rng() & max;
-        b.push_back(static_cast<std::uint8_t>(v >> 8));
-        b.push_back(static_cast<std::uint8_t>(v));
-      }
+      detail::random_color(b, h.color_type, max, rng);
     }
     put_chunk(out, "bKGD", b);
   }
@@ -400,14 +408,12 @@ inline std::vector<std::uint8_t> make_image(const vio::png::Header& h, std::mt19
   const std::size_t rb = detail::row_bytes(h, h.width);
   std::vector<std::uint8_t> img(rb * h.height, 0);
   const unsigned kind = rng() % 3;
-  const unsigned bits = static_cast<unsigned>(detail::channels(h.color_type) * h.bit_depth);
   for (std::uint32_t y = 0; y < h.height; y++)
     for (std::size_t i = 0; i < rb; i++)
       img[y * rb + i] = kind == 0   ? static_cast<std::uint8_t>(rng())
                         : kind == 1 ? static_cast<std::uint8_t>(i * 3 + y * 5)
                                     : static_cast<std::uint8_t>((i / 7 + y / 5) % 2 ? 0x55 : 0);
-  if (const unsigned used = (h.width * bits) % 8)
-    for (std::uint32_t y = 0; y < h.height; y++) img[y * rb + rb - 1] &= static_cast<std::uint8_t>(0xff00u >> used);
+  detail::clear_padding(img, h, rb);
   return img;
 }
 

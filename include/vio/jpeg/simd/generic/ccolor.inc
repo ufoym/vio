@@ -93,11 +93,6 @@ VIO_INLINE V::T chroma(V::T x, V::T y, V::T z, V::T k) {
   return V::packs_32(V::srli_32<16>(lo), V::srli_32<16>(hi));
 }
 
-// Recombines even- and odd-pixel results (16-bit, < 256) into bytes.
-VIO_INLINE V::T interleave_bytes(V::T even, V::T odd) {
-  return V::interleave_u8(even, odd);
-}
-
 // Back ends with byte shuffles take (R, G) and (B, G) pairs of 4 pixels
 // straight from the pixel bytes, ready for pmaddwd.
 template <class X, class = void>
@@ -190,10 +185,10 @@ void rgb_ycc_convert(unsigned image_width, std::uint8_t** input_buf, std::uint8_
       } else {
         V::T e[4], o[4];
         deinterleave<PS>(src, e, o);
-        V::storeu(outptr0, interleave_bytes(luma(e[R], e[G], e[B]), luma(o[R], o[G], o[B])));
-        V::storeu(outptr1, interleave_bytes(chroma(e[R], e[G], e[B], k_cb),
+        V::storeu(outptr0, V::interleave_u8(luma(e[R], e[G], e[B]), luma(o[R], o[G], o[B])));
+        V::storeu(outptr1, V::interleave_u8(chroma(e[R], e[G], e[B], k_cb),
                                             chroma(o[R], o[G], o[B], k_cb)));
-        V::storeu(outptr2, interleave_bytes(chroma(e[B], e[G], e[R], k_cr),
+        V::storeu(outptr2, V::interleave_u8(chroma(e[B], e[G], e[R], k_cr),
                                             chroma(o[B], o[G], o[R], k_cr)));
       }
       inptr += N * PS;
@@ -228,7 +223,7 @@ void rgb_gray_convert(unsigned image_width, std::uint8_t** input_buf, std::uint8
       } else {
         V::T e[4], o[4];
         deinterleave<PS>(src, e, o);
-        V::storeu(outptr, interleave_bytes(luma(e[R], e[G], e[B]), luma(o[R], o[G], o[B])));
+        V::storeu(outptr, V::interleave_u8(luma(e[R], e[G], e[B]), luma(o[R], o[G], o[B])));
       }
       inptr += N * PS;
       outptr += N;
@@ -236,36 +231,4 @@ void rgb_gray_convert(unsigned image_width, std::uint8_t** input_buf, std::uint8
   }
 }
 
-inline ColorConvertFn rgb_ycc_kernel(ColorSpace in) {
-  switch (in) {
-    case ColorSpace::RGB:
-    case ColorSpace::ExtRGB: return rgb_ycc_convert<0, 1, 2, 3>;
-    case ColorSpace::ExtRGBX:
-    case ColorSpace::ExtRGBA: return rgb_ycc_convert<0, 1, 2, 4>;
-    case ColorSpace::ExtBGR: return rgb_ycc_convert<2, 1, 0, 3>;
-    case ColorSpace::ExtBGRX:
-    case ColorSpace::ExtBGRA: return rgb_ycc_convert<2, 1, 0, 4>;
-    case ColorSpace::ExtXBGR:
-    case ColorSpace::ExtABGR: return rgb_ycc_convert<3, 2, 1, 4>;
-    case ColorSpace::ExtXRGB:
-    case ColorSpace::ExtARGB: return rgb_ycc_convert<1, 2, 3, 4>;
-    default: return nullptr;
-  }
-}
-
-inline ColorConvertFn rgb_gray_kernel(ColorSpace in) {
-  switch (in) {
-    case ColorSpace::RGB:
-    case ColorSpace::ExtRGB: return rgb_gray_convert<0, 1, 2, 3>;
-    case ColorSpace::ExtRGBX:
-    case ColorSpace::ExtRGBA: return rgb_gray_convert<0, 1, 2, 4>;
-    case ColorSpace::ExtBGR: return rgb_gray_convert<2, 1, 0, 3>;
-    case ColorSpace::ExtBGRX:
-    case ColorSpace::ExtBGRA: return rgb_gray_convert<2, 1, 0, 4>;
-    case ColorSpace::ExtXBGR:
-    case ColorSpace::ExtABGR: return rgb_gray_convert<3, 2, 1, 4>;
-    case ColorSpace::ExtXRGB:
-    case ColorSpace::ExtARGB: return rgb_gray_convert<1, 2, 3, 4>;
-    default: return nullptr;
-  }
-}
+#include "ccolor_select.inc"

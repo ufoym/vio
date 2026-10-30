@@ -24,9 +24,6 @@ alignas(16) inline constexpr std::uint8_t zigzag_idx[128] = {
     26,  27,  12,  13,  255, 255, 14,  15,  28,  29,  42,  43,  56,  57,  255, 255,
     52,  53,  54,  55,  40,  41,  26,  27,  12,  13,  255, 255, 14,  15,  28,  29,
     26,  27,  40,  41,  42,  43,  28,  29,  14,  15,  30,  31,  44,  45,  46,  47};
-}  // namespace detail_huff
-
-namespace detail_huff {
 // A block ready for the bit writer: the magnitude category and the bits of
 // each coefficient in zig-zag order (the DC difference first), and the
 // bitmap of the non-zero AC coefficients.
@@ -36,7 +33,9 @@ struct Prepared {
   std::uint64_t bitmap;
 };
 
-VIO_INLINE void prepare(const std::int16_t* block, int last_dc_val, Prepared& p) {
+struct ZigzagRows { int16x8_t row0, row1, row2, row3, row4, row5, row6, row7; };
+
+VIO_INLINE ZigzagRows zigzag_rows(const std::int16_t* block) {
   const uint8x16x4_t idx_0123 = {{vld1q_u8(zigzag_idx + 0), vld1q_u8(zigzag_idx + 16),
                                   vld1q_u8(zigzag_idx + 32), vld1q_u8(zigzag_idx + 48)}};
   const uint8x16x4_t idx_4567 = {{vld1q_u8(zigzag_idx + 64), vld1q_u8(zigzag_idx + 80),
@@ -58,15 +57,20 @@ VIO_INLINE void prepare(const std::int16_t* block, int last_dc_val, Prepared& p)
   int16x8_t row6 = vreinterpretq_s16_s8(vqtbl4q_s8(t4567, idx_4567.val[2]));
   int16x8_t row7 = vreinterpretq_s16_s8(vqtbl3q_s8(t567, idx_4567.val[3]));
 
-  row0 = vsetq_lane_s16(static_cast<std::int16_t>(block[0] - last_dc_val), row0, 0);
   row1 = vsetq_lane_s16(vgetq_lane_s16(vreinterpretq_s16_s8(t4567.val[0]), 0), row1, 2);
   row2 = vsetq_lane_s16(vgetq_lane_s16(vreinterpretq_s16_s8(t0123.val[1]), 4), row2, 0);
   row2 = vsetq_lane_s16(vgetq_lane_s16(vreinterpretq_s16_s8(t4567.val[2]), 0), row2, 5);
   row5 = vsetq_lane_s16(vgetq_lane_s16(vreinterpretq_s16_s8(t0123.val[1]), 7), row5, 2);
   row5 = vsetq_lane_s16(vgetq_lane_s16(vreinterpretq_s16_s8(t4567.val[2]), 3), row5, 7);
   row6 = vsetq_lane_s16(vgetq_lane_s16(vreinterpretq_s16_s8(t0123.val[3]), 7), row6, 5);
+  return {row0, row1, row2, row3, row4, row5, row6, row7};
+}
 
-  const int16x8_t rows[8] = {row0, row1, row2, row3, row4, row5, row6, row7};
+VIO_INLINE void prepare(const std::int16_t* block, int last_dc_val, Prepared& p) {
+  auto z = zigzag_rows(block);
+  z.row0 = vsetq_lane_s16(static_cast<std::int16_t>(block[0] - last_dc_val), z.row0, 0);
+
+  const int16x8_t rows[8] = {z.row0, z.row1, z.row2, z.row3, z.row4, z.row5, z.row6, z.row7};
   uint16x8_t ne[8];
   for (int i = 0; i < 8; i++) ne[i] = vtstq_s16(rows[i], rows[i]);
   uint8x16_t r10 = vuzp1q_u8(vreinterpretq_u8_u16(ne[1]), vreinterpretq_u8_u16(ne[0]));

@@ -50,7 +50,6 @@ static int fail(tjinstance *this, const char *fmt, ...)
   vsnprintf(dst, JMSG_LENGTH_MAX, fmt, ap);
   va_end(ap);
   if (this) this->isInstanceError = 1;
-  else snprintf(errStr, JMSG_LENGTH_MAX, "%s", dst);
   return -1;
 }
 
@@ -82,14 +81,12 @@ static int param(tjinstance *this, int p)
 DLLEXPORT tjhandle tj3InitVersion(int initType, int apiVersion)
 {
   tjinstance *this;
-  int i;
 
   (void)apiVersion;
   if ((this = (tjinstance *)calloc(1, sizeof(tjinstance))) == NULL) {
     fail(NULL, "tj3Init(): Memory allocation failure");
     return NULL;
   }
-  for (i = 0; i < NUMPARAMS; i++) this->params[i] = 0;
   this->params[TJPARAM_QUALITY] = -1;
   this->params[TJPARAM_SUBSAMP] = TJSAMP_UNKNOWN;
   this->params[TJPARAM_PRECISION] = 8;

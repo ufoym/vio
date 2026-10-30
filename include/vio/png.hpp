@@ -37,7 +37,6 @@ class Reader : public ImageReader<T> {
   using Base::components;
   using Base::in_;
 
- public:
   std::vector<std::uint8_t> icc_profile() override {
     return reader_.info.icc ? reader_.info.icc->data : std::vector<std::uint8_t>{};
   }
@@ -179,7 +178,6 @@ class Reader : public ImageReader<T> {
 
 template <class T>
 class Writer : public ImageWriter<T> {
-  using Base = ImageWriter<T>;
   static constexpr int kBitDepth = sizeof(T) == 1 ? 8 : 16;
   using PngSample = std::conditional_t<sizeof(T) == 1, std::uint8_t, std::uint16_t>;
 

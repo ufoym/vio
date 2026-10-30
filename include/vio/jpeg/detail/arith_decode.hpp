@@ -4,7 +4,7 @@
 #include <bit>
 
 #include "arith_table.hpp"
-#include "huff_decode.hpp"  // init_coef_bits / update_progression
+#include "huff_decode.hpp"  // init_coef_bits / prepare_progressive_scan
 
 namespace vio::jpeg::detail {
 
@@ -17,21 +17,7 @@ class ArithDecoder final : public EntropyDecoder {
 
   void start_pass() override {
     if (st_.progressive_mode) {
-      bool bad = false;
-      if (st_.Ss == 0) {
-        if (st_.Se != 0) bad = true;
-      } else {
-        if (st_.Se < st_.Ss || st_.Se > DCTSIZE2 - 1) bad = true;
-        if (st_.comps_in_scan != 1) bad = true;
-      }
-      if (st_.Ah != 0 && st_.Ah - 1 != st_.Al) bad = true;
-      if (st_.Al > 13) bad = true;
-      if (bad)
-        VIO_FAIL("Invalid progressive/lossless parameters Ss=%d Se=%d Ah=%d Al=%d", st_.Ss,
-                 st_.Se, st_.Ah, st_.Al);
-      // Note: only warn about an AC scan without a prior DC scan when
-      // Ss != 0, which is equivalent to the Huffman decoder's check.
-      update_progression(st_, true);
+      prepare_progressive_scan(st_);
       if (st_.Ah == 0) mode_ = st_.Ss == 0 ? DC_FIRST : AC_FIRST;
       else mode_ = st_.Ss == 0 ? DC_REFINE : AC_REFINE;
     } else {
@@ -39,23 +25,7 @@ class ArithDecoder final : public EntropyDecoder {
         st_.warn("Invalid SOS parameters for sequential JPEG");
       mode_ = SEQUENTIAL;
     }
-    for (int ci = 0; ci < st_.comps_in_scan; ci++) {
-      ComponentInfo* c = st_.cur_comp_info[ci];
-      if (!st_.progressive_mode || (st_.Ss == 0 && st_.Ah == 0)) {
-        int tbl = c->dc_tbl_no;
-        if (tbl < 0 || tbl >= NUM_ARITH_TBLS)
-          VIO_FAIL("Arithmetic table 0x%02x was not defined", tbl);
-        std::memset(dc_stats_[tbl], 0, DC_STAT_BINS);
-        last_dc_val_[ci] = 0;
-        dc_context_[ci] = 0;
-      }
-      if (!st_.progressive_mode || st_.Ss) {
-        int tbl = c->ac_tbl_no;
-        if (tbl < 0 || tbl >= NUM_ARITH_TBLS)
-          VIO_FAIL("Arithmetic table 0x%02x was not defined", tbl);
-        std::memset(ac_stats_[tbl], 0, AC_STAT_BINS);
-      }
-    }
+    reset_statistics<true>();
     c_ = 0;
     a_ = 0;
     ct_ = -16;
@@ -80,15 +50,7 @@ class ArithDecoder final : public EntropyDecoder {
 
   bool process_restart() override {
     st_.read_restart_marker();
-    for (int ci = 0; ci < st_.comps_in_scan; ci++) {
-      ComponentInfo* c = st_.cur_comp_info[ci];
-      if (!st_.progressive_mode || (st_.Ss == 0 && st_.Ah == 0)) {
-        std::memset(dc_stats_[c->dc_tbl_no], 0, DC_STAT_BINS);
-        last_dc_val_[ci] = 0;
-        dc_context_[ci] = 0;
-      }
-      if (!st_.progressive_mode || st_.Ss) std::memset(ac_stats_[c->ac_tbl_no], 0, AC_STAT_BINS);
-    }
+    reset_statistics<false>();
     c_ = 0;
     a_ = 0;
     ct_ = -16;
@@ -100,6 +62,27 @@ class ArithDecoder final : public EntropyDecoder {
   enum Mode { SEQUENTIAL, DC_FIRST, AC_FIRST, DC_REFINE, AC_REFINE };
   static constexpr int DC_STAT_BINS = 64;
   static constexpr int AC_STAT_BINS = 256;
+
+  template <bool validate>
+  VIO_INLINE void reset_statistics() {
+    for (int ci = 0; ci < st_.comps_in_scan; ci++) {
+      ComponentInfo* c = st_.cur_comp_info[ci];
+      if (!st_.progressive_mode || (st_.Ss == 0 && st_.Ah == 0)) {
+        int tbl = c->dc_tbl_no;
+        if (validate && (tbl < 0 || tbl >= NUM_ARITH_TBLS))
+          VIO_FAIL("Arithmetic table 0x%02x was not defined", tbl);
+        std::memset(dc_stats_[tbl], 0, DC_STAT_BINS);
+        last_dc_val_[ci] = 0;
+        dc_context_[ci] = 0;
+      }
+      if (!st_.progressive_mode || st_.Ss) {
+        int tbl = c->ac_tbl_no;
+        if (validate && (tbl < 0 || tbl >= NUM_ARITH_TBLS))
+          VIO_FAIL("Arithmetic table 0x%02x was not defined", tbl);
+        std::memset(ac_stats_[tbl], 0, AC_STAT_BINS);
+      }
+    }
+  }
 
   // Coder registers.  The decoding routines work on a local copy, which the
   // compiler can keep in registers (the statistics bins are bytes, which

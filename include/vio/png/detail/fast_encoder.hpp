@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "checksum.hpp"
+#include "deflate_tables.hpp"
 #include "filter.hpp"
 #include "../simd/vec.hpp"
 
@@ -64,6 +65,19 @@ inline unsigned pick_filter(const std::uint64_t* cost, unsigned allowed) {
     if ((allowed >> f) & 1)
       if (best == 5 || cost[f] < cost[best]) best = f;
   return best == 5 ? 0 : best;
+}
+
+VIO_INLINE void filter_cost_tail(const std::uint8_t* cur, const std::uint8_t* up,
+                                 std::size_t i, std::size_t n, unsigned bpp,
+                                 std::uint64_t* cost, std::uint8_t* paeth_out) {
+  for (; i < n; i++) {
+    std::uint8_t x = cur[i], a = *(cur + i - bpp), b = up[i], c = *(up + i - bpp);
+    std::uint8_t r[5] = {x, static_cast<std::uint8_t>(x - a), static_cast<std::uint8_t>(x - b),
+                         static_cast<std::uint8_t>(x - ((a + b) >> 1)),
+                         static_cast<std::uint8_t>(x - paeth(a, b, c))};
+    if (paeth_out) paeth_out[i] = r[4];
+    for (int f = 0; f < 5; f++) cost[f] += r[f] < 128 ? r[f] : 256 - r[f];
+  }
 }
 
 // Paeth predictor and absolute value of a signed byte residual written
@@ -178,7 +192,7 @@ inline unsigned choose_filter_scalar(const std::uint8_t* cur, const std::uint8_t
     const std::size_t end = std::min(n, i + 256);
     std::uint16_t c0 = 0, c1 = 0, c2 = 0, c3 = 0, c4 = 0;
     for (; i < end; i++) {
-      const std::int16_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp];
+      const std::int16_t x = cur[i], a = *(cur + i - bpp), b = up[i], c = *(up + i - bpp);
       c0 = static_cast<std::uint16_t>(c0 + abs_residual16(x));
       c1 = static_cast<std::uint16_t>(c1 + abs_residual16(static_cast<std::int16_t>(x - a)));
       c2 = static_cast<std::uint16_t>(c2 + abs_residual16(static_cast<std::int16_t>(x - b)));
@@ -193,7 +207,7 @@ inline unsigned choose_filter_scalar(const std::uint8_t* cur, const std::uint8_t
     const std::size_t end = std::min(n, i + 256);
     std::uint16_t c0 = 0, c1 = 0, c2 = 0, c3 = 0, c4 = 0;
     for (; i < end; i++) {
-      const std::uint8_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp];
+      const std::uint8_t x = cur[i], a = *(cur + i - bpp), b = up[i], c = *(up + i - bpp);
       // residuals as bytes (wider types make Clang widen the vectors)
       c0 = static_cast<std::uint16_t>(c0 + abs_byte(x));
       c1 = static_cast<std::uint16_t>(c1 + abs_byte(static_cast<std::uint8_t>(x - a)));
@@ -279,14 +293,7 @@ inline unsigned choose_filter_neon(const std::uint8_t* cur, const std::uint8_t* 
     const uint64x2_t t = vpaddlq_u32(total[f]);
     cost[f] = vgetq_lane_u64(t, 0) + vgetq_lane_u64(t, 1);
   }
-  for (; i < n; i++) {
-    std::uint8_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp];
-    std::uint8_t r[5] = {x, static_cast<std::uint8_t>(x - a), static_cast<std::uint8_t>(x - b),
-                         static_cast<std::uint8_t>(x - ((a + b) >> 1)),
-                         static_cast<std::uint8_t>(x - paeth(a, b, c))};
-    if (paeth_out) paeth_out[i] = r[4];
-    for (int f = 0; f < 5; f++) cost[f] += r[f] < 128 ? r[f] : 256 - r[f];
-  }
+  filter_cost_tail(cur, up, i, n, bpp, cost, paeth_out);
   return pick_filter(cost, allowed);
 }
 
@@ -373,14 +380,7 @@ inline unsigned choose_filter_sse2(const std::uint8_t* cur, const std::uint8_t* 
     _mm_store_si128(reinterpret_cast<__m128i*>(v), acc[f]);
     cost[f] = v[0] + v[1];
   }
-  for (; i < n; i++) {
-    std::uint8_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp];
-    std::uint8_t r[5] = {x, static_cast<std::uint8_t>(x - a), static_cast<std::uint8_t>(x - b),
-                         static_cast<std::uint8_t>(x - ((a + b) >> 1)),
-                         static_cast<std::uint8_t>(x - paeth(a, b, c))};
-    if (paeth_out) paeth_out[i] = r[4];
-    for (int f = 0; f < 5; f++) cost[f] += r[f] < 128 ? r[f] : 256 - r[f];
-  }
+  filter_cost_tail(cur, up, i, n, bpp, cost, paeth_out);
   return pick_filter(cost, allowed);
 }
 
@@ -464,14 +464,7 @@ inline unsigned choose_filter_avx2(const std::uint8_t* cur, const std::uint8_t* 
     _mm256_store_si256(reinterpret_cast<__m256i*>(v), acc[f]);
     cost[f] = v[0] + v[1] + v[2] + v[3];
   }
-  for (; i < n; i++) {
-    std::uint8_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp];
-    std::uint8_t r[5] = {x, static_cast<std::uint8_t>(x - a), static_cast<std::uint8_t>(x - b),
-                         static_cast<std::uint8_t>(x - ((a + b) >> 1)),
-                         static_cast<std::uint8_t>(x - paeth(a, b, c))};
-    if (paeth_out) paeth_out[i] = r[4];
-    for (int f = 0; f < 5; f++) cost[f] += r[f] < 128 ? r[f] : 256 - r[f];
-  }
+  filter_cost_tail(cur, up, i, n, bpp, cost, paeth_out);
   return pick_filter(cost, allowed);
 }
 
@@ -543,13 +536,7 @@ struct VecFilterSelect {
         cost[f] += static_cast<std::uint64_t>(s[0]) + s[1] + s[2] + s[3];
       }
     }
-    for (; i < n; i++) {
-      std::uint8_t x = cur[i], a = cur[i - bpp], b = up[i], c = up[i - bpp];
-      std::uint8_t r[5] = {x, static_cast<std::uint8_t>(x - a), static_cast<std::uint8_t>(x - b),
-                           static_cast<std::uint8_t>(x - ((a + b) >> 1)),
-                           static_cast<std::uint8_t>(x - paeth(a, b, c))};
-      for (int f = 0; f < 5; f++) cost[f] += r[f] < 128 ? r[f] : 256 - r[f];
-    }
+    filter_cost_tail(cur, up, i, n, bpp, cost, nullptr);
     return pick_filter(cost, allowed);
   }
 
@@ -762,6 +749,16 @@ inline void huffman_lengths(const std::uint64_t* freq, int n, int max_len, std::
     for (unsigned c = 0; c < count[l]; c++) len[key[k--] & 511] = static_cast<std::uint8_t>(l);
 }
 
+inline constexpr auto kReverseByte = [] {
+  std::array<std::uint8_t, 256> t{};
+  for (unsigned i = 0; i < 256; i++) {
+    unsigned r = 0;
+    for (int b = 0; b < 8; b++) r |= ((i >> b) & 1u) << (7 - b);
+    t[i] = static_cast<std::uint8_t>(r);
+  }
+  return t;
+}();
+
 // Canonical codes (bit-reversed, ready to be sent least significant bit
 // first) for the given lengths.
 inline void canonical_codes(const std::uint8_t* len, int n, std::uint16_t* code,
@@ -774,22 +771,13 @@ inline void canonical_codes(const std::uint8_t* len, int n, std::uint16_t* code,
     c = (c + count[l - 1]) << 1;
     next[l] = c;
   }
-  static constexpr auto rev8 = [] {
-    std::array<std::uint8_t, 256> t{};
-    for (unsigned i = 0; i < 256; i++) {
-      unsigned r = 0;
-      for (int b = 0; b < 8; b++) r |= ((i >> b) & 1u) << (7 - b);
-      t[i] = static_cast<std::uint8_t>(r);
-    }
-    return t;
-  }();
   for (int i = 0; i < n; i++) {
     code[i] = 0;
     if (msb) msb[i] = 0;
     if (!len[i]) continue;
     unsigned v = next[len[i]]++;
     if (msb) msb[i] = static_cast<std::uint16_t>(v);
-    unsigned r = static_cast<unsigned>(rev8[v & 255]) << 8 | rev8[v >> 8];  // 16-bit reversal
+    unsigned r = static_cast<unsigned>(kReverseByte[v & 255]) << 8 | kReverseByte[v >> 8];  // 16-bit reversal
     code[i] = static_cast<std::uint16_t>(r >> (16 - len[i]));
   }
 }
@@ -1076,8 +1064,10 @@ inline void build_code_tables(const Histogram& h, CodeTables& t) {
   std::uint16_t msb[286];
   {
     unsigned count[16] = {}, next[16] = {};
-    for (int i = 0; i < 76; i++) count[rl[i]] += i >= 32 && i < 46 ? 16 : 1;
-    for (int i = 32; i < 46; i++) count[rl[i]] -= 16, count[rl[i] + 4] += 16;
+    for (int i = 0; i < 76; i++) {
+      bool group = i >= 32 && i < 46;
+      count[rl[i] + (group ? 4 : 0)] += group ? 16 : 1;
+    }
     count[0] = 0;
     unsigned c = 0;
     for (int l = 1; l < 16; l++) {
@@ -1100,17 +1090,8 @@ inline void build_code_tables(const Histogram& h, CodeTables& t) {
     }
     for (int i = 0; i < 16; i++) one(240 + i, rl[16 + i]);
     for (int i = 0; i < 30; i++) one(256 + i, rl[46 + i]);
-    static constexpr auto rev8 = [] {
-      std::array<std::uint8_t, 256> r{};
-      for (unsigned i = 0; i < 256; i++) {
-        unsigned v = 0;
-        for (int b = 0; b < 8; b++) v |= ((i >> b) & 1u) << (7 - b);
-        r[i] = static_cast<std::uint8_t>(v);
-      }
-      return r;
-    }();
     for (int i = 0; i < 286; i++) {
-      const unsigned v = msb[i], r = static_cast<unsigned>(rev8[v & 255]) << 8 | rev8[v >> 8];
+      const unsigned v = msb[i], r = static_cast<unsigned>(kReverseByte[v & 255]) << 8 | kReverseByte[v >> 8];
       t.code[i] = t.len[i] ? static_cast<std::uint16_t>(r >> (16 - t.len[i])) : 0;
     }
   }
@@ -1540,15 +1521,13 @@ class FastEncoder {
     std::uint16_t cc[19];
     huffman_lengths(f, 19, 7, cl);
     canonical_codes(cl, 19, cc);
-    static constexpr std::uint8_t order[19] = {16, 17, 18, 0, 8,  7, 9,  6, 10, 5,
-                                               11, 4,  12, 3, 13, 2, 14, 1, 15};
     int hclen = 19;
-    while (hclen > 4 && cl[order[hclen - 1]] == 0) hclen--;
+    while (hclen > 4 && cl[zlib::detail::kCodeLengthOrder[hclen - 1]] == 0) hclen--;
     w.put(1 | 2 << 1, 3);  // final block, dynamic codes
     w.put(286 - 257, 5);
     w.put(1 - 1, 5);
     w.put(static_cast<unsigned>(hclen - 4), 4);
-    for (int i = 0; i < hclen; i++) w.put(cl[order[i]], 3);
+    for (int i = 0; i < hclen; i++) w.put(cl[zlib::detail::kCodeLengthOrder[i]], 3);
     static constexpr std::uint8_t extra_bits[3] = {2, 3, 7};
     for (int k = 0; k < nsyms; k++) {
       const Sym& s = syms[k];

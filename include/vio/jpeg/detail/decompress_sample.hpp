@@ -316,15 +316,8 @@ class SepUpsampler final : public Upsampler<T> {
     while (outrow < st_.max_v_samp_factor) {
       for (int v = 0; v < 2; v++) {
         const T* inptr0 = input_data[inrow];
-        const T* inptr1;
-        JLong bias;
-        if (v == 0) {
-          inptr1 = input_data[inrow - 1];
-          bias = 1;
-        } else {
-          inptr1 = input_data[inrow + 1];
-          bias = 2;
-        }
+        const T* inptr1 = input_data[inrow + (v == 0 ? -1 : 1)];
+        JLong bias = v + 1;
         T* outptr = output_data[outrow++];
         for (unsigned colctr = 0; colctr < c.downsampled_width; colctr++) {
           JLong thiscolsum = JLong(*inptr0++) * 3 + *inptr1++;
@@ -451,15 +444,15 @@ class MergedUpsampler final : public Upsampler<T> {
     bool dither = st.dither_mode != DitherMode::None;
     if (st.max_v_samp_factor == 2) {
       two_v_ = true;
-      upmethod = is565 ? (dither ? &MergedUpsampler::h2v2_565<true>
-                                 : &MergedUpsampler::h2v2_565<false>)
+      upmethod = is565 ? (dither ? &MergedUpsampler::h2v_565<true, true>
+                                 : &MergedUpsampler::h2v_565<true, false>)
                        : select<true>(st.out_color_space);
       spare_.allocate(std::max<std::size_t>(out_row_width, st.output_width * 2), 1);
       spare_row = spare_[0];
     } else {
       two_v_ = false;
-      upmethod = is565 ? (dither ? &MergedUpsampler::h2v1_565<true>
-                                 : &MergedUpsampler::h2v1_565<false>)
+      upmethod = is565 ? (dither ? &MergedUpsampler::h2v_565<false, true>
+                                 : &MergedUpsampler::h2v_565<false, false>)
                        : select<false>(st.out_color_space);
       spare_row = nullptr;
     }
@@ -534,18 +527,9 @@ class MergedUpsampler final : public Upsampler<T> {
 
   template <bool V2>
   MethodFn select(ColorSpace out) {
-    switch (out) {
-      case ColorSpace::ExtRGBX:
-      case ColorSpace::ExtRGBA: return &MergedUpsampler::merged<V2, 0, 1, 2, 3, 4>;
-      case ColorSpace::ExtBGR: return &MergedUpsampler::merged<V2, 2, 1, 0, -1, 3>;
-      case ColorSpace::ExtBGRX:
-      case ColorSpace::ExtBGRA: return &MergedUpsampler::merged<V2, 2, 1, 0, 3, 4>;
-      case ColorSpace::ExtXBGR:
-      case ColorSpace::ExtABGR: return &MergedUpsampler::merged<V2, 3, 2, 1, 0, 4>;
-      case ColorSpace::ExtXRGB:
-      case ColorSpace::ExtARGB: return &MergedUpsampler::merged<V2, 1, 2, 3, 0, 4>;
-      default: return &MergedUpsampler::merged<V2, 0, 1, 2, -1, 3>;
-    }
+    return select_rgb_layout(out, []<int R, int G, int B, int A, int PS> {
+      return &MergedUpsampler::merged<V2, R, G, B, A, PS>;
+    });
   }
 
  public:
@@ -632,20 +616,15 @@ class MergedUpsampler final : public Upsampler<T> {
     }
   }
 
-  template <bool D>
-  void h2v1_565(T*** input_buf, unsigned g, T** output_buf) {
-    row565<D>(input_buf[0][g], input_buf[1][g], input_buf[2][g],
+  template <bool V2, bool D>
+  void h2v_565(T*** input_buf, unsigned g, T** output_buf) {
+    row565<D>(input_buf[0][V2 ? g * 2 : g], input_buf[1][g], input_buf[2][g],
               reinterpret_cast<std::uint8_t*>(output_buf[0]),
               dither_matrix_565[st_.output_scanline & 3]);
-  }
-  template <bool D>
-  void h2v2_565(T*** input_buf, unsigned g, T** output_buf) {
-    row565<D>(input_buf[0][g * 2], input_buf[1][g], input_buf[2][g],
-              reinterpret_cast<std::uint8_t*>(output_buf[0]),
-              dither_matrix_565[st_.output_scanline & 3]);
-    row565<D>(input_buf[0][g * 2 + 1], input_buf[1][g], input_buf[2][g],
-              reinterpret_cast<std::uint8_t*>(output_buf[1]),
-              dither_matrix_565[(st_.output_scanline + 1) & 3]);
+    if constexpr (V2)
+      row565<D>(input_buf[0][g * 2 + 1], input_buf[1][g], input_buf[2][g],
+                reinterpret_cast<std::uint8_t*>(output_buf[1]),
+                dither_matrix_565[(st_.output_scanline + 1) & 3]);
   }
 
   DState& st_;
@@ -769,11 +748,10 @@ class MainController {
   enum { CTX_PREPARE_FOR_IMCU = 0, CTX_PROCESS_IMCU = 1, CTX_POSTPONED_ROW = 2 };
 
   MainController(DState& st, bool need_context_rows) : st_(st), context_(need_context_rows) {
-    int ngroups;
     int M = st.min_DCT_scaled_size;
+    int ngroups = M + (need_context_rows ? 2 : 0);
     if (need_context_rows) {
       if (M < 2) VIO_FAIL("Requested features are incompatible");
-      ngroups = M + 2;
       for (int w = 0; w < 2; w++) {
         xbuf_store_[w].resize(st.num_components);
         xbuffer_[w].resize(st.num_components);
@@ -786,8 +764,6 @@ class MainController {
           xbuffer_[w][ci] = xbuf_store_[w][ci].data() + rgroup;  // one row group at negative offsets
         }
       }
-    } else {
-      ngroups = M;
     }
     buffer_.resize(st.num_components);
     buffer_rows_.resize(st.num_components);

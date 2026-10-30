@@ -116,9 +116,8 @@ class Reader : public ImageReader<std::uint8_t> {
     return count;
   }
   void skip_data_blocks() {
-    std::uint8_t buf[256];
-    while (get_data_block(buf) > 0) {
-    }
+    while (int count = read_byte())
+      if (!in_.take(static_cast<std::size_t>(count))) VIO_FAIL("Premature end of input file");
   }
   void read_colormap(int len) {
     bool gray = true;
@@ -291,8 +290,8 @@ class Writer : public ImageWriter<T> {
   static int maxcode_of(int n) { return (1 << n) - 1; }
 
   void put_word(unsigned w) {
-    this->out_.put(static_cast<std::uint8_t>(w & 0xFF));
-    this->out_.put(static_cast<std::uint8_t>((w >> 8) & 0xFF));
+    this->out_.put(static_cast<std::uint8_t>(w));
+    this->out_.put(static_cast<std::uint8_t>(w >> 8));
   }
   void put3(int v) {
     for (int i = 0; i < 3; i++) this->out_.put(static_cast<std::uint8_t>(v));

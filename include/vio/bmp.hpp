@@ -73,8 +73,7 @@ class Reader : public ImageReader<std::uint8_t> {
       bPad -= biClrUsed * mapentrysize;
     }
     if (bPad < 0) VIO_FAIL("Invalid BMP file: bad header length");
-    while (--bPad >= 0)
-      if (in_.getc() < 0) VIO_FAIL("Premature end of input file");
+    if (!in_.take(static_cast<std::size_t>(bPad))) VIO_FAIL("Premature end of input file");
 
     unsigned row_width = 0;
     switch (bits_) {
@@ -234,9 +233,8 @@ class Writer : public ImageWriter<std::uint8_t> {
                          (!quantized() && (color == ColorSpace::RGB565 ||
                                            color == ColorSpace::CMYK))))
       VIO_FAIL("BMP output must be grayscale or RGB");
-    if (gray_rows_) data_width_ = width * (quantized() ? 1u : static_cast<unsigned>(components));
-    else data_width_ = width * 3;
-    row_width_ = data_width_;
+    if (gray_rows_) row_width_ = width * (quantized() ? 1u : static_cast<unsigned>(components));
+    else row_width_ = width * 3;
     while ((row_width_ & 3) != 0) row_width_++;
     cur_row_ = 0;
     image_.clear();
@@ -290,13 +288,12 @@ class Writer : public ImageWriter<std::uint8_t> {
   }
 
   static void put2(std::uint8_t* a, int o, unsigned long v) {
-    a[o] = static_cast<std::uint8_t>(v & 0xFF);
-    a[o + 1] = static_cast<std::uint8_t>((v >> 8) & 0xFF);
+    a[o] = static_cast<std::uint8_t>(v);
+    a[o + 1] = static_cast<std::uint8_t>(v >> 8);
   }
   static void put4(std::uint8_t* a, int o, unsigned long v) {
     put2(a, o, v);
-    a[o + 2] = static_cast<std::uint8_t>((v >> 16) & 0xFF);
-    a[o + 3] = static_cast<std::uint8_t>((v >> 24) & 0xFF);
+    put2(a, o + 2, v >> 16);
   }
 
   void write_header() {
@@ -370,7 +367,7 @@ class Writer : public ImageWriter<std::uint8_t> {
   }
 
   bool gray_rows_ = false;
-  unsigned data_width_ = 0, row_width_ = 0, cur_row_ = 0;
+  unsigned row_width_ = 0, cur_row_ = 0;
   std::vector<std::uint8_t> image_;
 };
 

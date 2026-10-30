@@ -237,11 +237,7 @@ struct DState {
 
   void get_soi() {
     if (saw_SOI) VIO_FAIL("Invalid JPEG file structure: two SOI markers");
-    for (int i = 0; i < NUM_ARITH_TBLS; i++) {
-      arith_dc_L[i] = 0;
-      arith_dc_U[i] = 1;
-      arith_ac_K[i] = 5;
-    }
+    reset_arith_tables(arith_dc_L, arith_dc_U, arith_ac_K);
     restart_interval = 0;
     jpeg_color_space = ColorSpace::Unknown;
     CCIR601_sampling = false;
@@ -355,18 +351,13 @@ struct DState {
       for (int i = 0; i < count; i++) huffval[i] = static_cast<std::uint8_t>(read_byte());
       std::memset(&huffval[count], 0, 256 - count);
       length -= count;
-      std::optional<HuffTable>* slot;
-      if (index & 0x10) {
-        index -= 0x10;
-        if (index < 0 || index >= NUM_HUFF_TBLS) VIO_FAIL("Bogus DHT index %d", index);
-        slot = &ac_huff_tbl_ptrs[index];
-      } else {
-        if (index < 0 || index >= NUM_HUFF_TBLS) VIO_FAIL("Bogus DHT index %d", index);
-        slot = &dc_huff_tbl_ptrs[index];
-      }
-      if (!*slot) slot->emplace();
-      std::memcpy((*slot)->bits.data(), bits, 17);
-      std::memcpy((*slot)->huffval.data(), huffval, 256);
+      bool ac = (index & 0x10) != 0;
+      if (ac) index -= 0x10;
+      if (index < 0 || index >= NUM_HUFF_TBLS) VIO_FAIL("Bogus DHT index %d", index);
+      auto& slot = ac ? ac_huff_tbl_ptrs[index] : dc_huff_tbl_ptrs[index];
+      if (!slot) slot.emplace();
+      std::memcpy(slot->bits.data(), bits, 17);
+      std::memcpy(slot->huffval.data(), huffval, 256);
     }
     if (length != 0) VIO_FAIL("Bogus marker length");
   }
@@ -613,49 +604,9 @@ struct DState {
     has_multiple_scans = comps_in_scan < num_components || progressive_mode;
   }
 
-  void per_scan_setup() {
-    int data_unit = lossless ? 1 : DCTSIZE;
-    if (comps_in_scan == 1) {
-      ComponentInfo* c = cur_comp_info[0];
-      MCUs_per_row = c->width_in_blocks;
-      MCU_rows_in_scan = c->height_in_blocks;
-      c->MCU_width = 1;
-      c->MCU_height = 1;
-      c->MCU_blocks = 1;
-      c->MCU_sample_width = c->DCT_scaled_size;
-      c->last_col_width = 1;
-      int tmp = static_cast<int>(c->height_in_blocks % c->v_samp_factor);
-      if (tmp == 0) tmp = c->v_samp_factor;
-      c->last_row_height = tmp;
-      blocks_in_MCU = 1;
-      MCU_membership[0] = 0;
-    } else {
-      if (comps_in_scan <= 0 || comps_in_scan > MAX_COMPS_IN_SCAN)
-        VIO_FAIL("Too many color components: %d, max %d", comps_in_scan, MAX_COMPS_IN_SCAN);
-      MCUs_per_row = static_cast<unsigned>(
-          div_round_up(static_cast<long>(image_width), max_h_samp_factor * data_unit));
-      MCU_rows_in_scan = static_cast<unsigned>(
-          div_round_up(static_cast<long>(image_height), max_v_samp_factor * data_unit));
-      blocks_in_MCU = 0;
-      for (int ci = 0; ci < comps_in_scan; ci++) {
-        ComponentInfo* c = cur_comp_info[ci];
-        c->MCU_width = c->h_samp_factor;
-        c->MCU_height = c->v_samp_factor;
-        c->MCU_blocks = c->MCU_width * c->MCU_height;
-        c->MCU_sample_width = c->MCU_width * c->DCT_scaled_size;
-        int tmp = static_cast<int>(c->width_in_blocks % c->MCU_width);
-        if (tmp == 0) tmp = c->MCU_width;
-        c->last_col_width = tmp;
-        tmp = static_cast<int>(c->height_in_blocks % c->MCU_height);
-        if (tmp == 0) tmp = c->MCU_height;
-        c->last_row_height = tmp;
-        int mcublks = c->MCU_blocks;
-        if (blocks_in_MCU + mcublks > D_MAX_BLOCKS_IN_MCU)
-          VIO_FAIL("Sampling factors too large for interleaved scan");
-        while (mcublks-- > 0) MCU_membership[blocks_in_MCU++] = ci;
-      }
-    }
-  }
+#define VIO_SCAN_DECODER 1
+#include "scan_setup.inc"
+#undef VIO_SCAN_DECODER
 
   void latch_quant_tables() {
     for (int ci = 0; ci < comps_in_scan; ci++) {
@@ -737,9 +688,7 @@ struct DState {
         } else {
           int cid0 = comp_info[0].component_id, cid1 = comp_info[1].component_id,
               cid2 = comp_info[2].component_id;
-          if (cid0 == 1 && cid1 == 2 && cid2 == 3)
-            jpeg_color_space = lossless ? ColorSpace::RGB : ColorSpace::YCbCr;
-          else if (cid0 == 82 && cid1 == 71 && cid2 == 66)
+          if (cid0 == 82 && cid1 == 71 && cid2 == 66)
             jpeg_color_space = ColorSpace::RGB;
           else
             jpeg_color_space = lossless ? ColorSpace::RGB : ColorSpace::YCbCr;

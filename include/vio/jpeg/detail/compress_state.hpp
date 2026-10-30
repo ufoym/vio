@@ -207,11 +207,7 @@ struct CState {
   void set_defaults() {
     set_quality(75, true);
     std_huff_tables(dc_huff_tbl_ptrs, ac_huff_tbl_ptrs, false);
-    for (int i = 0; i < NUM_ARITH_TBLS; i++) {
-      arith_dc_L[i] = 0;
-      arith_dc_U[i] = 1;
-      arith_ac_K[i] = 5;
-    }
+    reset_arith_tables(arith_dc_L, arith_dc_U, arith_ac_K);
     scan_info.clear();
     num_scans = 0;
     lossless = false;
@@ -232,18 +228,16 @@ struct CState {
   }
 
   void default_colorspace() {
+    if (is_rgb_family(in_color_space)) {
+      set_colorspace(lossless ? ColorSpace::RGB : ColorSpace::YCbCr);
+      return;
+    }
     switch (in_color_space) {
-      case ColorSpace::Gray: set_colorspace(ColorSpace::Gray); break;
-      case ColorSpace::RGB: case ColorSpace::ExtRGB: case ColorSpace::ExtRGBX:
-      case ColorSpace::ExtBGR: case ColorSpace::ExtBGRX: case ColorSpace::ExtXBGR:
-      case ColorSpace::ExtXRGB: case ColorSpace::ExtRGBA: case ColorSpace::ExtBGRA:
-      case ColorSpace::ExtABGR: case ColorSpace::ExtARGB:
-        set_colorspace(lossless ? ColorSpace::RGB : ColorSpace::YCbCr);
-        break;
-      case ColorSpace::YCbCr: set_colorspace(ColorSpace::YCbCr); break;
-      case ColorSpace::CMYK: set_colorspace(ColorSpace::CMYK); break;
-      case ColorSpace::YCCK: set_colorspace(ColorSpace::YCCK); break;
-      case ColorSpace::Unknown: set_colorspace(ColorSpace::Unknown); break;
+      case ColorSpace::Gray:
+      case ColorSpace::YCbCr:
+      case ColorSpace::CMYK:
+      case ColorSpace::YCCK:
+      case ColorSpace::Unknown: set_colorspace(in_color_space); break;
       default: VIO_FAIL("Bogus input colorspace");
     }
   }
@@ -276,11 +270,14 @@ struct CState {
         set_comp(2, 0x42, 1, 1, 0, 0, 0);
         break;
       case ColorSpace::YCbCr:
-        write_JFIF_header = true;
-        num_components = 3;
+      case ColorSpace::YCCK:
+        write_JFIF_header = colorspace == ColorSpace::YCbCr;
+        write_Adobe_marker = !write_JFIF_header;
+        num_components = write_JFIF_header ? 3 : 4;
         set_comp(0, 1, 2, 2, 0, 0, 0);
         set_comp(1, 2, 1, 1, 1, 1, 1);
         set_comp(2, 3, 1, 1, 1, 1, 1);
+        if (colorspace == ColorSpace::YCCK) set_comp(3, 4, 2, 2, 0, 0, 0);
         break;
       case ColorSpace::CMYK:
         write_Adobe_marker = true;
@@ -289,14 +286,6 @@ struct CState {
         set_comp(1, 0x4D, 1, 1, 0, 0, 0);
         set_comp(2, 0x59, 1, 1, 0, 0, 0);
         set_comp(3, 0x4B, 1, 1, 0, 0, 0);
-        break;
-      case ColorSpace::YCCK:
-        write_Adobe_marker = true;
-        num_components = 4;
-        set_comp(0, 1, 2, 2, 0, 0, 0);
-        set_comp(1, 2, 1, 1, 1, 1, 1);
-        set_comp(2, 3, 1, 1, 1, 1, 1);
-        set_comp(3, 4, 2, 2, 0, 0, 0);
         break;
       case ColorSpace::Unknown:
         num_components = input_components;
@@ -689,14 +678,9 @@ struct CState {
       if (progressive_mode) {
         int max_Ah_Al = data_precision == 12 ? 13 : 10;
         if (Ss_ < 0 || Ss_ >= DCTSIZE2 || Se_ < Ss_ || Se_ >= DCTSIZE2 || Ah_ < 0 ||
-            Ah_ > max_Ah_Al || Al_ < 0 || Al_ > max_Ah_Al)
+            Ah_ > max_Ah_Al || Al_ < 0 || Al_ > max_Ah_Al ||
+            (Ss_ == 0 ? Se_ != 0 : ncomps != 1))
           VIO_FAIL("Invalid progressive/lossless parameters at scan script entry %d", scanno);
-        if (Ss_ == 0) {
-          if (Se_ != 0)
-            VIO_FAIL("Invalid progressive/lossless parameters at scan script entry %d", scanno);
-        } else if (ncomps != 1) {
-          VIO_FAIL("Invalid progressive/lossless parameters at scan script entry %d", scanno);
-        }
         for (int ci = 0; ci < ncomps; ci++) {
           int* lbp = last_bitpos[scanptr->component_index[ci]];
           if (Ss_ != 0 && lbp[0] < 0)
@@ -759,53 +743,9 @@ struct CState {
     }
   }
 
-  void per_scan_setup() {
-    int data_unit = lossless ? 1 : DCTSIZE;
-    if (comps_in_scan == 1) {
-      ComponentInfo* c = cur_comp_info[0];
-      MCUs_per_row = c->width_in_blocks;
-      MCU_rows_in_scan = c->height_in_blocks;
-      c->MCU_width = 1;
-      c->MCU_height = 1;
-      c->MCU_blocks = 1;
-      c->MCU_sample_width = data_unit;
-      c->last_col_width = 1;
-      int tmp = static_cast<int>(c->height_in_blocks % c->v_samp_factor);
-      if (tmp == 0) tmp = c->v_samp_factor;
-      c->last_row_height = tmp;
-      blocks_in_MCU = 1;
-      MCU_membership[0] = 0;
-    } else {
-      if (comps_in_scan <= 0 || comps_in_scan > MAX_COMPS_IN_SCAN)
-        VIO_FAIL("Too many color components: %d, max %d", comps_in_scan, MAX_COMPS_IN_SCAN);
-      MCUs_per_row = static_cast<unsigned>(
-          div_round_up(static_cast<long>(image_width), max_h_samp_factor * data_unit));
-      MCU_rows_in_scan = static_cast<unsigned>(
-          div_round_up(static_cast<long>(image_height), max_v_samp_factor * data_unit));
-      blocks_in_MCU = 0;
-      for (int ci = 0; ci < comps_in_scan; ci++) {
-        ComponentInfo* c = cur_comp_info[ci];
-        c->MCU_width = c->h_samp_factor;
-        c->MCU_height = c->v_samp_factor;
-        c->MCU_blocks = c->MCU_width * c->MCU_height;
-        c->MCU_sample_width = c->MCU_width * data_unit;
-        int tmp = static_cast<int>(c->width_in_blocks % c->MCU_width);
-        if (tmp == 0) tmp = c->MCU_width;
-        c->last_col_width = tmp;
-        tmp = static_cast<int>(c->height_in_blocks % c->MCU_height);
-        if (tmp == 0) tmp = c->MCU_height;
-        c->last_row_height = tmp;
-        int mcublks = c->MCU_blocks;
-        if (blocks_in_MCU + mcublks > C_MAX_BLOCKS_IN_MCU)
-          VIO_FAIL("Sampling factors too large for interleaved scan");
-        while (mcublks-- > 0) MCU_membership[blocks_in_MCU++] = ci;
-      }
-    }
-    if (restart_in_rows > 0) {
-      long nominal = static_cast<long>(restart_in_rows) * static_cast<long>(MCUs_per_row);
-      restart_interval = static_cast<unsigned>(std::min(nominal, 65535L));
-    }
-  }
+#define VIO_SCAN_DECODER 0
+#include "scan_setup.inc"
+#undef VIO_SCAN_DECODER
 
   // jinit_c_master_control()
   void init_master_control(bool transcode_only) {

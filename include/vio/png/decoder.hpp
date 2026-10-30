@@ -143,10 +143,6 @@ inline std::int32_t read_i32(const std::uint8_t* p) {
   return static_cast<std::int32_t>(read_u32(p));
 }
 
-}  // namespace detail
-
-namespace detail {
-
 // An image buffer.  The last one released on a thread is kept for the next
 // image decoded there: freeing and allocating megabytes per image costs a
 // page fault per 4 KiB page on systems whose allocator returns large blocks
@@ -374,17 +370,13 @@ class Decoder {
   // Reads and handles the chunk at pos_.
   void handle_next_chunk() {
     using namespace detail;
-    if (file_.size() - pos_ < 12) {
-      if (mode_ & kModeIDAT) fail("Not enough image data");
-      fail("unexpected end of file");
-    }
+    if (file_.size() - pos_ < 12)
+      fail(mode_ & kModeIDAT ? "Not enough image data" : "unexpected end of file");
     const std::uint8_t* p = file_.data() + pos_;
     const std::uint32_t len = read_u32(p);
     check_chunk_header(p);
-    if (file_.size() - pos_ - 12 < len) {
-      if (mode_ & kModeIDAT) fail("Not enough image data");
-      fail("unexpected end of file");
-    }
+    if (file_.size() - pos_ - 12 < len)
+      fail(mode_ & kModeIDAT ? "Not enough image data" : "unexpected end of file");
     pos_ += 12 + static_cast<std::size_t>(len);
     process_chunk(p);
   }
@@ -622,8 +614,8 @@ class Decoder {
       case kTEXT:
       case kZTXT:
       case kITXT: return parse_text(index, d, len);
-      case kACTL: return parse_actl(d, len);
-      case kFCTL: return parse_fctl(d, len);
+      case kACTL: return parse_actl(d);
+      case kFCTL: return parse_fctl(d);
       case kFDAT: return parse_fdat(d, len);
       default: return false;
     }
@@ -709,7 +701,12 @@ class Decoder {
     check(d[10] != 0, "Unknown compression method in IHDR");
     check(d[11] != 0, "Unknown filter method in IHDR");
     if (err) fail(err);
-    row_bytes_ = (static_cast<std::size_t>(h.width) * num_channels(h.color_type) * h.bit_depth + 7) / 8;
+    row_bytes_ = detail::packed_row_bytes(h.width, num_channels(h.color_type) * h.bit_depth);
+  }
+
+  static const char* zlib_error(const Error& e) {
+    const char* m = std::strstr(e.what(), "zlib: ");
+    return m ? m + 6 : e.what();
   }
 
   // Inflates a compressed text or profile; nullopt (with a benign error) on
@@ -718,8 +715,7 @@ class Decoder {
     try {
       return zlib::uncompress(std::span(d, n), options.max_chunk_size);
     } catch (const Error& e) {
-      const char* m = std::strstr(e.what(), "zlib: ");
-      benign_error(m ? m + 6 : e.what());
+      benign_error(zlib_error(e));
       return std::nullopt;
     }
   }
@@ -891,8 +887,7 @@ class Decoder {
     next_seq_++;
   }
 
-  bool parse_actl(const std::uint8_t* d, std::uint32_t len) {
-    (void)len;
+  bool parse_actl(const std::uint8_t* d) {
     std::uint32_t frames = detail::read_u32(d), plays = detail::read_u32(d + 4);
     if (frames == 0 || frames > 0x7fffffffu || plays > 0x7fffffffu) {
       warn("Ignoring invalid acTL");
@@ -903,8 +898,7 @@ class Decoder {
     return true;
   }
 
-  bool parse_fctl(const std::uint8_t* d, std::uint32_t len) {
-    (void)len;
+  bool parse_fctl(const std::uint8_t* d) {
     check_sequence(d);
     if (!info.animation) {
       warn("Ignoring fcTL without acTL");
@@ -916,9 +910,7 @@ class Decoder {
     f.delay_num = detail::read_u16(d + 20), f.delay_den = detail::read_u16(d + 22);
     f.dispose = d[24], f.blend = d[25];
     const Header& h = info.header;
-    if (f.width == 0 || f.height == 0 || f.x > h.width || f.y > h.height ||
-        f.width > h.width - f.x || f.height > h.height - f.y || f.dispose > 2 || f.blend > 1)
-      fail("Invalid fcTL");
+    detail::check_frame(h, f);
     const bool before_idat = !(mode_ & detail::kModeIDAT);
     if (before_idat) {
       if (!info.frames.empty()) fail("duplicate fcTL before IDAT");
@@ -947,17 +939,11 @@ class Decoder {
     try {
       n = inf->decompress(idat, out, size);
     } catch (const Error& e) {
-      const char* m = std::strstr(e.what(), "zlib: ");
-      VIO_FAIL("IDAT: %s", m ? m + 6 : e.what());
+      VIO_FAIL("IDAT: %s", zlib_error(e));
     }
     if (n < size) fail("Not enough image data");
-    if (!inf->stream_end()) {
-      if (options.benign_errors_warn) warn("IDAT: Too much image data");
-      else fail("IDAT: Too much image data");
-    } else if (inf->consumed() < idat.size()) {
-      if (options.benign_errors_warn) warn("IDAT: Extra compressed data");
-      else fail("IDAT: Extra compressed data");
-    }
+    if (!inf->stream_end()) benign_error_text("IDAT: Too much image data");
+    else if (inf->consumed() < idat.size()) benign_error_text("IDAT: Extra compressed data");
   }
 
   // Reconstructs `rows` filtered rows of `rb` bytes stored with their filter
@@ -1011,7 +997,7 @@ class Decoder {
     const int ch = num_channels(h.color_type);
     const unsigned bits_pp = static_cast<unsigned>(ch * h.bit_depth);
     const unsigned bpp = bits_pp < 8 ? 1u : bits_pp / 8;
-    row_bytes = (static_cast<std::size_t>(width) * bits_pp + 7) / 8;
+    row_bytes = packed_row_bytes(width, bits_pp);
     const std::size_t rb = row_bytes;
     // Slack past the data: the reconstruction kernels read and write a few
     // bytes beyond a row's last pixel.
@@ -1039,11 +1025,9 @@ class Decoder {
     Pass passes[7];
     std::size_t expected = 0;
     for (int p = 0; p < 7; p++) {
-      std::uint32_t pw = (width - adam7_x_start[p] + adam7_x_delta[p] - 1) / adam7_x_delta[p];
-      std::uint32_t ph = (height - adam7_y_start[p] + adam7_y_delta[p] - 1) / adam7_y_delta[p];
-      if (width <= static_cast<std::uint32_t>(adam7_x_start[p])) pw = 0;
-      if (height <= static_cast<std::uint32_t>(adam7_y_start[p])) ph = 0;
-      std::size_t prb = (static_cast<std::size_t>(pw) * bits_pp + 7) / 8;
+      std::uint32_t pw = adam7_extent(width, adam7_x_start[p], adam7_x_delta[p]);
+      std::uint32_t ph = adam7_extent(height, adam7_y_start[p], adam7_y_delta[p]);
+      std::size_t prb = packed_row_bytes(pw, bits_pp);
       passes[p] = {pw, ph, p, expected, prb};
       if (pw && ph) expected += ph * (prb + 1);
     }
@@ -1090,7 +1074,7 @@ class Decoder {
     img.format = plan.output();
     img.format.width = width;
     img.palette = plan.palette();
-    img.row_bytes = (static_cast<std::size_t>(width) * img.format.channels * img.format.bit_depth + 7) / 8;
+    img.row_bytes = plan.output_row_bytes(width);
     img.pixels.resize(img.row_bytes * height + plan.max_row_bytes(width));
     transform_image(plan, width, height, pixels, rb, img.pixels.data(), img.row_bytes);
     img.pixels.resize(img.row_bytes * height);
@@ -1147,8 +1131,8 @@ class Decoder {
       if (width <= static_cast<std::uint32_t>(adam7_x_start[p]) ||
           height <= static_cast<std::uint32_t>(adam7_y_start[p]))
         continue;
-      const std::uint32_t pw = (width - adam7_x_start[p] + adam7_x_delta[p] - 1) / adam7_x_delta[p];
-      const std::size_t prb = (static_cast<std::size_t>(pw) * bits + 7) / 8;
+      const std::uint32_t pw = adam7_extent(width, adam7_x_start[p], adam7_x_delta[p]);
+      const std::size_t prb = packed_row_bytes(pw, bits);
       for (std::uint32_t y = adam7_y_start[p]; y < height; y += adam7_y_delta[p]) {
         std::memset(pass_row.data(), 0, prb);
         move_pixels(pixels + y * rb, adam7_x_start[p], adam7_x_delta[p], pass_row.data(), 0, 1, pw, bits, false);

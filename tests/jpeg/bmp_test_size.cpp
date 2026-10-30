@@ -69,7 +69,7 @@ static int probe(F&& f) {
   }
 }
 
-template <class T, class Src>
+template <class Src>
 static void start_source(Src& src, const unsigned char* data, std::size_t len, int precision,
                          JDIMENSION max_pixels) {
   src.color = vio::ColorSpace::RGB;
@@ -106,7 +106,7 @@ static int test_read_BMP(int width, int height, JDIMENSION max_pixels,
   return probe([&] {
     vio::bmp::Reader src;
     src.use_inversion_array = use_inversion_array;
-    start_source<std::uint8_t>(src, bh, 54, 8, max_pixels);
+    start_source(src, bh, 54, 8, max_pixels);
   });
 }
 
@@ -128,27 +128,22 @@ static int test_read_GIF(int width, int height, JDIMENSION max_pixels,
   PUT16(gh, 6, (unsigned int)width / 2);
   PUT16(gh, 8, (unsigned int)height / 2);
   gh[10] = 0x80;
-  gh[11] = 0;
-  gh[12] = 0;
-  gh[13] = gh[14] = gh[15] = 0;
   gh[16] = gh[17] = gh[18] = 255;
   gh[19] = ',';
   PUT16(gh, 24, (unsigned int)width);
   PUT16(gh, 26, (unsigned int)height);
   gh[28] = interlaced ? 0x40 : 0;
   gh[29] = 2;
-  retval += probe([&] {
+  auto read = [&] {
     vio::gif::Reader src;
-    start_source<std::uint8_t>(src, gh, 30, 8, max_pixels);
-  });
+    start_source(src, gh, 30, 8, max_pixels);
+  };
+  retval += probe(read);
   PUT16(gh, 6, (unsigned int)width);
   PUT16(gh, 8, (unsigned int)height);
   PUT16(gh, 24, (unsigned int)width / 2);
   PUT16(gh, 26, (unsigned int)height / 2);
-  retval += probe([&] {
-    vio::gif::Reader src;
-    start_source<std::uint8_t>(src, gh, 30, 8, max_pixels);
-  });
+  retval += probe(read);
   return retval;
 }
 
@@ -158,28 +153,22 @@ static int test_write_GIF(int width, int height, int unused)
   return probe([&] {
     vio::gif::Writer<std::uint8_t> dst;
     dst.is_lzw = false;
-    dst.width = static_cast<unsigned>(width);
-    dst.height = static_cast<unsigned>(height);
-    dst.color = vio::ColorSpace::RGB;
-    dst.components = 3;
-    dst.precision = 8;
     // GIF output forces color quantization; supply a trivial colormap.
     dst.colormap = { {0, 255}, {0, 255}, {0, 255} };
-    dst.start();
+    start_dest(dst, width, height, 8);
   });
 }
 
 template <class T>
 static void png_source(const unsigned char* ph, JDIMENSION max_pixels, int data_precision) {
   vio::png::Reader<T> src;
-  start_source<T>(src, ph, 33, data_precision, max_pixels);
+  start_source(src, ph, 33, data_precision, max_pixels);
 }
 
 static int test_read_PNG(int width, int height, JDIMENSION max_pixels,
                          int data_precision)
 {
   unsigned char ph[33] = { 0 };
-  unsigned int crc;
   ph[0] = 0x89;  ph[1] = 'P';  ph[2] = 'N';  ph[3] = 'G';
   ph[4] = 13;  ph[5] = 10;  ph[6] = 26;  ph[7] = 10;
   BYTESWAP32(ph, 8, 13);
@@ -188,8 +177,7 @@ static int test_read_PNG(int width, int height, JDIMENSION max_pixels,
   BYTESWAP32(ph, 20, height);
   ph[24] = (data_precision > 8 ? 16 : 8);
   ph[25] = 2;
-  ph[26] = 0;  ph[27] = 0;  ph[28] = 0;
-  crc = crc32(&ph[12], 17);
+  unsigned int crc = crc32(&ph[12], 17);
   BYTESWAP32(ph, 29, crc);
   return probe([&] {
     if (data_precision <= 8) png_source<std::uint8_t>(ph, max_pixels, data_precision);
@@ -216,7 +204,7 @@ static int test_write_PNG(int width, int height, int data_precision)
 template <class T>
 static void ppm_source(const unsigned char* ph, JDIMENSION max_pixels, int data_precision) {
   vio::ppm::Reader<T> src;
-  start_source<T>(src, ph, 80, data_precision, max_pixels);
+  start_source(src, ph, 80, data_precision, max_pixels);
 }
 
 static int test_read_PPM(int width, int height, JDIMENSION max_pixels,
@@ -257,7 +245,7 @@ static int test_read_TGA(int width, int height, JDIMENSION max_pixels,
   th[17] = top_down ? 0x20 : 0;
   return probe([&] {
     vio::targa::Reader src;
-    start_source<std::uint8_t>(src, th, 18, 8, max_pixels);
+    start_source(src, th, 18, 8, max_pixels);
   });
 }
 

@@ -217,9 +217,10 @@
   }
 
   /* ───────── Performance bars ───────── */
+  var jpegPerfNote = "3632×2384 RGB, best of 5 runs; geometric mean over 4:4:4, 4:2:2, 4:2:0, gray, fast DCT, progressive and arithmetic coding. ";
   var PERF = {
-    jpeg_enc: { title: "JPEG compression", note: "3632×2384 RGB, best of 5 runs; geometric mean over 4:4:4, 4:2:2, 4:2:0, gray, fast DCT, progressive and arithmetic coding. " },
-    jpeg_dec: { title: "JPEG decompression", note: "3632×2384 RGB, best of 5 runs; geometric mean over 4:4:4, 4:2:2, 4:2:0, gray, fast DCT, progressive and arithmetic coding. " },
+    jpeg_enc: { title: "JPEG compression", note: jpegPerfNote },
+    jpeg_dec: { title: "JPEG decompression", note: jpegPerfNote },
     png_dec: { title: "PNG decoding", note: "Geometric mean over the 2848 images of the QOI benchmark corpus; every library verifies CRC-32 and Adler-32. " },
     png_enc: { title: "PNG encoding", note: "vs libpng: vio's zlib mode, which writes libpng's files byte for byte. vs fpnge and image-png: vio's single-pass fast mode, with 4–5% smaller files. fpnge has no Arm or scalar build. " }
   };

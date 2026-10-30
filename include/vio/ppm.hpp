@@ -21,15 +21,15 @@ class Reader : public ImageReader<T> {
  protected:
   void start_input() override {
     if (in_.getc() != 'P') VIO_FAIL("Not a PPM/PGM file");
-    fmt_ = in_.getc();
-    if (fmt_ != '2' && fmt_ != '3' && fmt_ != '5' && fmt_ != '6') VIO_FAIL("Not a PPM/PGM file");
+    int fmt = in_.getc();
+    if (fmt != '2' && fmt != '3' && fmt != '5' && fmt != '6') VIO_FAIL("Not a PPM/PGM file");
     unsigned w = read_integer(65535), h = read_integer(65535);
     maxval_ = read_integer(65535);
     if (w == 0 || h == 0 || maxval_ == 0) VIO_FAIL("Not a PPM/PGM file");
     this->check_dimensions(w, h);
     width = w;
     height = h;
-    bool gray_file = fmt_ == '2' || fmt_ == '5';
+    bool gray_file = fmt == '2' || fmt == '5';
     if (gray_file) {
       if (color == ColorSpace::Unknown || color == ColorSpace::RGB) color = ColorSpace::Gray;
     } else {
@@ -40,7 +40,7 @@ class Reader : public ImageReader<T> {
       VIO_FAIL("Bogus input colorspace");
     this->set_components_from_color();
     file_comps_ = gray_file ? 1 : 3;
-    text_ = fmt_ == '2' || fmt_ == '3';
+    text_ = fmt == '2' || fmt == '3';
     word_ = !text_ && maxval_ > 255;
     if (!text_) iobuf_width_ = static_cast<std::size_t>(w) * file_comps_ * (word_ ? 2 : 1);
 
@@ -141,7 +141,6 @@ class Reader : public ImageReader<T> {
     return val;
   }
 
-  int fmt_ = 0;
   unsigned maxval_ = 0;
   int file_comps_ = 3;
   bool text_ = false, word_ = false;
@@ -153,8 +152,6 @@ class Reader : public ImageReader<T> {
 
 template <class T>
 class Writer : public ImageWriter<T> {
-  using Base = ImageWriter<T>;
-
  public:
   void write_rows(T** rows, unsigned n) override {
     for (unsigned r = 0; r < n; r++) put_row(rows[r]);
@@ -184,12 +181,8 @@ class Writer : public ImageWriter<T> {
   static constexpr int kBytes = sizeof(T) == 1 ? 1 : 2;
 
   static std::uint8_t* put(std::uint8_t* p, int v) {
-    if constexpr (kBytes == 1) {
-      *p++ = static_cast<std::uint8_t>(v);
-    } else {
-      *p++ = static_cast<std::uint8_t>((v >> 8) & 0xFF);
-      *p++ = static_cast<std::uint8_t>(v & 0xFF);
-    }
+    if constexpr (kBytes != 1) *p++ = static_cast<std::uint8_t>(v >> 8);
+    *p++ = static_cast<std::uint8_t>(v);
     return p;
   }
 

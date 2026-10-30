@@ -44,10 +44,13 @@ static int same_pixels(const vio_image* a, const vio_image* b) {
 static void test_roundtrip(void) {
   static const vio_format formats[] = {VIO_FORMAT_PNG, VIO_FORMAT_PPM, VIO_FORMAT_BMP, VIO_FORMAT_TGA};
   vio_image src;
+  void* source_png;
+  size_t source_png_size;
   size_t f;
   uint32_t ch, depth;
   CHECK(vio_load(path(dir, "testorig.ppm"), 0, 0, &src) == VIO_OK);
   CHECK(src.width == 227 && src.height == 149 && src.channels == 3 && src.depth == 8);
+  CHECK(vio_encode(&src, VIO_FORMAT_PNG, NULL, &source_png, &source_png_size) == VIO_OK);
   for (f = 0; f < sizeof formats / sizeof formats[0]; f++) {
     for (ch = 1; ch <= 4; ch++) {
       for (depth = 8; depth <= 16; depth += 8) {
@@ -60,13 +63,7 @@ static void test_roundtrip(void) {
         const uint32_t want_ch = keeps_alpha ? ch : (ch >= 3 ? 3 : 1);
         const uint32_t want_depth = keeps_16 ? depth : 8;
         /* source in the layout under test */
-        {
-          void* png;
-          size_t png_size;
-          CHECK(vio_encode(&src, VIO_FORMAT_PNG, NULL, &png, &png_size) == VIO_OK);
-          CHECK(vio_decode(png, png_size, ch, depth, &in) == VIO_OK);
-          vio_free(png);
-        }
+        CHECK(vio_decode(source_png, source_png_size, ch, depth, &in) == VIO_OK);
         CHECK(in.channels == ch && in.depth == depth);
         CHECK(vio_encode(&in, fmt, NULL, &file, &size) == VIO_OK);
         CHECK(vio_detect(file, size) == fmt);
@@ -90,6 +87,7 @@ static void test_roundtrip(void) {
       }
     }
   }
+  vio_free(source_png);
   vio_image_free(&src);
 }
 

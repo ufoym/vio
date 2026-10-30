@@ -540,14 +540,9 @@ extern "C" JEXPORT jpeg_error_mgr* jpeg_std_error(jpeg_error_mgr* err) {
   err->output_message = output_message;
   err->format_message = format_message;
   err->reset_error_mgr = reset_error_mgr;
-  err->trace_level = 0;
-  err->num_warnings = 0;
-  err->msg_code = 0;
   err->jpeg_message_table = jpeg_std_message_table;
   err->last_jpeg_message = JMSG_TEXT;
   err->addon_message_table = nullptr;
-  err->first_addon_message = 0;
-  err->last_addon_message = 0;
   return err;
 }
 
@@ -896,24 +891,19 @@ JEXPORT long jround_up(long a, long b) {
 
 JEXPORT void jcopy_sample_rows(JSAMPARRAY input_array, int source_row, JSAMPARRAY output_array,
                                int dest_row, int num_rows, JDIMENSION num_cols) {
-  for (int i = 0; i < num_rows; i++)
-    std::memcpy(output_array[dest_row + i], input_array[source_row + i], num_cols);
+  vd::copy_sample_rows(input_array, source_row, output_array, dest_row, num_rows, num_cols);
 }
 
 JEXPORT void j12copy_sample_rows(J12SAMPARRAY input_array, int source_row,
                                  J12SAMPARRAY output_array, int dest_row, int num_rows,
                                  JDIMENSION num_cols) {
-  for (int i = 0; i < num_rows; i++)
-    std::memcpy(output_array[dest_row + i], input_array[source_row + i],
-                num_cols * sizeof(J12SAMPLE));
+  vd::copy_sample_rows(input_array, source_row, output_array, dest_row, num_rows, num_cols);
 }
 
 JEXPORT void j16copy_sample_rows(J16SAMPARRAY input_array, int source_row,
                                  J16SAMPARRAY output_array, int dest_row, int num_rows,
                                  JDIMENSION num_cols) {
-  for (int i = 0; i < num_rows; i++)
-    std::memcpy(output_array[dest_row + i], input_array[source_row + i],
-                num_cols * sizeof(J16SAMPLE));
+  vd::copy_sample_rows(input_array, source_row, output_array, dest_row, num_rows, num_cols);
 }
 
 JEXPORT void jcopy_block_row(JBLOCKROW input_row, JBLOCKROW output_row, JDIMENSION num_blocks) {
@@ -1407,21 +1397,22 @@ void load_params(j_compress_ptr cinfo, vd::CState& cs, bool transcode = false) {
   cs.next_scanline = cinfo->next_scanline;
 }
 
-void store_tables(j_compress_ptr cinfo, const vd::CState& cs) {
+template <bool copy_sent, class Public, class State>
+void store_codec_tables(Public cinfo, const State& state) {
   auto common = reinterpret_cast<j_common_ptr>(cinfo);
   for (int i = 0; i < NUM_QUANT_TBLS; i++) {
-    if (!cs.quant_tbl_ptrs[i]) continue;
+    if (!state.quant_tbl_ptrs[i]) continue;
     JQUANT_TBL*& t = cinfo->quant_tbl_ptrs[i];
     if (!t) {
       t = static_cast<JQUANT_TBL*>(xalloc(common, JPOOL_PERMANENT, sizeof(JQUANT_TBL)));
       std::memset(t, 0, sizeof(*t));
     }
-    for (int k = 0; k < DCTSIZE2; k++) t->quantval[k] = cs.quant_tbl_ptrs[i]->quantval[k];
-    t->sent_table = cs.quant_tbl_ptrs[i]->sent_table;
+    for (int k = 0; k < DCTSIZE2; k++) t->quantval[k] = state.quant_tbl_ptrs[i]->quantval[k];
+    if constexpr (copy_sent) t->sent_table = state.quant_tbl_ptrs[i]->sent_table;
   }
   for (int i = 0; i < NUM_HUFF_TBLS; i++) {
     for (int ac = 0; ac < 2; ac++) {
-      const auto& h = ac ? cs.ac_huff_tbl_ptrs[i] : cs.dc_huff_tbl_ptrs[i];
+      const auto& h = ac ? state.ac_huff_tbl_ptrs[i] : state.dc_huff_tbl_ptrs[i];
       if (!h) continue;
       JHUFF_TBL*& t = ac ? cinfo->ac_huff_tbl_ptrs[i] : cinfo->dc_huff_tbl_ptrs[i];
       if (!t) {
@@ -1430,9 +1421,37 @@ void store_tables(j_compress_ptr cinfo, const vd::CState& cs) {
       }
       std::memcpy(t->bits, h->bits.data(), 17);
       std::memcpy(t->huffval, h->huffval.data(), 256);
-      t->sent_table = h->sent_table;
+      if constexpr (copy_sent) t->sent_table = h->sent_table;
     }
   }
+}
+
+void store_tables(j_compress_ptr cinfo, const vd::CState& cs) {
+  store_codec_tables<true>(cinfo, cs);
+}
+
+template <bool decompress>
+void store_component(jpeg_component_info& d, const vd::ComponentInfo& c, int index, int scaled_size) {
+  d.component_id = c.component_id;
+  d.component_index = index;
+  d.h_samp_factor = c.h_samp_factor;
+  d.v_samp_factor = c.v_samp_factor;
+  d.quant_tbl_no = c.quant_tbl_no;
+  d.dc_tbl_no = c.dc_tbl_no;
+  d.ac_tbl_no = c.ac_tbl_no;
+  d.width_in_blocks = c.width_in_blocks;
+  d.height_in_blocks = c.height_in_blocks;
+  if constexpr (decompress) D_SET_DCT_SCALED(&d, scaled_size);
+  else C_SET_DCT_SCALED(&d, scaled_size);
+  d.downsampled_width = c.downsampled_width;
+  d.downsampled_height = c.downsampled_height;
+  d.component_needed = c.component_needed;
+  d.MCU_width = c.MCU_width;
+  d.MCU_height = c.MCU_height;
+  d.MCU_blocks = c.MCU_blocks;
+  d.MCU_sample_width = c.MCU_sample_width;
+  d.last_col_width = c.last_col_width;
+  d.last_row_height = c.last_row_height;
 }
 
 // vio's state after starting compression -> public fields
@@ -1457,26 +1476,7 @@ void store_state(j_compress_ptr cinfo, const vd::CState& cs) {
   if (cinfo->comp_info) {
     for (int ci = 0; ci < cs.num_components; ci++) {
       const vd::ComponentInfo& c = cs.comp_info[ci];
-      jpeg_component_info& d = cinfo->comp_info[ci];
-      d.component_id = c.component_id;
-      d.component_index = c.component_index;
-      d.h_samp_factor = c.h_samp_factor;
-      d.v_samp_factor = c.v_samp_factor;
-      d.quant_tbl_no = c.quant_tbl_no;
-      d.dc_tbl_no = c.dc_tbl_no;
-      d.ac_tbl_no = c.ac_tbl_no;
-      d.width_in_blocks = c.width_in_blocks;
-      d.height_in_blocks = c.height_in_blocks;
-      C_SET_DCT_SCALED(&d, data_unit);
-      d.downsampled_width = c.downsampled_width;
-      d.downsampled_height = c.downsampled_height;
-      d.component_needed = c.component_needed;
-      d.MCU_width = c.MCU_width;
-      d.MCU_height = c.MCU_height;
-      d.MCU_blocks = c.MCU_blocks;
-      d.MCU_sample_width = c.MCU_sample_width;
-      d.last_col_width = c.last_col_width;
-      d.last_row_height = c.last_row_height;
+      store_component<false>(cinfo->comp_info[ci], c, c.component_index, data_unit);
     }
     cinfo->comps_in_scan = cs.comps_in_scan;
     for (int i = 0; i < MAX_COMPS_IN_SCAN; i++)
@@ -1579,9 +1579,8 @@ JDIMENSION write_scanlines(j_compress_ptr cinfo, T** scanlines, JDIMENSION num_l
   JDIMENSION rows = 0;
   CALL(cinfo, rows = m->c.write_scanlines<T>(scanlines, num_lines));
   cinfo->next_scanline = m->c.cs.next_scanline;
-  if (!flush_output(cinfo)) {
-    // The destination suspended: the data is kept for the next call.
-  }
+  // If the destination suspended, the data is kept for the next call.
+  flush_output(cinfo);
   return rows;
 }
 
@@ -1841,11 +1840,7 @@ JEXPORT void jpeg_set_defaults(j_compress_ptr cinfo) {
 #endif
   jpeg_set_quality(cinfo, 75, TRUE);
   std_huff_tables(cinfo);
-  for (int i = 0; i < NUM_ARITH_TBLS; i++) {
-    cinfo->arith_dc_L[i] = 0;
-    cinfo->arith_dc_U[i] = 1;
-    cinfo->arith_ac_K[i] = 5;
-  }
+  vd::reset_arith_tables(cinfo->arith_dc_L, cinfo->arith_dc_U, cinfo->arith_ac_K);
   cinfo->scan_info = nullptr;
   cinfo->num_scans = 0;
   cinfo->master->lossless = false;
@@ -2290,30 +2285,7 @@ void store_markers(j_decompress_ptr cinfo) {
 }
 
 void store_dtables(j_decompress_ptr cinfo) {
-  const vd::DState& st = cinfo->master->d.st;
-  auto common = reinterpret_cast<j_common_ptr>(cinfo);
-  for (int i = 0; i < NUM_QUANT_TBLS; i++) {
-    if (!st.quant_tbl_ptrs[i]) continue;
-    JQUANT_TBL*& t = cinfo->quant_tbl_ptrs[i];
-    if (!t) {
-      t = static_cast<JQUANT_TBL*>(xalloc(common, JPOOL_PERMANENT, sizeof(JQUANT_TBL)));
-      std::memset(t, 0, sizeof(*t));
-    }
-    for (int k = 0; k < DCTSIZE2; k++) t->quantval[k] = st.quant_tbl_ptrs[i]->quantval[k];
-  }
-  for (int i = 0; i < NUM_HUFF_TBLS; i++) {
-    for (int ac = 0; ac < 2; ac++) {
-      const auto& h = ac ? st.ac_huff_tbl_ptrs[i] : st.dc_huff_tbl_ptrs[i];
-      if (!h) continue;
-      JHUFF_TBL*& t = ac ? cinfo->ac_huff_tbl_ptrs[i] : cinfo->dc_huff_tbl_ptrs[i];
-      if (!t) {
-        t = static_cast<JHUFF_TBL*>(xalloc(common, JPOOL_PERMANENT, sizeof(JHUFF_TBL)));
-        std::memset(t, 0, sizeof(*t));
-      }
-      std::memcpy(t->bits, h->bits.data(), 17);
-      std::memcpy(t->huffval, h->huffval.data(), 256);
-    }
-  }
+  store_codec_tables<false>(cinfo, cinfo->master->d.st);
 }
 
 // Per-component fields from the decoder; latched quantization tables are
@@ -2324,25 +2296,7 @@ void store_components(j_decompress_ptr cinfo, bool latched) {
   for (int ci = 0; ci < cinfo->num_components && ci < static_cast<int>(st.comp_info.size()); ci++) {
     const vd::ComponentInfo& c = st.comp_info[ci];
     jpeg_component_info& d = cinfo->comp_info[ci];
-    d.component_id = c.component_id;
-    d.component_index = ci;
-    d.h_samp_factor = c.h_samp_factor;
-    d.v_samp_factor = c.v_samp_factor;
-    d.quant_tbl_no = c.quant_tbl_no;
-    d.dc_tbl_no = c.dc_tbl_no;
-    d.ac_tbl_no = c.ac_tbl_no;
-    d.width_in_blocks = c.width_in_blocks;
-    d.height_in_blocks = c.height_in_blocks;
-    D_SET_DCT_SCALED(&d, c.DCT_scaled_size);
-    d.downsampled_width = c.downsampled_width;
-    d.downsampled_height = c.downsampled_height;
-    d.component_needed = c.component_needed;
-    d.MCU_width = c.MCU_width;
-    d.MCU_height = c.MCU_height;
-    d.MCU_blocks = c.MCU_blocks;
-    d.MCU_sample_width = c.MCU_sample_width;
-    d.last_col_width = c.last_col_width;
-    d.last_row_height = c.last_row_height;
+    store_component<true>(d, c, ci, c.DCT_scaled_size);
     if (latched && c.quant_table && !d.quant_table) {
       d.quant_table = static_cast<JQUANT_TBL*>(
           xalloc(reinterpret_cast<j_common_ptr>(cinfo), JPOOL_IMAGE, sizeof(JQUANT_TBL)));
@@ -2465,6 +2419,13 @@ void load_dparams(j_decompress_ptr cinfo) {
   st.enable_external_quant = cinfo->enable_external_quant != 0;
   st.enable_2pass_quant = cinfo->enable_2pass_quant != 0;
   st.data_precision = cinfo->data_precision;
+}
+
+void prepare_output_dims(j_decompress_ptr cinfo) {
+  jpeg_decomp_master* m = cinfo->master;
+  load_dparams(cinfo);
+  m->d.state = vd::Decompressor::State::Ready;
+  m->d.calc_output_dimensions();
 }
 
 // An application-supplied colormap -> vio (needs out_color_components)
@@ -2795,9 +2756,7 @@ JEXPORT void jpeg_core_output_dimensions(j_decompress_ptr cinfo) {
   jpeg_decomp_master* m = cinfo->master;
   check_state(reinterpret_cast<j_common_ptr>(cinfo), DSTATE_READY);
   CALL(cinfo, {
-    load_dparams(cinfo);
-    m->d.state = vd::Decompressor::State::Ready;
-    m->d.calc_output_dimensions();
+    prepare_output_dims(cinfo);
     const vd::DState& st = m->d.st;
     cinfo->output_width = st.output_width;
     cinfo->output_height = st.output_height;
@@ -2808,12 +2767,9 @@ JEXPORT void jpeg_core_output_dimensions(j_decompress_ptr cinfo) {
 #endif
 
 JEXPORT void jpeg_calc_output_dimensions(j_decompress_ptr cinfo) {
-  jpeg_decomp_master* m = cinfo->master;
   check_state(reinterpret_cast<j_common_ptr>(cinfo), DSTATE_READY);
   CALL(cinfo, {
-    load_dparams(cinfo);
-    m->d.state = vd::Decompressor::State::Ready;
-    m->d.calc_output_dimensions();
+    prepare_output_dims(cinfo);
     store_output_dims(cinfo);
   });
 }
@@ -2825,9 +2781,7 @@ JEXPORT boolean jpeg_start_decompress(j_decompress_ptr cinfo) {
     if (!gather(cinfo, true)) return FALSE;
     if (!CALL(cinfo, {
           present(m);
-          load_dparams(cinfo);
-          m->d.state = vd::Decompressor::State::Ready;
-          m->d.calc_output_dimensions();
+          prepare_output_dims(cinfo);
           load_colormap(cinfo);
           m->d.master_selection();
           m->d.state = vd::Decompressor::State::Preload;
@@ -3125,13 +3079,11 @@ JEXPORT boolean jpeg_read_icc_profile(j_decompress_ptr cinfo, JOCTET** icc_data_
   *icc_data_ptr = nullptr;
   *icc_data_len = 0;
   auto is_icc = [](jpeg_saved_marker_ptr mk) {
-    static const char id[12] = {'I', 'C', 'C', '_', 'P', 'R', 'O', 'F', 'I', 'L', 'E', 0};
     return mk->marker == JPEG_APP0 + 2 && mk->data_length >= kOverhead &&
-           std::memcmp(mk->data, id, sizeof(id)) == 0;
+           std::memcmp(mk->data, vd::icc_signature, sizeof(vd::icc_signature)) == 0;
   };
   int num_markers = 0;
-  char marker_present[256] = {};
-  unsigned data_length[256] = {}, data_offset[256] = {};
+  jpeg_saved_marker_ptr parts[256] = {};
   for (jpeg_saved_marker_ptr mk = cinfo->marker_list; mk; mk = mk->next) {
     if (!is_icc(mk)) continue;
     if (num_markers == 0) {
@@ -3141,22 +3093,20 @@ JEXPORT boolean jpeg_read_icc_profile(j_decompress_ptr cinfo, JOCTET** icc_data_
       return FALSE;
     }
     int seq_no = mk->data[12];
-    if (seq_no <= 0 || seq_no > num_markers || marker_present[seq_no]) {
+    if (seq_no <= 0 || seq_no > num_markers || parts[seq_no]) {
       WARNMS(cinfo, JWRN_BOGUS_ICC);
       return FALSE;
     }
-    marker_present[seq_no] = 1;
-    data_length[seq_no] = mk->data_length - kOverhead;
+    parts[seq_no] = mk;
   }
   if (num_markers == 0) return FALSE;
   unsigned total_length = 0;
   for (int seq_no = 1; seq_no <= num_markers; seq_no++) {
-    if (!marker_present[seq_no]) {
+    if (!parts[seq_no]) {
       WARNMS(cinfo, JWRN_BOGUS_ICC);
       return FALSE;
     }
-    data_offset[seq_no] = total_length;
-    total_length += data_length[seq_no];
+    total_length += parts[seq_no]->data_length - kOverhead;
   }
   if (total_length == 0) {
     WARNMS(cinfo, JWRN_BOGUS_ICC);
@@ -3164,10 +3114,12 @@ JEXPORT boolean jpeg_read_icc_profile(j_decompress_ptr cinfo, JOCTET** icc_data_
   }
   auto* icc_data = static_cast<JOCTET*>(std::malloc(total_length));
   if (!icc_data) ERREXIT1(cinfo, JERR_OUT_OF_MEMORY, 11);
-  for (jpeg_saved_marker_ptr mk = cinfo->marker_list; mk; mk = mk->next) {
-    if (!is_icc(mk)) continue;
-    int seq_no = mk->data[12];
-    std::memcpy(icc_data + data_offset[seq_no], mk->data + kOverhead, data_length[seq_no]);
+  unsigned offset = 0;
+  for (int seq_no = 1; seq_no <= num_markers; seq_no++) {
+    jpeg_saved_marker_ptr mk = parts[seq_no];
+    unsigned length = mk->data_length - kOverhead;
+    std::memcpy(icc_data + offset, mk->data + kOverhead, length);
+    offset += length;
   }
   *icc_data_ptr = icc_data;
   *icc_data_len = total_length;

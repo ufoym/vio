@@ -14,6 +14,10 @@ VIO_INLINE void expand_right_edge(std::uint8_t** rows, int num_rows, unsigned im
     std::memset(rows[r] + image_width, rows[r][image_width - 1], end - image_width);
 }
 
+VIO_INLINE V::T sum_pairs(V::T samples) {
+  return V::add_16(V::even_u8(samples), V::odd_u8(samples));
+}
+
 }  // namespace detail_ds
 
 inline void h2v1_downsample(unsigned image_width, int max_v_samp_factor, unsigned v_samp_factor,
@@ -29,8 +33,8 @@ inline void h2v1_downsample(unsigned image_width, int max_v_samp_factor, unsigne
     std::uint8_t* outptr = output_data[row];
     for (unsigned col = 0; col < output_cols; col += N, inptr += 2 * N, outptr += N) {
       V::T a = V::loadu_lanes(inptr, 32), b = V::loadu_lanes(inptr + 16, 32);
-      a = V::srli_16<1>(V::add_16(V::add_16(V::even_u8(a), V::odd_u8(a)), bias));
-      b = V::srli_16<1>(V::add_16(V::add_16(V::even_u8(b), V::odd_u8(b)), bias));
+      a = V::srli_16<1>(V::add_16(detail_ds::sum_pairs(a), bias));
+      b = V::srli_16<1>(V::add_16(detail_ds::sum_pairs(b), bias));
       V::storeu(outptr, V::packus_16(a, b));
     }
   }
@@ -51,10 +55,8 @@ inline void h2v2_downsample(unsigned image_width, int max_v_samp_factor, unsigne
     for (unsigned col = 0; col < output_cols; col += N, inptr0 += 2 * N, inptr1 += 2 * N, outptr += N) {
       V::T a0 = V::loadu_lanes(inptr0, 32), b0 = V::loadu_lanes(inptr0 + 16, 32);
       V::T a1 = V::loadu_lanes(inptr1, 32), b1 = V::loadu_lanes(inptr1 + 16, 32);
-      V::T a = V::add_16(V::add_16(V::even_u8(a0), V::odd_u8(a0)),
-                         V::add_16(V::even_u8(a1), V::odd_u8(a1)));
-      V::T b = V::add_16(V::add_16(V::even_u8(b0), V::odd_u8(b0)),
-                         V::add_16(V::even_u8(b1), V::odd_u8(b1)));
+      V::T a = V::add_16(detail_ds::sum_pairs(a0), detail_ds::sum_pairs(a1));
+      V::T b = V::add_16(detail_ds::sum_pairs(b0), detail_ds::sum_pairs(b1));
       a = V::srli_16<2>(V::add_16(a, bias));
       b = V::srli_16<2>(V::add_16(b, bias));
       V::storeu(outptr, V::packus_16(a, b));

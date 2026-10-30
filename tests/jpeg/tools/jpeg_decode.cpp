@@ -148,10 +148,7 @@ int parse_switches(Options& o, jpeg::Decoder* dec, int argc, char** argv) {
       if (++argn >= argc) usage();
       o.map_file = argv[argn];
     } else if (keymatch(arg, "maxmemory", 3)) {
-      long lval;
-      char ch = 'x';
-      if (++argn >= argc) usage();
-      if (std::sscanf(argv[argn], "%ld%c", &lval, &ch) < 1) usage();
+      if (++argn >= argc || !cli::valid_maxmemory(argv[argn])) usage();
     } else if (keymatch(arg, "maxscans", 4)) {
       if (++argn >= argc) usage();
       if (std::sscanf(argv[argn], "%u", &o.max_scans) != 1) usage();
@@ -186,14 +183,14 @@ int parse_switches(Options& o, jpeg::Decoder* dec, int argc, char** argv) {
       if (std::sscanf(argv[argn], "%u/%u", &num, &denom) != 2) usage();
       if (dec) dec->set_scale(num, denom);
     } else if (keymatch(arg, "skip", 2)) {
-      int s = -1, e = -1;
+      int s, e;
       if (++argn >= argc) usage();
       if (std::sscanf(argv[argn], "%d,%d", &s, &e) != 2 || s < 0 || e < 0 || s > e) usage();
       o.skip = true;
       o.skip_start = static_cast<unsigned>(s);
       o.skip_end = static_cast<unsigned>(e);
     } else if (keymatch(arg, "crop", 2)) {
-      int w = -1, h = -1, x = -1, y = -1;
+      int w, h, x, y;
       char c;
       if (++argn >= argc) usage();
       if (std::sscanf(argv[argn], "%d%c%d+%d+%d", &w, &c, &h, &x, &y) != 5 ||
@@ -249,14 +246,13 @@ std::unique_ptr<vio::ImageWriter<T>> make_destination(const Options& o, int prec
 
 template <class T>
 void read_rows(jpeg::Decoder& dec, vio::ImageWriter<T>& dst, std::vector<T>& buf,
-               unsigned rows_per_call, unsigned until) {
+               unsigned until) {
   std::size_t stride = static_cast<std::size_t>(dec.output_width()) * dec.output_components();
-  if (buf.size() < stride * rows_per_call) buf.resize(stride * rows_per_call);
-  std::vector<T*> ptrs(rows_per_call);
-  for (unsigned i = 0; i < rows_per_call; i++) ptrs[i] = buf.data() + stride * i;
+  if (buf.size() < stride) buf.resize(stride);
+  T* row = buf.data();
   while (dec.output_scanline() < until) {
-    unsigned n = dec.read_scanlines<T>(ptrs.data(), 1);
-    dst.write_rows(ptrs.data(), n);
+    unsigned n = dec.read_scanlines<T>(&row, 1);
+    dst.write_rows(&row, n);
   }
 }
 
@@ -288,7 +284,7 @@ std::vector<std::uint8_t> decompress(const Options& o, jpeg::Decoder& dec,
     }
     describe(dec.output_height() - (o.skip_end - o.skip_start + 1));
     dst->start();
-    read_rows<T>(dec, *dst, buf, 1, o.skip_start);
+    read_rows<T>(dec, *dst, buf, o.skip_start);
     unsigned n = o.skip_end - o.skip_start + 1;
     unsigned tmp = dec.skip_scanlines(n);
     if (tmp != n) {
@@ -296,7 +292,7 @@ std::vector<std::uint8_t> decompress(const Options& o, jpeg::Decoder& dec,
                    tmp, n);
       std::exit(EXIT_FAILURE);
     }
-    read_rows<T>(dec, *dst, buf, 1, dec.output_height());
+    read_rows<T>(dec, *dst, buf, dec.output_height());
   } else if (o.crop) {
     if (static_cast<unsigned long long>(o.crop_x) + o.crop_width > dec.output_width() ||
         static_cast<unsigned long long>(o.crop_y) + o.crop_height > dec.output_height()) {
@@ -314,7 +310,7 @@ std::vector<std::uint8_t> decompress(const Options& o, jpeg::Decoder& dec,
                    tmp, o.crop_y);
       std::exit(EXIT_FAILURE);
     }
-    read_rows<T>(dec, *dst, buf, 1, o.crop_y + o.crop_height);
+    read_rows<T>(dec, *dst, buf, o.crop_y + o.crop_height);
     unsigned rest = dec.output_height() - o.crop_y - o.crop_height;
     tmp = dec.skip_scanlines(rest);
     if (tmp != rest) {
@@ -325,7 +321,7 @@ std::vector<std::uint8_t> decompress(const Options& o, jpeg::Decoder& dec,
   } else {
     describe(dec.output_height());
     dst->start();
-    read_rows<T>(dec, *dst, buf, 1, dec.output_height());
+    read_rows<T>(dec, *dst, buf, dec.output_height());
   }
   std::vector<std::uint8_t> out = dst->finish();
   return out;
@@ -342,38 +338,19 @@ int main(int argc, char** argv) {
     usage();
   }
   std::vector<std::uint8_t> input;
-  if (file_index < argc) {
-    if (!cli::read_file(argv[file_index], input)) {
-      std::fprintf(stderr, "%s: can't open %s\n", progname, argv[file_index]);
-      return EXIT_FAILURE;
-    }
-  } else {
-    input = cli::read_stream(stdin);
-  }
+  if (!cli::read_input(file_index < argc ? argv[file_index] : nullptr, input, progname))
+    return EXIT_FAILURE;
   std::FILE* output_file = stdout;
   if (o.outfilename) {
-    if (o.nooverwrite) {
-      if (std::FILE* f = std::fopen(o.outfilename, "rb")) {
-        std::fclose(f);
-        std::fprintf(stderr, "%s: can't open %s; file exists\n", progname, o.outfilename);
-        return EXIT_FAILURE;
-      }
-    }
-    if ((output_file = std::fopen(o.outfilename, "wb")) == nullptr) {
-      std::fprintf(stderr, "%s: can't open %s\n", progname, o.outfilename);
-      return EXIT_FAILURE;
-    }
+    output_file = cli::open_output(o.outfilename, o.nooverwrite, progname);
+    if (!output_file) return EXIT_FAILURE;
   }
   if (o.memsrc) std::fprintf(stderr, "Compressed size:  %lu bytes\n",
                              static_cast<unsigned long>(input.size()));
 
   jpeg::Decoder dec;
   bool first_warning = true;
-  dec.diagnostics().on_warning = [&](const std::string& msg) {
-    if (o.strict) throw Error(msg);
-    if (first_warning || o.trace_level >= 3) std::fprintf(stderr, "%s\n", msg.c_str());
-    first_warning = false;
-  };
+  dec.diagnostics().on_warning = [&](const std::string& msg) { cli::warn(msg, o.strict, o.trace_level, first_warning); };
   try {
     if (o.fmt == FMT_PNG || o.icc_filename) dec.save_markers(jpeg::M_APP2, 0xFFFF);
     dec.open(input);

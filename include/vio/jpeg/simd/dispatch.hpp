@@ -126,12 +126,6 @@ using ColorDeconvertFn = void (*)(unsigned width, std::uint8_t*** in, unsigned r
 
 inline ColorDeconvertFn ycc_rgb_kernel([[maybe_unused]] const Support& s,
                                        [[maybe_unused]] ColorSpace out) {
-  if (out == ColorSpace::RGB565) {  // NEON only
-#if VIO_SIMD_NEON
-    if (s.has(isa::kNEON)) return vio::jpeg::simd::neon::ycc_rgb_kernel(out);
-#endif
-    return nullptr;
-  }
 #if VIO_SIMD_X86
   if (auto f = isa::x86::ycc_rgb_kernel(s, out)) return f;
 #endif
@@ -224,7 +218,7 @@ template <class Table>
 inline HuffEncodeFn<Table> huff_encode_kernel([[maybe_unused]] const Support& s) {
   if (!s.huffman) return nullptr;
 #if VIO_SIMD_X86
-  if (s.has(isa::kSSE2)) return isa::x86::huff_encode_kernel<Table>(s);
+  if (auto f = isa::x86::huff_encode_kernel<Table>(s)) return f;
 #endif
 #if VIO_SIMD_NEON
   if (s.has(isa::kNEON)) return vio::jpeg::simd::neon::encode_blocks<Table>;

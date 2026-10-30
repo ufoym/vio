@@ -193,13 +193,11 @@ class Decoder {
   std::vector<std::uint8_t> icc_profile() {
     constexpr int OVERHEAD = 14;
     auto is_icc = [](const SavedMarker& m) {
-      static const char id[12] = {'I', 'C', 'C', '_', 'P', 'R', 'O', 'F', 'I', 'L', 'E', 0};
       return m.marker == M_APP2 && m.data.size() >= OVERHEAD &&
-             std::memcmp(m.data.data(), id, 12) == 0;
+             std::memcmp(m.data.data(), detail::icc_signature, sizeof(detail::icc_signature)) == 0;
     };
     int num_markers = 0;
-    bool present[256] = {};
-    unsigned length[256] = {}, offset[256] = {};
+    const SavedMarker* parts[256] = {};
     auto bogus = [&] {
       d_.st.warn("Corrupt JPEG data: bad ICC marker");
       return std::vector<std::uint8_t>();
@@ -210,24 +208,24 @@ class Decoder {
       else if (num_markers != m.data[13]) return bogus();
       int seq = m.data[12];
       if (seq <= 0 || seq > num_markers) return bogus();
-      if (present[seq]) return bogus();
-      present[seq] = true;
-      length[seq] = static_cast<unsigned>(m.data.size() - OVERHEAD);
+      if (parts[seq]) return bogus();
+      parts[seq] = &m;
     }
     if (num_markers == 0) return {};
     unsigned total = 0;
     for (int seq = 1; seq <= num_markers; seq++) {
-      if (!present[seq]) return bogus();
-      offset[seq] = total;
-      total += length[seq];
+      if (!parts[seq]) return bogus();
+      total += static_cast<unsigned>(parts[seq]->data.size() - OVERHEAD);
     }
     if (total == 0) return bogus();
     std::vector<std::uint8_t> out(total);
-    for (const auto& m : d_.st.marker_list)
-      if (is_icc(m)) {
-        int seq = m.data[12];
-        std::memcpy(out.data() + offset[seq], m.data.data() + OVERHEAD, length[seq]);
-      }
+    unsigned offset = 0;
+    for (int seq = 1; seq <= num_markers; seq++) {
+      const auto& data = parts[seq]->data;
+      unsigned length = static_cast<unsigned>(data.size() - OVERHEAD);
+      std::memcpy(out.data() + offset, data.data() + OVERHEAD, length);
+      offset += length;
+    }
     return out;
   }
 

@@ -17,6 +17,7 @@
 
 #include "../../core.hpp"
 #include "checksum.hpp"
+#include "deflate_tables.hpp"
 
 namespace vio::png::zlib {
 
@@ -37,14 +38,8 @@ inline constexpr int LENGTH_CODES = 29, LITERALS = 256, L_CODES = LITERALS + 1 +
                      STORED_BLOCK = 0, STATIC_TREES = 1, DYN_TREES = 2, TOO_FAR = 4096,
                      WIN_INIT = MAX_MATCH, DIST_CODE_LEN = 512;
 
-inline constexpr int extra_lbits[LENGTH_CODES] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2,
-                                                  2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
-inline constexpr int extra_dbits[D_CODES] = {0, 0, 0, 0, 1, 1, 2,  2,  3,  3,  4,  4,  5,  5,  6,
-                                             6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
 inline constexpr int extra_blbits[BL_CODES] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                                                0, 0, 0, 0, 0, 0, 2, 3, 7};
-inline constexpr std::uint8_t bl_order[BL_CODES] = {16, 17, 18, 0, 8,  7, 9,  6, 10, 5,
-                                                    11, 4,  12, 3, 13, 2, 14, 1, 15};
 
 struct CtData {
   std::uint16_t fc = 0;  // Freq / Code
@@ -88,20 +83,20 @@ constexpr StaticTables make_static_tables() {
   int length = 0, code = 0;
   for (code = 0; code < LENGTH_CODES - 1; code++) {
     t.base_length[code] = length;
-    for (int n = 0; n < (1 << extra_lbits[code]); n++)
+    for (int n = 0; n < (1 << len_extra[code]); n++)
       t.length_code[length++] = static_cast<std::uint8_t>(code);
   }
   t.length_code[length - 1] = static_cast<std::uint8_t>(code);
   int dist = 0;
   for (code = 0; code < 16; code++) {
     t.base_dist[code] = dist;
-    for (int n = 0; n < (1 << extra_dbits[code]); n++)
+    for (int n = 0; n < (1 << dist_extra[code]); n++)
       t.dist_code[dist++] = static_cast<std::uint8_t>(code);
   }
   dist >>= 7;
   for (; code < D_CODES; code++) {
     t.base_dist[code] = dist << 7;
-    for (int n = 0; n < (1 << (extra_dbits[code] - 7)); n++)
+    for (int n = 0; n < (1 << (dist_extra[code] - 7)); n++)
       t.dist_code[256 + dist++] = static_cast<std::uint8_t>(code);
   }
   std::uint16_t bl_count[MAX_BITS + 1] = {};
@@ -127,9 +122,9 @@ struct StaticTreeDesc {
   int elems;
   int max_length;
 };
-inline constexpr StaticTreeDesc static_l_desc = {tables.static_ltree, extra_lbits, LITERALS + 1,
+inline constexpr StaticTreeDesc static_l_desc = {tables.static_ltree, len_extra, LITERALS + 1,
                                                  L_CODES, MAX_BITS};
-inline constexpr StaticTreeDesc static_d_desc = {tables.static_dtree, extra_dbits, 0, D_CODES,
+inline constexpr StaticTreeDesc static_d_desc = {tables.static_dtree, dist_extra, 0, D_CODES,
                                                  MAX_BITS};
 inline constexpr StaticTreeDesc static_bl_desc = {nullptr, extra_blbits, 0, BL_CODES,
                                                   MAX_BL_BITS};
@@ -163,7 +158,7 @@ class Deflater {
     w_bits = static_cast<unsigned>(window_bits);
     w_size = 1u << w_bits;
     w_mask = w_size - 1;
-    hash_bits = static_cast<unsigned>(mem_level) + 7;
+    const unsigned hash_bits = static_cast<unsigned>(mem_level) + 7;
     hash_size = 1u << hash_bits;
     hash_mask = hash_size - 1;
     hash_shift = (hash_bits + detail::MIN_MATCH - 1) / detail::MIN_MATCH;
@@ -172,7 +167,7 @@ class Deflater {
     prev_.assign(w_size, 0);
     head_.assign(hash_size, 0);
     high_water = 0;
-    lit_bufsize = 1u << (mem_level + 6);
+    const unsigned lit_bufsize = 1u << (mem_level + 6);
     pending_store_.assign(static_cast<std::size_t>(lit_bufsize) * 4, 0);
     pending_buf = pending_store_.data();
     pending_buf_size = static_cast<unsigned long>(lit_bufsize) * 4;
@@ -323,9 +318,7 @@ class Deflater {
   }
 
   void clear_hash() {
-    head_[hash_size - 1] = 0;
-    std::memset(head_.data(), 0, (hash_size - 1) * sizeof(Pos));
-    slid = 0;
+    std::memset(head_.data(), 0, hash_size * sizeof(Pos));
   }
 
   void slide_hash() {
@@ -342,7 +335,6 @@ class Deflater {
       unsigned m = *--p;
       *p = static_cast<Pos>(m >= wsize ? m - wsize : 0);
     } while (--n);
-    slid = 1;
   }
 
   unsigned read_buf(std::uint8_t* buf, unsigned size) {
@@ -416,23 +408,23 @@ class Deflater {
     block_start = 0L;
     lookahead = 0;
     insert = 0;
-    match_length = prev_length = detail::MIN_MATCH - 1;
+    match_length = detail::MIN_MATCH - 1;
     match_available = 0;
     ins_h = 0;
   }
 
   void put_byte(unsigned c) { pending_buf[pending++] = static_cast<std::uint8_t>(c); }
   void put_short(unsigned w) {
-    put_byte(w & 0xff);
-    put_byte((w & 0xffff) >> 8);
+    put_byte(w);
+    put_byte(w >> 8);
   }
   void put_short_msb(unsigned b) {
-    put_byte((b >> 8) & 0xff);
-    put_byte(b & 0xff);
+    put_byte(b >> 8);
+    put_byte(b);
   }
 
   void flush_pending() {
-    tr_flush_bits();
+    bi_flush();
     unsigned len = pending > avail_out ? avail_out : static_cast<unsigned>(pending);
     if (len == 0) return;
     std::memcpy(next_out, pending_out, len);
@@ -444,7 +436,7 @@ class Deflater {
     if (pending == 0) pending_out = pending_buf;
   }
 
-  unsigned longest_match(unsigned cur_match) {
+  unsigned longest_match(unsigned cur_match, unsigned prev_length) {
     using namespace detail;
     unsigned chain_length = max_chain_length;
     const std::uint8_t* scan = window + strstart;
@@ -559,7 +551,6 @@ class Deflater {
     used -= avail_in;
     if (used) {
       if (used >= w_size) {
-        matches = 2;
         std::memcpy(window, next_in - w_size, w_size);
         strstart = w_size;
         insert = strstart;
@@ -567,7 +558,6 @@ class Deflater {
         if (window_size - strstart <= used) {
           strstart -= w_size;
           std::memcpy(window, window + w_size, strstart);
-          if (matches < 2) matches++;
           if (insert > strstart) insert = strstart;
         }
         std::memcpy(window + strstart, next_in - used, used);
@@ -577,10 +567,7 @@ class Deflater {
       block_start = strstart;
     }
     if (high_water < strstart) high_water = strstart;
-    if (last) {
-      bi_used = 8;
-      return finish_done;
-    }
+    if (last) return finish_done;
     if (flush != kNoFlush && flush != kFinish && avail_in == 0 &&
         static_cast<long>(strstart) == block_start)
       return block_done;
@@ -589,7 +576,6 @@ class Deflater {
       block_start -= w_size;
       strstart -= w_size;
       std::memcpy(window, window + w_size, strstart);
-      if (matches < 2) matches++;
       have += w_size;
       if (insert > strstart) insert = strstart;
     }
@@ -612,8 +598,20 @@ class Deflater {
       block_start += len;
       flush_pending();
     }
-    if (last) bi_used = 8;
     return last ? finish_started : need_more;
+  }
+
+  VIO_INLINE BlockState finish_block(int flush) {
+    if (flush == kFinish) {
+      flush_block_only(1);
+      if (avail_out == 0) return finish_started;
+      return finish_done;
+    }
+    if (sym_next) {
+      flush_block_only(0);
+      if (avail_out == 0) return need_more;
+    }
+    return block_done;
   }
 
   BlockState deflate_fast(int flush) {
@@ -629,7 +627,7 @@ class Deflater {
       hash_head = 0;
       if (lookahead >= MIN_MATCH) hash_head = insert_string(strstart);
       if (hash_head != 0 && strstart - hash_head <= max_dist())
-        match_length = longest_match(hash_head);
+        match_length = longest_match(hash_head, MIN_MATCH - 1);
       if (match_length >= MIN_MATCH) {
         bflush = tally_dist(strstart - match_start, match_length - MIN_MATCH);
         lookahead -= match_length;
@@ -657,16 +655,7 @@ class Deflater {
       }
     }
     insert = strstart < MIN_MATCH - 1 ? strstart : MIN_MATCH - 1;
-    if (flush == kFinish) {
-      flush_block_only(1);
-      if (avail_out == 0) return finish_started;
-      return finish_done;
-    }
-    if (sym_next) {
-      flush_block_only(0);
-      if (avail_out == 0) return need_more;
-    }
-    return block_done;
+    return finish_block(flush);
   }
 
   BlockState deflate_slow(int flush) {
@@ -681,10 +670,11 @@ class Deflater {
       }
       hash_head = 0;
       if (lookahead >= MIN_MATCH) hash_head = insert_string(strstart);
-      prev_length = match_length, prev_match = match_start;
+      unsigned prev_length = match_length;
+      const unsigned prev_match = match_start;
       match_length = MIN_MATCH - 1;
       if (hash_head != 0 && prev_length < max_lazy_match && strstart - hash_head <= max_dist()) {
-        match_length = longest_match(hash_head);
+        match_length = longest_match(hash_head, prev_length);
         if (match_length <= 5 &&
             (strategy == kFiltered ||
              (match_length == MIN_MATCH && strstart - match_start > TOO_FAR)))
@@ -722,16 +712,7 @@ class Deflater {
       match_available = 0;
     }
     insert = strstart < MIN_MATCH - 1 ? strstart : MIN_MATCH - 1;
-    if (flush == kFinish) {
-      flush_block_only(1);
-      if (avail_out == 0) return finish_started;
-      return finish_done;
-    }
-    if (sym_next) {
-      flush_block_only(0);
-      if (avail_out == 0) return need_more;
-    }
-    return block_done;
+    return finish_block(flush);
   }
 
   BlockState deflate_rle(int flush) {
@@ -773,16 +754,7 @@ class Deflater {
       }
     }
     insert = 0;
-    if (flush == kFinish) {
-      flush_block_only(1);
-      if (avail_out == 0) return finish_started;
-      return finish_done;
-    }
-    if (sym_next) {
-      flush_block_only(0);
-      if (avail_out == 0) return need_more;
-    }
-    return block_done;
+    return finish_block(flush);
   }
 
   BlockState deflate_huff(int flush) {
@@ -805,16 +777,7 @@ class Deflater {
       }
     }
     insert = 0;
-    if (flush == kFinish) {
-      flush_block_only(1);
-      if (avail_out == 0) return finish_started;
-      return finish_done;
-    }
-    if (sym_next) {
-      flush_block_only(0);
-      if (avail_out == 0) return need_more;
-    }
-    return block_done;
+    return finish_block(flush);
   }
 
   // ---- trees.c ---------------------------------------------------------------
@@ -838,17 +801,15 @@ class Deflater {
   }
 
   void send_bits(int value, int length) {
-    int len = length;
-    if (bi_valid > detail::Buf_size - len) {
-      int val = value;
-      bi_buf = static_cast<std::uint16_t>(bi_buf | (static_cast<std::uint16_t>(val) << bi_valid));
+    if (bi_valid > detail::Buf_size - length) {
+      bi_buf = static_cast<std::uint16_t>(bi_buf | (static_cast<std::uint16_t>(value) << bi_valid));
       put_short(bi_buf);
-      bi_buf = static_cast<std::uint16_t>(static_cast<std::uint16_t>(val) >>
+      bi_buf = static_cast<std::uint16_t>(static_cast<std::uint16_t>(value) >>
                                           (detail::Buf_size - bi_valid));
-      bi_valid += len - detail::Buf_size;
+      bi_valid += length - detail::Buf_size;
     } else {
       bi_buf = static_cast<std::uint16_t>(bi_buf | (static_cast<std::uint16_t>(value) << bi_valid));
-      bi_valid += len;
+      bi_valid += length;
     }
   }
   void send_code(int c, const detail::CtData* tree) { send_bits(tree[c].fc, tree[c].dl); }
@@ -867,7 +828,6 @@ class Deflater {
   void bi_windup() {
     if (bi_valid > 8) put_short(bi_buf);
     else if (bi_valid > 0) put_byte(bi_buf & 0xff);
-    bi_used = ((bi_valid - 1) & 7) + 1;
     bi_buf = 0;
     bi_valid = 0;
   }
@@ -878,7 +838,7 @@ class Deflater {
     for (int n = 0; n < detail::BL_CODES; n++) bl_tree[n].fc = 0;
     dyn_ltree[detail::END_BLOCK].fc = 1;
     opt_len = static_len = 0L;
-    sym_next = matches = 0;
+    sym_next = 0;
   }
 
   void tr_init() {
@@ -887,7 +847,6 @@ class Deflater {
     bl_desc = {bl_tree, 0, &detail::static_bl_desc};
     bi_buf = 0;
     bi_valid = 0;
-    bi_used = 0;
     init_block();
   }
 
@@ -1002,17 +961,28 @@ class Deflater {
     gen_codes(tree, max_code, bl_count);
   }
 
+  template <class Emit>
+  VIO_INLINE void for_code_length_runs(const detail::CtData* tree, int max_code, Emit&& emit) {
+    int prevlen = -1, nextlen = tree[0].dl, count = 0, max_count = 7, min_count = 4;
+    if (nextlen == 0) max_count = 138, min_count = 3;
+    for (int n = 0; n <= max_code; n++) {
+      int curlen = nextlen;
+      nextlen = tree[n + 1].dl;
+      if (++count < max_count && curlen == nextlen) continue;
+      emit(curlen, prevlen, count, min_count);
+      count = 0;
+      prevlen = curlen;
+      if (nextlen == 0) max_count = 138, min_count = 3;
+      else if (curlen == nextlen) max_count = 6, min_count = 3;
+      else max_count = 7, min_count = 4;
+    }
+  }
+
   void scan_tree(detail::CtData* tree, int max_code) {
     using namespace detail;
-    int prevlen = -1, curlen, nextlen = tree[0].dl, count = 0, max_count = 7, min_count = 4;
-    if (nextlen == 0) max_count = 138, min_count = 3;
     tree[max_code + 1].dl = 0xffff;
-    for (int n = 0; n <= max_code; n++) {
-      curlen = nextlen;
-      nextlen = tree[n + 1].dl;
-      if (++count < max_count && curlen == nextlen) {
-        continue;
-      } else if (count < min_count) {
+    for_code_length_runs(tree, max_code, [&](int curlen, int prevlen, int count, int min_count) {
+      if (count < min_count) {
         bl_tree[curlen].fc = static_cast<std::uint16_t>(bl_tree[curlen].fc + count);
       } else if (curlen != 0) {
         if (curlen != prevlen) bl_tree[curlen].fc++;
@@ -1022,24 +992,13 @@ class Deflater {
       } else {
         bl_tree[REPZ_11_138].fc++;
       }
-      count = 0;
-      prevlen = curlen;
-      if (nextlen == 0) max_count = 138, min_count = 3;
-      else if (curlen == nextlen) max_count = 6, min_count = 3;
-      else max_count = 7, min_count = 4;
-    }
+    });
   }
 
   void send_tree(const detail::CtData* tree, int max_code) {
     using namespace detail;
-    int prevlen = -1, curlen, nextlen = tree[0].dl, count = 0, max_count = 7, min_count = 4;
-    if (nextlen == 0) max_count = 138, min_count = 3;
-    for (int n = 0; n <= max_code; n++) {
-      curlen = nextlen;
-      nextlen = tree[n + 1].dl;
-      if (++count < max_count && curlen == nextlen) {
-        continue;
-      } else if (count < min_count) {
+    for_code_length_runs(tree, max_code, [&](int curlen, int prevlen, int count, int min_count) {
+      if (count < min_count) {
         do {
           send_code(curlen, bl_tree);
         } while (--count != 0);
@@ -1057,12 +1016,7 @@ class Deflater {
         send_code(REPZ_11_138, bl_tree);
         send_bits(count - 11, 7);
       }
-      count = 0;
-      prevlen = curlen;
-      if (nextlen == 0) max_count = 138, min_count = 3;
-      else if (curlen == nextlen) max_count = 6, min_count = 3;
-      else max_count = 7, min_count = 4;
-    }
+    });
   }
 
   int build_bl_tree() {
@@ -1072,7 +1026,7 @@ class Deflater {
     build_tree(&bl_desc);
     int max_blindex;
     for (max_blindex = BL_CODES - 1; max_blindex >= 3; max_blindex--)
-      if (bl_tree[bl_order[max_blindex]].dl != 0) break;
+      if (bl_tree[kCodeLengthOrder[max_blindex]].dl != 0) break;
     opt_len += 3 * (static_cast<unsigned long>(max_blindex) + 1) + 5 + 5 + 4;
     return max_blindex;
   }
@@ -1082,7 +1036,7 @@ class Deflater {
     send_bits(lcodes - 257, 5);
     send_bits(dcodes - 1, 5);
     send_bits(blcodes - 4, 4);
-    for (int rank = 0; rank < blcodes; rank++) send_bits(bl_tree[bl_order[rank]].dl, 3);
+    for (int rank = 0; rank < blcodes; rank++) send_bits(bl_tree[kCodeLengthOrder[rank]].dl, 3);
     send_tree(dyn_ltree, lcodes - 1);
     send_tree(dyn_dtree, dcodes - 1);
   }
@@ -1095,8 +1049,6 @@ class Deflater {
     if (stored_len) std::memcpy(pending_buf + pending, buf, stored_len);
     pending += stored_len;
   }
-
-  void tr_flush_bits() { bi_flush(); }
 
   void tr_align() {
     send_bits(detail::STATIC_TREES << 1, 3);
@@ -1136,15 +1088,15 @@ class Deflater {
         unsigned code = tables.length_code[lc];
         put(ltree[code + LITERALS + 1].fc, ltree[code + LITERALS + 1].dl);
         // (no extra bits for code 28, whose base_length is not set)
-        if (extra_lbits[code] != 0)
+        if (len_extra[code] != 0)
           put(lc - static_cast<unsigned>(tables.base_length[code]),
-              static_cast<unsigned>(extra_lbits[code]));
+              static_cast<unsigned>(len_extra[code]));
         spill();
         dist--;
         code = d_code(dist);
         put(dtree[code].fc, dtree[code].dl);
         put(dist - static_cast<unsigned>(tables.base_dist[code]),
-            static_cast<unsigned>(extra_dbits[code]));
+            static_cast<unsigned>(dist_extra[code]));
       }
       spill();
     }
@@ -1200,11 +1152,11 @@ class Deflater {
   std::uint8_t* window = nullptr;
   unsigned long window_size = 0;
   std::vector<Pos> prev_, head_;
-  unsigned ins_h = 0, hash_size = 0, hash_bits = 0, hash_mask = 0, hash_shift = 0;
+  unsigned ins_h = 0, hash_size = 0, hash_mask = 0, hash_shift = 0;
   long block_start = 0;
-  unsigned match_length = 0, prev_match = 0;
+  unsigned match_length = 0;
   int match_available = 0;
-  unsigned strstart = 0, match_start = 0, lookahead = 0, prev_length = 0;
+  unsigned strstart = 0, match_start = 0, lookahead = 0;
   unsigned max_chain_length = 0, max_lazy_match = 0;
   int level = 6, strategy = 0;
   unsigned good_match = 0;
@@ -1221,13 +1173,12 @@ class Deflater {
     std::uint16_t dist, lc;  // distance (0 for a literal), literal or length - MIN_MATCH
   };
   std::vector<Sym> syms_;
-  unsigned lit_bufsize = 0, sym_next = 0, sym_end = 0;  // (counts of symbols)
+  unsigned sym_next = 0, sym_end = 0;  // (counts of symbols)
   unsigned long opt_len = 0, static_len = 0;
-  unsigned matches = 0, insert = 0;
+  unsigned insert = 0;
   std::uint16_t bi_buf = 0;
-  int bi_valid = 0, bi_used = 0;
+  int bi_valid = 0;
   unsigned long high_water = 0;
-  int slid = 0;
 };
 
 // compress2(): one-shot zlib-format compression.

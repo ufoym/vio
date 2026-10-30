@@ -36,6 +36,7 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <random>
 #include <string>
@@ -132,12 +133,13 @@ std::string info_diff(const png::Info& a, const png::Info& b) {
 // Encodes a decoded image in `mode` and checks that it decodes unchanged,
 // chunks included.
 void check_roundtrip(Decoder& d, Encoder::Mode mode, const std::string& name) {
+  png::Info a = d.info;
+  a.animation.reset();
+  a.frames.clear();
+  a.default_image_is_frame = false;
   Encoder e;
   e.mode = mode;
-  e.info = d.info;
-  e.info.animation.reset();
-  e.info.frames.clear();
-  e.info.default_image_is_frame = false;
+  e.info = a;
   std::vector<std::uint8_t> file;
   try {
     file = e.encode(d.pixels().data(), d.row_bytes());
@@ -154,10 +156,6 @@ void check_roundtrip(Decoder& d, Encoder::Mode mode, const std::string& name) {
     return;
   }
   const char* m = mode == Encoder::Mode::kFast ? "fast" : "zlib";
-  png::Info a = d.info;
-  a.animation.reset();
-  a.frames.clear();
-  a.default_image_is_frame = false;
   if (!(a.header == r.info.header)) failure(name + ": header changed in " + m + " mode");
   else if (png_order(r) != png_order(d)) failure(name + ": samples changed in " + m + " mode");
   else if (!(a == r.info)) failure(name + ": chunks changed in " + m + " mode:" + info_diff(a, r.info));
@@ -441,9 +439,7 @@ std::uint64_t format_read(const std::vector<std::uint8_t>& file, std::uint32_t f
       image->colormap.assign(cm.begin(), cm.begin() + static_cast<std::ptrdiff_t>(r.colormap_entries * cms));
     }
   } catch (const std::exception&) {
-    Fnv e;
-    e.add(std::string("error"));
-    return e.h;
+    return error_hash();
   }
   return f.h;
 }
@@ -628,6 +624,25 @@ int cmd_unknown(const std::vector<std::string>& args) {
 // ---------------------------------------------------------------------------
 
 int cmd_getset() {
+  // A failed row-stream setup must remain retryable.
+  {
+    Encoder e;
+    e.mode = Encoder::Mode::kZlib;
+    e.header.width = e.header.height = 1;
+    e.header.color_type = png::kGray;
+    e.options.idat_size = std::numeric_limits<std::size_t>::max();
+    const std::uint8_t pixel = 42;
+    try {
+      e.write_row(&pixel);
+      failure("getset: oversized IDAT buffer accepted");
+    } catch (const std::length_error&) {
+      e.options.idat_size = 8192;
+      e.write_row(&pixel);
+      Decoder d;
+      d.decode(e.finish());
+      if (d.pixels().size() != 1 || d.pixels()[0] != pixel) failure("getset: row-stream retry changed pixels");
+    }
+  }
   std::mt19937 rng(99);
   for (int it = 0; it < 60; it++) {
     const auto& fmt = kFormats[it % 15];
@@ -710,9 +725,7 @@ int cmd_getset() {
     const std::size_t rb = e.row_bytes();
     std::vector<std::uint8_t> px(rb * in.header.height);
     for (auto& v : px) v = static_cast<std::uint8_t>(rng());
-    const unsigned bits = static_cast<unsigned>(vio::png::num_channels(fmt[0]) * fmt[1]);
-    if (const unsigned used = (in.header.width * bits) % 8)
-      for (std::uint32_t y = 0; y < in.header.height; y++) px[y * rb + rb - 1] &= static_cast<std::uint8_t>(0xff00u >> used);
+    detail::clear_padding(px, in.header, rb);
     for (Encoder::Mode mode : {Encoder::Mode::kFast, Encoder::Mode::kZlib}) {
       e.mode = mode;
       Decoder d;

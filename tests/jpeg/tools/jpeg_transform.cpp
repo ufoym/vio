@@ -136,10 +136,7 @@ int parse_switches(Options& o, jpeg::detail::CState& cs, int argc, char** argv, 
       if (++argn >= argc) usage();
       o.icc_filename = argv[argn];
     } else if (keymatch(arg, "maxmemory", 3)) {
-      long lval;
-      char ch = 'x';
-      if (++argn >= argc) usage();
-      if (std::sscanf(argv[argn], "%ld%c", &lval, &ch) < 1) usage();
+      if (++argn >= argc || !cli::valid_maxmemory(argv[argn])) usage();
     } else if (keymatch(arg, "maxscans", 4)) {
       if (++argn >= argc) usage();
       if (std::sscanf(argv[argn], "%u", &o.max_scans) != 1) usage();
@@ -157,17 +154,7 @@ int parse_switches(Options& o, jpeg::detail::CState& cs, int argc, char** argv, 
     } else if (keymatch(arg, "report", 3)) {
       o.report = true;
     } else if (keymatch(arg, "restart", 1)) {
-      long lval;
-      char ch = 'x';
-      if (++argn >= argc) usage();
-      if (std::sscanf(argv[argn], "%ld%c", &lval, &ch) < 1) usage();
-      if (lval < 0 || lval > 65535L) usage();
-      if (ch == 'b' || ch == 'B') {
-        cs.restart_interval = static_cast<unsigned>(lval);
-        cs.restart_in_rows = 0;
-      } else {
-        cs.restart_in_rows = static_cast<int>(lval);
-      }
+      if (++argn >= argc || !cli::parse_restart(argv[argn], cs)) usage();
     } else if (keymatch(arg, "roll", 3)) {
       if (++argn >= argc) usage();
       if (t.crop || !jpeg::parse_crop_spec(t, argv[argn]) ||
@@ -225,23 +212,10 @@ int main(int argc, char** argv) {
     usage();
   }
   std::vector<std::uint8_t> input, drop_data, icc_profile;
-  if (file_index < argc) {
-    if (!cli::read_file(argv[file_index], input)) {
-      std::fprintf(stderr, "%s: can't open %s for reading\n", progname, argv[file_index]);
-      return EXIT_FAILURE;
-    }
-  } else {
-    input = cli::read_stream(stdin);
-  }
+  if (!cli::read_input(file_index < argc ? argv[file_index] : nullptr, input, progname, " for reading"))
+    return EXIT_FAILURE;
   if (o.icc_filename) {
-    if (!cli::read_file(o.icc_filename, icc_profile)) {
-      std::fprintf(stderr, "%s: can't open %s\n", progname, o.icc_filename);
-      return EXIT_FAILURE;
-    }
-    if (icc_profile.empty()) {
-      std::fprintf(stderr, "%s: can't determine size of %s\n", progname, o.icc_filename);
-      return EXIT_FAILURE;
-    }
+    if (!cli::read_icc(o.icc_filename, icc_profile, progname)) return EXIT_FAILURE;
     if (o.copyoption == jpeg::CopyOption::All) o.copyoption = jpeg::CopyOption::AllExceptICC;
     if (o.copyoption == jpeg::CopyOption::ICC) o.copyoption = jpeg::CopyOption::None;
   }
@@ -251,11 +225,7 @@ int main(int argc, char** argv) {
   }
 
   bool first_warning = true;
-  auto on_warning = [&](const std::string& msg) {
-    if (o.strict) throw Error(msg);
-    if (first_warning || o.trace_level >= 3) std::fprintf(stderr, "%s\n", msg.c_str());
-    first_warning = false;
-  };
+  auto on_warning = [&](const std::string& msg) { cli::warn(msg, o.strict, o.trace_level, first_warning); };
   src.diagnostics().on_warning = on_warning;
   drop.diagnostics().on_warning = on_warning;
   dst.diagnostics().on_warning = on_warning;
@@ -305,17 +275,8 @@ int main(int argc, char** argv) {
 
   std::FILE* fp = stdout;
   if (o.outfilename) {
-    if (o.nooverwrite) {
-      if (std::FILE* f = std::fopen(o.outfilename, "rb")) {
-        std::fclose(f);
-        std::fprintf(stderr, "%s: can't open %s; file exists\n", progname, o.outfilename);
-        return EXIT_FAILURE;
-      }
-    }
-    if ((fp = std::fopen(o.outfilename, "wb")) == nullptr) {
-      std::fprintf(stderr, "%s: can't open %s for writing\n", progname, o.outfilename);
-      return EXIT_FAILURE;
-    }
+    fp = cli::open_output(o.outfilename, o.nooverwrite, progname, " for writing");
+    if (!fp) return EXIT_FAILURE;
   }
   if (!cli::write_file(fp, out)) {
     std::fprintf(stderr, "Output file write error --- out of disk space?\n");

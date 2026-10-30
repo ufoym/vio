@@ -144,6 +144,7 @@ class DCoefController : public CoefControllerBase {
   virtual int decompress_data(T*** output_buf) = 0;
   // Discards the next iMCU row without producing output (skip_scanlines).
   virtual void skip_imcu_row() {}
+
 };
 
 // ---------------------------------------------------------------------------
@@ -154,13 +155,7 @@ class CoefController final : public DCoefController<T> {
   CoefController(DState& st, IdctManager<T>* idct, bool need_full_buffer)
       : st_(st), idct_(idct) {
     if (need_full_buffer) {
-      whole_image_.resize(st.num_components);
-      for (int ci = 0; ci < st.num_components; ci++) {
-        ComponentInfo& c = st.comp_info[ci];
-        whole_image_[ci].allocate(
-            static_cast<std::size_t>(round_up(c.width_in_blocks, c.h_samp_factor)),
-            static_cast<std::size_t>(round_up(c.height_in_blocks, c.v_samp_factor)));
-      }
+      allocate_component_buffers(whole_image_, st);
       this->coef_arrays = whole_image_.data();
       multi_ = true;
     } else {
@@ -246,14 +241,7 @@ class CoefController final : public DCoefController<T> {
   }
 
   void start_iMCU_row() {
-    if (st_.comps_in_scan > 1) {
-      this->MCU_rows_per_iMCU_row = 1;
-    } else {
-      if (st_.input_iMCU_row < st_.total_iMCU_rows - 1)
-        this->MCU_rows_per_iMCU_row = st_.cur_comp_info[0]->v_samp_factor;
-      else
-        this->MCU_rows_per_iMCU_row = st_.cur_comp_info[0]->last_row_height;
-    }
+    this->MCU_rows_per_iMCU_row = imcu_rows_in_scan(st_, st_.input_iMCU_row);
     MCU_ctr_ = 0;
     MCU_vert_offset_ = 0;
   }
@@ -317,13 +305,7 @@ class CoefController final : public DCoefController<T> {
     for (int ci = 0; ci < st_.num_components; ci++) {
       ComponentInfo& c = st_.comp_info[ci];
       if (!c.component_needed) continue;
-      int block_rows;
-      if (st_.output_iMCU_row < last_iMCU_row) {
-        block_rows = c.v_samp_factor;
-      } else {
-        block_rows = static_cast<int>(c.height_in_blocks % c.v_samp_factor);
-        if (block_rows == 0) block_rows = c.v_samp_factor;
-      }
+      int block_rows = component_rows_in_imcu(c, st_.output_iMCU_row < last_iMCU_row);
       T** output_ptr = output_buf[ci];
       for (int block_row = 0; block_row < block_rows; block_row++) {
         Block* buffer_ptr =
@@ -404,15 +386,8 @@ class CoefController final : public DCoefController<T> {
     for (int ci = 0; ci < st_.num_components; ci++) {
       ComponentInfo& c = st_.comp_info[ci];
       if (!c.component_needed) continue;
-      int block_rows;
-      if (st_.output_iMCU_row + 1 < last_iMCU_row) {
-        block_rows = c.v_samp_factor;
-      } else if (st_.output_iMCU_row < last_iMCU_row) {
-        block_rows = c.v_samp_factor;
-      } else {
-        block_rows = static_cast<int>(c.height_in_blocks % c.v_samp_factor);
-        if (block_rows == 0) block_rows = c.v_samp_factor;
-      }
+      int block_rows = component_rows_in_imcu(
+          c, st_.output_iMCU_row + 1 < last_iMCU_row || st_.output_iMCU_row < last_iMCU_row);
       // buffer[r] == row (output_iMCU_row * v_samp + r) of the whole image
       BlockArray& whole = whole_image_[ci];
       long base_row = static_cast<long>(st_.output_iMCU_row) * c.v_samp_factor;
@@ -673,13 +648,7 @@ class DiffController final : public DCoefController<T> {
       diff_rows_[ci] = diff_buf_[ci].rows();
     }
     if (need_full_buffer) {
-      whole_image_.resize(st.num_components);
-      for (int ci = 0; ci < st.num_components; ci++) {
-        ComponentInfo& c = st.comp_info[ci];
-        whole_image_[ci].allocate(
-            static_cast<std::size_t>(round_up(c.width_in_blocks, c.h_samp_factor)),
-            static_cast<std::size_t>(round_up(c.height_in_blocks, c.v_samp_factor)));
-      }
+      allocate_component_buffers(whole_image_, st);
       multi_ = true;
     }
   }
@@ -721,13 +690,7 @@ class DiffController final : public DCoefController<T> {
     for (int ci = 0; ci < st_.num_components; ci++) {
       ComponentInfo& c = st_.comp_info[ci];
       T** buffer = whole_image_[ci].rows() + st_.output_iMCU_row * c.v_samp_factor;
-      int samp_rows;
-      if (st_.output_iMCU_row < last_iMCU_row) {
-        samp_rows = c.v_samp_factor;
-      } else {
-        samp_rows = static_cast<int>(c.height_in_blocks % c.v_samp_factor);
-        if (samp_rows == 0) samp_rows = c.v_samp_factor;
-      }
+      int samp_rows = component_rows_in_imcu(c, st_.output_iMCU_row < last_iMCU_row);
       for (int row = 0; row < samp_rows; row++)
         std::memcpy(output_buf[ci][row], buffer[row], c.width_in_blocks * sizeof(T));
     }
@@ -736,14 +699,7 @@ class DiffController final : public DCoefController<T> {
   }
 
   void start_iMCU_row() {
-    if (st_.comps_in_scan > 1) {
-      this->MCU_rows_per_iMCU_row = 1;
-    } else {
-      if (st_.input_iMCU_row < st_.total_iMCU_rows - 1)
-        this->MCU_rows_per_iMCU_row = st_.cur_comp_info[0]->v_samp_factor;
-      else
-        this->MCU_rows_per_iMCU_row = st_.cur_comp_info[0]->last_row_height;
-    }
+    this->MCU_rows_per_iMCU_row = imcu_rows_in_scan(st_, st_.input_iMCU_row);
     MCU_ctr_ = 0;
     MCU_vert_offset_ = 0;
   }

@@ -24,22 +24,6 @@ VIO_INLINE unsigned ctz64(std::uint64_t v) {  // v != 0
 #endif
 }
 
-VIO_INLINE int clz64(std::uint64_t v) {  // v != 0
-#if defined(_MSC_VER) && !defined(__clang__)
-  unsigned long i;
-#if VIO_SIMD_X86_64
-  _BitScanReverse64(&i, v);
-  return 63 - static_cast<int>(i);
-#else
-  if (v >> 32) { _BitScanReverse(&i, static_cast<std::uint32_t>(v >> 32)); return 31 - static_cast<int>(i); }
-  _BitScanReverse(&i, static_cast<std::uint32_t>(v));
-  return 63 - static_cast<int>(i);
-#endif
-#else
-  return __builtin_clzll(v);
-#endif
-}
-
 #if VIO_HUFF_BMI2
 VIO_INLINE int ac_bit_length(unsigned v) {  // number of bits in v, 0 < v <= 32768
 #if defined(_MSC_VER) && !defined(__clang__)
@@ -82,10 +66,6 @@ VIO_INLINE std::uint64_t movemask64(const T* r) {
   };
   return m(0) | m(1) << 16 | m(2) << 32 | m(3) << 48;
 }
-
-}  // namespace detail_huff
-
-namespace detail_huff {
 
 // (1 << n) - 1
 alignas(64) inline constexpr std::uint32_t kMaskBits[17] = {

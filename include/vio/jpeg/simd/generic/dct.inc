@@ -137,34 +137,6 @@ VIO_INLINE void fdct_ifast_pass(T* d) {
   d[7] = V::sub_16(z11, z4);
 }
 
-// Accurate integer IDCT on 8 dequantized vectors (one per coefficient
-// index); kPass1 descales to the workspace, otherwise to output scale.
-template <bool kPass1>
-VIO_INLINE void idct_islow_pass(T* in) {
-  constexpr int DS = kPass1 ? CONST_BITS - PASS1_BITS : CONST_BITS + PASS1_BITS + 3;
-  D tmp3 = madd(in[2], in[6], pair(F_0_541 + F_0_765, F_0_541));
-  D tmp2 = madd(in[2], in[6], pair(F_0_541, F_0_541 - F_1_847));
-  D tmp0 = widen_shl<CONST_BITS>(V::add_16(in[0], in[4]));
-  D tmp1 = widen_shl<CONST_BITS>(V::sub_16(in[0], in[4]));
-  D tmp10 = add(tmp0, tmp3), tmp13 = sub(tmp0, tmp3);
-  D tmp11 = add(tmp1, tmp2), tmp12 = sub(tmp1, tmp2);
-  T z3 = V::add_16(in[3], in[7]), z4 = V::add_16(in[1], in[5]);
-  D z3m = madd(z3, z4, pair(F_1_175 - F_1_961, F_1_175));
-  D z4m = madd(z3, z4, pair(F_1_175, F_1_175 - F_0_390));
-  D o0 = add(madd(in[7], in[1], pair(F_0_298 - F_0_899, -F_0_899)), z3m);
-  D o3 = add(madd(in[7], in[1], pair(-F_0_899, F_1_501 - F_0_899)), z4m);
-  D o1 = add(madd(in[5], in[3], pair(F_2_053 - F_2_562, -F_2_562)), z4m);
-  D o2 = add(madd(in[5], in[3], pair(-F_2_562, F_3_072 - F_2_562)), z3m);
-  in[0] = descale<DS>(add(tmp10, o3));
-  in[7] = descale<DS>(sub(tmp10, o3));
-  in[1] = descale<DS>(add(tmp11, o2));
-  in[6] = descale<DS>(sub(tmp11, o2));
-  in[2] = descale<DS>(add(tmp12, o1));
-  in[5] = descale<DS>(sub(tmp12, o1));
-  in[3] = descale<DS>(add(tmp13, o0));
-  in[4] = descale<DS>(sub(tmp13, o0));
-}
-
 // idct_islow_pass() on named vectors.
 template <bool kPass1>
 VIO_INLINE void idct_islow_pass(T& i0, T& i1, T& i2, T& i3, T& i4, T& i5, T& i6, T& i7) {

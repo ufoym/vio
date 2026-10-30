@@ -1,0 +1,18 @@
+// Included inside each generic SIMD back end's namespace.
+inline void fdct_kernels(const Support& s, FdctKernels& k) {
+  if (!s.has(VIO_GENERIC_SUPPORT)) return;
+  k.convsamp = convsamp;
+  k.fdct_islow = fdct_islow;
+  k.fdct_ifast = fdct_ifast;
+  k.quantize = quantize;
+  k.forward_islow = forward_islow;
+  k.forward_ifast = forward_ifast;
+}
+
+inline void idct_kernels(const Support& s, IdctKernels& k) {
+  if (!s.has(VIO_GENERIC_SUPPORT)) return;
+  k.islow = idct16_adapter<idct_islow>;
+  k.ifast = idct16_adapter<idct_ifast>;
+  k.s4 = idct16_adapter<idct_4x4>;
+  k.s2 = idct16_adapter<idct_2x2>;
+}

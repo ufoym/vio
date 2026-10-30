@@ -144,9 +144,7 @@ Result read_libpng(const std::vector<std::uint8_t>& data, const Xform* x) {
 }
 
 std::string hex(std::uint64_t v) {
-  char s[17];
-  std::snprintf(s, sizeof s, "%016llx", static_cast<unsigned long long>(v));
-  return s;
+  return Fnv{v}.hex();
 }
 
 // Hash of the results of `cases` on `data`, the cases libpng cannot run
@@ -178,9 +176,7 @@ std::uint64_t format_hash(const std::vector<std::uint8_t>& data) {
       png_image im{};
       im.version = PNG_IMAGE_VERSION;
       if (!png_image_begin_read_from_memory(&im, data.data(), data.size())) {
-        Fnv e;
-        e.add(std::string("error"));
-        f.add(e.h);
+        f.add(error_hash());
         continue;
       }
       im.format = fmt;
@@ -190,9 +186,7 @@ std::uint64_t format_hash(const std::vector<std::uint8_t>& data) {
       const png_color c{0x40, 0x80, 0xc0};
       const int stride = static_cast<int>(PNG_IMAGE_ROW_STRIDE(im)) * (bg ? -1 : 1);
       if (!png_image_finish_read(&im, bg ? &c : nullptr, buf.data(), stride, cm.data())) {
-        Fnv e;
-        e.add(std::string("error"));
-        f.add(e.h);
+        f.add(error_hash());
         continue;
       }
       Fnv one;

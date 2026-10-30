@@ -124,9 +124,6 @@ class ColorConverter {
   using SimdFn = void (*)(unsigned, T**, T***, unsigned, int);
   SimdFn simd_ = nullptr;
 
- public:
-
- private:
   enum Kind { RgbYcc, RgbGray, RgbRgb };
   static constexpr int N = kMaxSample<T> + 1;
   static constexpr int R_Y_OFF = 0, G_Y_OFF = N, B_Y_OFF = 2 * N, R_CB_OFF = 3 * N,
@@ -157,18 +154,9 @@ class ColorConverter {
 
   template <Kind K>
   ConvertFn select(ColorSpace in) {
-    switch (in) {
-      case ColorSpace::ExtRGBX:
-      case ColorSpace::ExtRGBA: return &ColorConverter::conv<K, 0, 1, 2, 4>;
-      case ColorSpace::ExtBGR: return &ColorConverter::conv<K, 2, 1, 0, 3>;
-      case ColorSpace::ExtBGRX:
-      case ColorSpace::ExtBGRA: return &ColorConverter::conv<K, 2, 1, 0, 4>;
-      case ColorSpace::ExtXBGR:
-      case ColorSpace::ExtABGR: return &ColorConverter::conv<K, 3, 2, 1, 4>;
-      case ColorSpace::ExtXRGB:
-      case ColorSpace::ExtARGB: return &ColorConverter::conv<K, 1, 2, 3, 4>;
-      default: return &ColorConverter::conv<K, 0, 1, 2, 3>;
-    }
+    return select_rgb_layout(in, []<int R, int G, int B, int A, int PS> {
+      return &ColorConverter::conv<K, R, G, B, PS>;
+    });
   }
 
   template <Kind K, int R, int G, int B, int PS>
@@ -542,17 +530,17 @@ class PrepController {
       : cs_(cs), cconvert_(cconvert), downsample_(downsample) {
     int data_unit = cs.lossless ? 1 : DCTSIZE;
     color_buf_.resize(cs.num_components);
-    if (downsample->need_context_rows) {
-      context_ = true;
-      int rgroup_height = cs.max_v_samp_factor;
-      fake_.resize(cs.num_components);
-      for (int ci = 0; ci < cs.num_components; ci++) {
-        const ComponentInfo& c = cs.comp_info[ci];
-        true_buf_.emplace_back(
-            static_cast<std::size_t>((static_cast<long>(c.width_in_blocks) * data_unit *
-                                      cs.max_h_samp_factor) /
-                                     c.h_samp_factor),
-            static_cast<std::size_t>(3 * rgroup_height));
+    context_ = downsample->need_context_rows;
+    int rgroup_height = cs.max_v_samp_factor;
+    if (context_) fake_.resize(cs.num_components);
+    for (int ci = 0; ci < cs.num_components; ci++) {
+      const ComponentInfo& c = cs.comp_info[ci];
+      true_buf_.emplace_back(
+          static_cast<std::size_t>((static_cast<long>(c.width_in_blocks) * data_unit *
+                                    cs.max_h_samp_factor) /
+                                   c.h_samp_factor),
+          static_cast<std::size_t>((context_ ? 3 : 1) * rgroup_height));
+      if (context_) {
         fake_[ci].assign(5 * rgroup_height, nullptr);
         T** tb = true_buf_.back().rows();
         for (int i = 0; i < 3 * rgroup_height; i++) fake_[ci][rgroup_height + i] = tb[i];
@@ -561,15 +549,7 @@ class PrepController {
           fake_[ci][4 * rgroup_height + i] = tb[i];
         }
         color_buf_[ci] = fake_[ci].data() + rgroup_height;
-      }
-    } else {
-      for (int ci = 0; ci < cs.num_components; ci++) {
-        const ComponentInfo& c = cs.comp_info[ci];
-        true_buf_.emplace_back(
-            static_cast<std::size_t>((static_cast<long>(c.width_in_blocks) * data_unit *
-                                      cs.max_h_samp_factor) /
-                                     c.h_samp_factor),
-            static_cast<std::size_t>(cs.max_v_samp_factor));
+      } else {
         color_buf_[ci] = true_buf_.back().rows();
       }
     }
@@ -707,13 +687,7 @@ class CoefControllerC final : public CCoefController<T> {
   CoefControllerC(CState& cs, ForwardDct<T>* fdct, EntropyEncoder** entropy, bool need_full_buffer)
       : cs_(cs), fdct_(fdct), entropy_(entropy) {
     if (need_full_buffer) {
-      whole_image_.resize(cs.num_components);
-      for (int ci = 0; ci < cs.num_components; ci++) {
-        const ComponentInfo& c = cs.comp_info[ci];
-        whole_image_[ci].allocate(
-            static_cast<std::size_t>(round_up(c.width_in_blocks, c.h_samp_factor)),
-            static_cast<std::size_t>(round_up(c.height_in_blocks, c.v_samp_factor)));
-      }
+      allocate_component_buffers(whole_image_, cs);
     } else {
       mcu_blocks_ = aligned_alloc_zeroed<Block>(kRunBlocks);
       for (int i = 0; i < kRunBlocks; i++) MCU_buffer_[i] = &mcu_blocks_[i];
@@ -723,11 +697,8 @@ class CoefControllerC final : public CCoefController<T> {
   void start_pass(Mode mode) override {
     iMCU_row_num_ = 0;
     start_iMCU_row();
-    if (mode == Mode::PassThru) {
-      if (!whole_image_.empty()) VIO_FAIL("Bogus buffer control mode");
-    } else if (whole_image_.empty()) {
+    if (whole_image_.empty() != (mode == Mode::PassThru))
       VIO_FAIL("Bogus buffer control mode");
-    }
     mode_ = mode;
   }
 
@@ -741,14 +712,7 @@ class CoefControllerC final : public CCoefController<T> {
 
  private:
   void start_iMCU_row() {
-    if (cs_.comps_in_scan > 1) {
-      MCU_rows_per_iMCU_row_ = 1;
-    } else {
-      if (iMCU_row_num_ < cs_.total_iMCU_rows - 1)
-        MCU_rows_per_iMCU_row_ = cs_.cur_comp_info[0]->v_samp_factor;
-      else
-        MCU_rows_per_iMCU_row_ = cs_.cur_comp_info[0]->last_row_height;
-    }
+    MCU_rows_per_iMCU_row_ = imcu_rows_in_scan(cs_, iMCU_row_num_);
     mcu_ctr_ = 0;
     MCU_vert_offset_ = 0;
   }
@@ -815,13 +779,7 @@ class CoefControllerC final : public CCoefController<T> {
       ComponentInfo& c = cs_.comp_info[ci];
       BlockArray& whole = whole_image_[ci];
       std::size_t base = static_cast<std::size_t>(iMCU_row_num_) * c.v_samp_factor;
-      int block_rows;
-      if (iMCU_row_num_ < last_iMCU_row) {
-        block_rows = c.v_samp_factor;
-      } else {
-        block_rows = static_cast<int>(c.height_in_blocks % c.v_samp_factor);
-        if (block_rows == 0) block_rows = c.v_samp_factor;
-      }
+      int block_rows = component_rows_in_imcu(c, iMCU_row_num_ < last_iMCU_row);
       unsigned blocks_across = c.width_in_blocks;
       int h_samp_factor = c.h_samp_factor;
       int ndummy = static_cast<int>(blocks_across % h_samp_factor);
@@ -976,14 +934,7 @@ class TranscodeCoefController {
 
  private:
   void start_iMCU_row() {
-    if (cs_.comps_in_scan > 1) {
-      MCU_rows_per_iMCU_row_ = 1;
-    } else {
-      if (iMCU_row_num_ < cs_.total_iMCU_rows - 1)
-        MCU_rows_per_iMCU_row_ = cs_.cur_comp_info[0]->v_samp_factor;
-      else
-        MCU_rows_per_iMCU_row_ = cs_.cur_comp_info[0]->last_row_height;
-    }
+    MCU_rows_per_iMCU_row_ = imcu_rows_in_scan(cs_, iMCU_row_num_);
     mcu_ctr_ = 0;
     MCU_vert_offset_ = 0;
   }
@@ -1121,13 +1072,7 @@ class DiffControllerC final : public CCoefController<T> {
       diff_rows_[ci] = diff_buf_[ci].rows();
     }
     if (need_full_buffer) {
-      whole_image_.resize(cs.num_components);
-      for (int ci = 0; ci < cs.num_components; ci++) {
-        const ComponentInfo& c = cs.comp_info[ci];
-        whole_image_[ci].allocate(
-            static_cast<std::size_t>(round_up(c.width_in_blocks, c.h_samp_factor)),
-            static_cast<std::size_t>(round_up(c.height_in_blocks, c.v_samp_factor)));
-      }
+      allocate_component_buffers(whole_image_, cs);
     }
   }
 
@@ -1135,11 +1080,8 @@ class DiffControllerC final : public CCoefController<T> {
     if (mode == Mode::CrankDest) lc_->start_pass();
     iMCU_row_num_ = 0;
     start_iMCU_row();
-    if (mode == Mode::PassThru) {
-      if (!whole_image_.empty()) VIO_FAIL("Bogus buffer control mode");
-    } else if (whole_image_.empty()) {
+    if (whole_image_.empty() != (mode == Mode::PassThru))
       VIO_FAIL("Bogus buffer control mode");
-    }
     mode_ = mode;
   }
 
@@ -1151,13 +1093,7 @@ class DiffControllerC final : public CCoefController<T> {
       for (int ci = 0; ci < cs_.num_components; ci++) {
         const ComponentInfo& c = cs_.comp_info[ci];
         T** rows = whole_image_[ci].rows() + iMCU_row_num_ * c.v_samp_factor;
-        int samp_rows;
-        if (iMCU_row_num_ < last_iMCU_row) {
-          samp_rows = c.v_samp_factor;
-        } else {
-          samp_rows = static_cast<int>(c.height_in_blocks % c.v_samp_factor);
-          if (samp_rows == 0) samp_rows = c.v_samp_factor;
-        }
+        int samp_rows = component_rows_in_imcu(c, iMCU_row_num_ < last_iMCU_row);
         for (int r = 0; r < samp_rows; r++)
           std::memcpy(rows[r], input_buf[ci][r], c.width_in_blocks * sizeof(T));
       }
@@ -1172,14 +1108,7 @@ class DiffControllerC final : public CCoefController<T> {
 
  private:
   void start_iMCU_row() {
-    if (cs_.comps_in_scan > 1) {
-      MCU_rows_per_iMCU_row_ = 1;
-    } else {
-      if (iMCU_row_num_ < cs_.total_iMCU_rows - 1)
-        MCU_rows_per_iMCU_row_ = cs_.cur_comp_info[0]->v_samp_factor;
-      else
-        MCU_rows_per_iMCU_row_ = cs_.cur_comp_info[0]->last_row_height;
-    }
+    MCU_rows_per_iMCU_row_ = imcu_rows_in_scan(cs_, iMCU_row_num_);
     mcu_ctr_ = 0;
     MCU_vert_offset_ = 0;
   }
@@ -1192,19 +1121,10 @@ class DiffControllerC final : public CCoefController<T> {
         for (int ci = 0; ci < cs_.comps_in_scan; ci++) {
           ComponentInfo* c = cs_.cur_comp_info[ci];
           int compi = c->component_index;
-          int samp_rows;
-          if (iMCU_row_num_ < last_iMCU_row) {
-            samp_rows = c->v_samp_factor;
-          } else {
-            samp_rows = static_cast<int>(c->height_in_blocks % c->v_samp_factor);
-            if (samp_rows == 0) {
-              samp_rows = c->v_samp_factor;
-            } else {
-              for (int samp_row = samp_rows; samp_row < c->v_samp_factor; samp_row++)
-                std::memset(diff_buf_[compi][samp_row], 0,
-                            round_up(c->width_in_blocks, c->h_samp_factor) * sizeof(int));
-            }
-          }
+          int samp_rows = component_rows_in_imcu(*c, iMCU_row_num_ < last_iMCU_row);
+          for (int samp_row = samp_rows; samp_row < c->v_samp_factor; samp_row++)
+            std::memset(diff_buf_[compi][samp_row], 0,
+                        round_up(c->width_in_blocks, c->h_samp_factor) * sizeof(int));
           unsigned samps_across = c->width_in_blocks;
           for (int samp_row = 0; samp_row < samp_rows; samp_row++) {
             lc_->scale(input_buf[compi][samp_row], cur_row_[compi], samps_across);

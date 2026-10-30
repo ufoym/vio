@@ -48,8 +48,9 @@ for k, name in enumerate(names):
     groups.setdefault(find(k), []).append(name)
 load = [0] * n
 members = [[] for _ in range(n)]
-for g in sorted(groups.values(), key=lambda g: (-sum(map(cost, g)), g[0])):
+weighted = ((sum(map(cost, g)), g) for g in groups.values())
+for weight, g in sorted(weighted, key=lambda item: (-item[0], item[1][0])):
     s = load.index(min(load))
-    load[s] += sum(map(cost, g))
+    load[s] += weight
     members[s] += g
 print("\n".join(sorted(members[i - 1], key=index.get)))

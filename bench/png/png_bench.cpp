@@ -62,8 +62,7 @@ Rgb8 to_rgb8(std::span<const std::uint8_t> file) {
   // tRNS, if any
   std::vector<std::uint8_t> trns;
   for (std::size_t p = 8; p + 12 <= file.size();) {
-    std::uint32_t len = std::uint32_t(file[p]) << 24 | std::uint32_t(file[p + 1]) << 16 |
-                        std::uint32_t(file[p + 2]) << 8 | file[p + 3];
+    std::uint32_t len = vio::png::detail::read_u32(file.data() + p);
     if (std::memcmp(&file[p + 4], "tRNS", 4) == 0 && p + 12 + len <= file.size())
       trns.assign(&file[p + 8], &file[p + 8] + len);
     if (std::memcmp(&file[p + 4], "IDAT", 4) == 0) break;

@@ -34,7 +34,7 @@ fn encode(pixels: &[u8], w: u32, h: u32, alpha: bool) -> Vec<u8> {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let mode = args.get(1).map(String::as_str).unwrap_or("decode").to_string();
+    let mode = args.get(1).map(String::as_str).unwrap_or("decode");
     let reps: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);
     for line in std::io::stdin().lock().lines() {
         let path = line.unwrap();

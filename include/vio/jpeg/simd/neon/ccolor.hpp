@@ -164,38 +164,6 @@ void rgb_gray_convert(unsigned image_width, std::uint8_t** input_buf, std::uint8
 }
 
 // Kernels for an RGB-family input layout (nullptr if not RGB-family).
-inline ColorConvertFn rgb_ycc_kernel(ColorSpace in) {
-  switch (in) {
-    case ColorSpace::RGB:
-    case ColorSpace::ExtRGB: return rgb_ycc_convert<0, 1, 2, 3>;
-    case ColorSpace::ExtRGBX:
-    case ColorSpace::ExtRGBA: return rgb_ycc_convert<0, 1, 2, 4>;
-    case ColorSpace::ExtBGR: return rgb_ycc_convert<2, 1, 0, 3>;
-    case ColorSpace::ExtBGRX:
-    case ColorSpace::ExtBGRA: return rgb_ycc_convert<2, 1, 0, 4>;
-    case ColorSpace::ExtXBGR:
-    case ColorSpace::ExtABGR: return rgb_ycc_convert<3, 2, 1, 4>;
-    case ColorSpace::ExtXRGB:
-    case ColorSpace::ExtARGB: return rgb_ycc_convert<1, 2, 3, 4>;
-    default: return nullptr;
-  }
-}
-
-inline ColorConvertFn rgb_gray_kernel(ColorSpace in) {
-  switch (in) {
-    case ColorSpace::RGB:
-    case ColorSpace::ExtRGB: return rgb_gray_convert<0, 1, 2, 3>;
-    case ColorSpace::ExtRGBX:
-    case ColorSpace::ExtRGBA: return rgb_gray_convert<0, 1, 2, 4>;
-    case ColorSpace::ExtBGR: return rgb_gray_convert<2, 1, 0, 3>;
-    case ColorSpace::ExtBGRX:
-    case ColorSpace::ExtBGRA: return rgb_gray_convert<2, 1, 0, 4>;
-    case ColorSpace::ExtXBGR:
-    case ColorSpace::ExtABGR: return rgb_gray_convert<3, 2, 1, 4>;
-    case ColorSpace::ExtXRGB:
-    case ColorSpace::ExtARGB: return rgb_gray_convert<1, 2, 3, 4>;
-    default: return nullptr;
-  }
-}
+#include "../generic/ccolor_select.inc"
 
 }  // namespace vio::jpeg::simd::neon

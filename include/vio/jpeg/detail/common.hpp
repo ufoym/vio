@@ -40,6 +40,58 @@ inline constexpr int kCenterSample = 1 << (kBits<T> - 1);
 
 using JLong = long long;  // 64-bit intermediate arithmetic
 
+inline constexpr char icc_signature[] = "ICC_PROFILE";
+
+inline void reset_arith_tables(std::uint8_t* dc_l, std::uint8_t* dc_u, std::uint8_t* ac_k) {
+  for (int i = 0; i < NUM_ARITH_TBLS; i++) {
+    dc_l[i] = 0;
+    dc_u[i] = 1;
+    ac_k[i] = 5;
+  }
+}
+
+template <class F>
+auto select_rgb_layout(ColorSpace out, F&& select) {
+  switch (out) {
+    case ColorSpace::ExtRGBX:
+    case ColorSpace::ExtRGBA: return select.template operator()<0, 1, 2, 3, 4>();
+    case ColorSpace::ExtBGR: return select.template operator()<2, 1, 0, -1, 3>();
+    case ColorSpace::ExtBGRX:
+    case ColorSpace::ExtBGRA: return select.template operator()<2, 1, 0, 3, 4>();
+    case ColorSpace::ExtXBGR:
+    case ColorSpace::ExtABGR: return select.template operator()<3, 2, 1, 0, 4>();
+    case ColorSpace::ExtXRGB:
+    case ColorSpace::ExtARGB: return select.template operator()<1, 2, 3, 0, 4>();
+    default: return select.template operator()<0, 1, 2, -1, 3>();
+  }
+}
+
+// Generate canonical Huffman code lengths and codes for encoding or decoding.
+VIO_INLINE int make_huffman_codes(const HuffTable& htbl, char* huffsize, unsigned* huffcode) {
+  int p = 0;
+  for (int l = 1; l <= 16; l++) {
+    int i = htbl.bits[l];
+    if (p + i > 256) VIO_FAIL("Bogus Huffman table definition");
+    while (i--) huffsize[p++] = static_cast<char>(l);
+  }
+  huffsize[p] = 0;
+  int count = p;
+  unsigned code = 0;
+  int si = huffsize[0];
+  p = 0;
+  while (huffsize[p]) {
+    while (huffsize[p] == si) {
+      huffcode[p++] = code;
+      code++;
+    }
+    if (static_cast<JLong>(code) >= (static_cast<JLong>(1) << si))
+      VIO_FAIL("Bogus Huffman table definition");
+    code <<= 1;
+    si++;
+  }
+  return count;
+}
+
 // Population count.  The x86-64 baseline has no POPCNT instruction, and
 // GCC then calls a library routine: the bit-parallel count is inline.
 VIO_INLINE int popcount64(std::uint64_t x) {

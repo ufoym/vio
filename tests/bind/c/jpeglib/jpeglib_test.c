@@ -75,13 +75,22 @@ static void quiet_output(j_common_ptr cinfo)
   (void)cinfo;
 }
 
-static void init_err(struct jpeg_error_mgr *pub, struct error_mgr *err)
+static struct jpeg_error_mgr *init_err(struct error_mgr *err)
 {
-  (void)pub;
   jpeg_std_error(&err->pub);
   err->pub.error_exit = error_exit;
   err->pub.output_message = quiet_output;
   err->msg[0] = 0;
+  return &err->pub;
+}
+
+static void read_rows(j_decompress_ptr d, unsigned char *data)
+{
+  while (d->output_scanline < d->output_height) {
+    JSAMPROW row = data + (size_t)d->output_scanline * d->output_width *
+                   d->output_components;
+    jpeg_read_scanlines(d, &row, 1);
+  }
 }
 
 /* Decodes a whole image with an in-memory source: samples, row by row. */
@@ -92,8 +101,7 @@ static buffer decode_plain(const buffer *jpeg, J_COLOR_SPACE cs,
   struct error_mgr err;
   buffer out = { NULL, 0 };
 
-  d.err = jpeg_std_error(&err.pub);
-  init_err(&err.pub, &err);
+  d.err = init_err(&err);
   if (setjmp(err.jmp)) {
     fprintf(stderr, "decode_plain: %s\n", err.msg);
     jpeg_destroy_decompress(&d);
@@ -110,11 +118,7 @@ static buffer decode_plain(const buffer *jpeg, J_COLOR_SPACE cs,
   *ncomp = d.output_components;
   out.size = (size_t)d.output_width * d.output_height * d.output_components;
   out.data = (unsigned char *)malloc(out.size);
-  while (d.output_scanline < d.output_height) {
-    JSAMPROW row = out.data + (size_t)d.output_scanline * d.output_width *
-                   d.output_components;
-    jpeg_read_scanlines(&d, &row, 1);
-  }
+  read_rows(&d, out.data);
   jpeg_finish_decompress(&d);
   jpeg_destroy_decompress(&d);
   return out;
@@ -129,8 +133,7 @@ static buffer encode_plain(const unsigned char *pixels, JDIMENSION w,
   buffer out = { NULL, 0 };
   unsigned long size = 0;
 
-  c.err = jpeg_std_error(&err.pub);
-  init_err(&err.pub, &err);
+  c.err = init_err(&err);
   if (setjmp(err.jmp)) {
     fprintf(stderr, "encode_plain: %s\n", err.msg);
     jpeg_destroy_compress(&c);
@@ -222,8 +225,7 @@ static void test_suspension(const buffer *jpeg, const char *name)
   int ncomp, suspensions = 0;
 
   ref = decode_plain(jpeg, JCS_RGB, &w, &h, &ncomp);
-  d.err = jpeg_std_error(&err.pub);
-  init_err(&err.pub, &err);
+  d.err = init_err(&err);
   if (setjmp(err.jmp)) {
     CHECK(0, "%s: suspension: %s", name, err.msg);
     jpeg_destroy_decompress(&d);
@@ -274,8 +276,7 @@ static void test_buffered_image(const buffer *jpeg, const char *name)
   int ncomp, passes = 0;
 
   ref = decode_plain(jpeg, JCS_RGB, &w, &h, &ncomp);
-  d.err = jpeg_std_error(&err.pub);
-  init_err(&err.pub, &err);
+  d.err = init_err(&err);
   if (setjmp(err.jmp)) {
     CHECK(0, "%s: buffered image: %s", name, err.msg);
     jpeg_destroy_decompress(&d);
@@ -299,11 +300,7 @@ static void test_buffered_image(const buffer *jpeg, const char *name)
     } while (status != JPEG_SUSPENDED && status != JPEG_REACHED_EOI &&
              status != JPEG_REACHED_SOS);
     jpeg_start_output(&d, d.input_scan_number);
-    while (d.output_scanline < d.output_height) {
-      JSAMPROW row = out.data + (size_t)d.output_scanline * d.output_width *
-                     d.output_components;
-      jpeg_read_scanlines(&d, &row, 1);
-    }
+    read_rows(&d, out.data);
     jpeg_finish_output(&d);
     passes++;
     if (jpeg_input_complete(&d) && d.output_scan_number == d.input_scan_number)
@@ -358,8 +355,7 @@ static void test_markers(const unsigned char *pixels, JDIMENSION w,
   JDIMENSION ow, oh;
   int ncomp;
 
-  c.err = jpeg_std_error(&err.pub);
-  init_err(&err.pub, &err);
+  c.err = init_err(&err);
   if (setjmp(err.jmp)) {
     CHECK(0, "markers: %s", err.msg);
     return;
@@ -388,8 +384,7 @@ static void test_markers(const unsigned char *pixels, JDIMENSION w,
   jpeg.size = size;
 
   /* Saved markers */
-  d.err = jpeg_std_error(&err.pub);
-  init_err(&err.pub, &err);
+  d.err = init_err(&err);
   if (setjmp(err.jmp)) {
     CHECK(0, "markers: %s", err.msg);
     jpeg_destroy_decompress(&d);
@@ -423,11 +418,7 @@ static void test_markers(const unsigned char *pixels, JDIMENSION w,
   jpeg_start_decompress(&d);
   out.size = (size_t)d.output_width * d.output_height * d.output_components;
   out.data = (unsigned char *)malloc(out.size);
-  while (d.output_scanline < d.output_height) {
-    JSAMPROW row = out.data + (size_t)d.output_scanline * d.output_width *
-                   d.output_components;
-    jpeg_read_scanlines(&d, &row, 1);
-  }
+  read_rows(&d, out.data);
   jpeg_finish_decompress(&d);
   jpeg_destroy_decompress(&d);
   ref = decode_plain(&jpeg, JCS_RGB, &ow, &oh, &ncomp);
@@ -450,8 +441,7 @@ static void test_abbreviated(const unsigned char *pixels, JDIMENSION w,
   JDIMENSION ow, oh;
   int ncomp;
 
-  c.err = jpeg_std_error(&err.pub);
-  init_err(&err.pub, &err);
+  c.err = init_err(&err);
   if (setjmp(err.jmp)) {
     CHECK(0, "abbreviated: %s", err.msg);
     return;
@@ -479,8 +469,7 @@ static void test_abbreviated(const unsigned char *pixels, JDIMENSION w,
   full = encode_plain(pixels, w, h, 85, FALSE);
   CHECK(image.size < full.size, "abbreviated image is not smaller");
 
-  d.err = jpeg_std_error(&err.pub);
-  init_err(&err.pub, &err);
+  d.err = init_err(&err);
   if (setjmp(err.jmp)) {
     CHECK(0, "abbreviated: %s", err.msg);
     jpeg_destroy_decompress(&d);
@@ -496,11 +485,7 @@ static void test_abbreviated(const unsigned char *pixels, JDIMENSION w,
   jpeg_start_decompress(&d);
   out.size = (size_t)d.output_width * d.output_height * d.output_components;
   out.data = (unsigned char *)malloc(out.size);
-  while (d.output_scanline < d.output_height) {
-    JSAMPROW row = out.data + (size_t)d.output_scanline * d.output_width *
-                   d.output_components;
-    jpeg_read_scanlines(&d, &row, 1);
-  }
+  read_rows(&d, out.data);
   jpeg_finish_decompress(&d);
   jpeg_destroy_decompress(&d);
   ref = decode_plain(&full, JCS_RGB, &ow, &oh, &ncomp);
@@ -525,8 +510,7 @@ static void test_recovery(const buffer *jpeg)
   volatile int stage = 0;
 
   ref = decode_plain(jpeg, JCS_RGB, &w, &h, &ncomp);
-  d.err = jpeg_std_error(&err.pub);
-  init_err(&err.pub, &err);
+  d.err = init_err(&err);
   jpeg_create_decompress(&d);
   if (setjmp(err.jmp)) {
     failed = 1;
@@ -560,11 +544,7 @@ static void test_recovery(const buffer *jpeg)
     d.out_color_space = JCS_RGB;
     jpeg_start_decompress(&d);
     memset(out.data, 0, out.size);
-    while (d.output_scanline < d.output_height) {
-      JSAMPROW row = out.data + (size_t)d.output_scanline * d.output_width *
-                     d.output_components;
-      jpeg_read_scanlines(&d, &row, 1);
-    }
+    read_rows(&d, out.data);
     jpeg_finish_decompress(&d);
     CHECK(same(&ref, &out), "concatenated image %d differs", images + 1);
     images++;
@@ -594,8 +574,7 @@ static void test_raw(const buffer *jpeg)
   unsigned long rawsize = 0;
   tjhandle handle;
 
-  d.err = jpeg_std_error(&err.pub);
-  init_err(&err.pub, &err);
+  d.err = init_err(&err);
   if (setjmp(err.jmp)) {
     CHECK(0, "raw data: %s", err.msg);
     return;
@@ -665,8 +644,7 @@ static void test_raw(const buffer *jpeg)
       for (x = (JDIMENSION)pwidth; x < pw[ci]; x++) row[x] = row[pwidth - 1];
     }
   }
-  c.err = jpeg_std_error(&err.pub);
-  init_err(&err.pub, &err);
+  c.err = init_err(&err);
   if (setjmp(err.jmp)) {
     CHECK(0, "raw encoding: %s", err.msg);
     jpeg_destroy_compress(&c);
@@ -792,8 +770,7 @@ static void test_suspending_dest(void)
   }
   ref = encode_plain(pixels, w, h, 90, FALSE);
   memset(&dest, 0, sizeof(dest));
-  c.err = jpeg_std_error(&err.pub);
-  init_err(&err.pub, &err);
+  c.err = init_err(&err);
   if (setjmp(err.jmp)) {
     CHECK(0, "suspending destination: %s", err.msg);
     jpeg_destroy_compress(&c);
@@ -854,8 +831,7 @@ static void test_progress(const buffer *jpeg)
   struct error_mgr err;
   JSAMPROW row;
 
-  d.err = jpeg_std_error(&err.pub);
-  init_err(&err.pub, &err);
+  d.err = init_err(&err);
   if (setjmp(err.jmp)) {
     CHECK(0, "progress: %s", err.msg);
     return;

@@ -5,7 +5,6 @@
 #include <climits>
 #include <utility>
 #if defined(_MSC_VER) && !defined(__clang__)
-#include <bit>
 #include <intrin.h>
 #endif
 
@@ -73,30 +72,11 @@ inline void make_c_derived_tbl(CState& cs, bool isDC, int tblno, CDerivedTable& 
   const HuffTable& htbl = *slot;
   char huffsize[257];
   unsigned huffcode[257];
-  int p = 0;
-  for (int l = 1; l <= 16; l++) {
-    int i = htbl.bits[l];
-    if (p + i > 256) VIO_FAIL("Bogus Huffman table definition");
-    while (i--) huffsize[p++] = static_cast<char>(l);
-  }
-  huffsize[p] = 0;
-  int lastp = p;
-  unsigned code = 0;
-  int si = huffsize[0];
-  p = 0;
-  while (huffsize[p]) {
-    while (huffsize[p] == si) {
-      huffcode[p++] = code;
-      code++;
-    }
-    if (static_cast<JLong>(code) >= (JLong(1) << si)) VIO_FAIL("Bogus Huffman table definition");
-    code <<= 1;
-    si++;
-  }
+  int lastp = make_huffman_codes(htbl, huffsize, huffcode);
   std::memset(dtbl.ehufco, 0, sizeof(dtbl.ehufco));
   std::memset(dtbl.ehufsi, 0, sizeof(dtbl.ehufsi));
   int maxsymbol = isDC ? (cs.lossless ? 16 : 15) : 255;
-  for (p = 0; p < lastp; p++) {
+  for (int p = 0; p < lastp; p++) {
     int i = htbl.huffval[p];
     if (i < 0 || i > maxsymbol || dtbl.ehufsi[i]) VIO_FAIL("Bogus Huffman table definition");
     dtbl.ehufco[i] = huffcode[p];
@@ -186,6 +166,13 @@ inline void gen_optimal_table(HuffTable& htbl, long freq[]) {
     bit_pos[codesize[i]]++;
   }
   htbl.sent_table = false;
+}
+
+inline void gen_optimal_once(std::optional<HuffTable>& table, long counts[], bool& done) {
+  if (done) return;
+  if (!table) table.emplace();
+  gen_optimal_table(*table, counts);
+  done = true;
 }
 
 // ===========================================================================
@@ -467,18 +454,8 @@ class HuffEncoder final : public EntropyEncoder {
     for (int ci = 0; ci < cs_.comps_in_scan; ci++) {
       ComponentInfo* c = cs_.cur_comp_info[ci];
       int dctbl = c->dc_tbl_no, actbl = c->ac_tbl_no;
-      if (!did_dc[dctbl]) {
-        auto& h = cs_.dc_huff_tbl_ptrs[dctbl];
-        if (!h) h.emplace();
-        gen_optimal_table(*h, dc_count_[dctbl]);
-        did_dc[dctbl] = true;
-      }
-      if (!did_ac[actbl]) {
-        auto& h = cs_.ac_huff_tbl_ptrs[actbl];
-        if (!h) h.emplace();
-        gen_optimal_table(*h, ac_count_[actbl]);
-        did_ac[actbl] = true;
-      }
+      gen_optimal_once(cs_.dc_huff_tbl_ptrs[dctbl], dc_count_[dctbl], did_dc[dctbl]);
+      gen_optimal_once(cs_.ac_huff_tbl_ptrs[actbl], ac_count_[actbl], did_ac[actbl]);
     }
   }
 
@@ -660,12 +637,8 @@ class PhuffEncoder final : public EntropyEncoder {
         } else {
           tbl = c->ac_tbl_no;
         }
-        if (!did[tbl]) {
-          auto& h = is_DC_band ? cs_.dc_huff_tbl_ptrs[tbl] : cs_.ac_huff_tbl_ptrs[tbl];
-          if (!h) h.emplace();
-          gen_optimal_table(*h, count_[tbl]);
-          did[tbl] = true;
-        }
+        auto& h = is_DC_band ? cs_.dc_huff_tbl_ptrs[tbl] : cs_.ac_huff_tbl_ptrs[tbl];
+        gen_optimal_once(h, count_[tbl], did[tbl]);
       }
     } else {
       bw_.flush(cs_.dest);
@@ -1150,12 +1123,7 @@ class LhuffEncoder final : public EntropyEncoder {
       bool did_dc[NUM_HUFF_TBLS] = {};
       for (int ci = 0; ci < cs_.comps_in_scan; ci++) {
         int dctbl = cs_.cur_comp_info[ci]->dc_tbl_no;
-        if (!did_dc[dctbl]) {
-          auto& h = cs_.dc_huff_tbl_ptrs[dctbl];
-          if (!h) h.emplace();
-          gen_optimal_table(*h, count_[dctbl]);
-          did_dc[dctbl] = true;
-        }
+        gen_optimal_once(cs_.dc_huff_tbl_ptrs[dctbl], count_[dctbl], did_dc[dctbl]);
       }
     } else {
       bw_.flush(cs_.dest);

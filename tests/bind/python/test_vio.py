@@ -6,7 +6,7 @@ import pytest
 
 import vio
 
-IMAGES = pathlib.Path(__file__).resolve().parents[2] / "libjpeg-turbo" / "testimages"
+IMAGES = pathlib.Path(__file__).resolve().parents[2] / "third_party" / "libjpeg-turbo" / "testimages"
 
 
 def sample(channels, dtype):

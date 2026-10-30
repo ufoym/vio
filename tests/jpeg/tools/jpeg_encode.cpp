@@ -13,7 +13,6 @@
 #include "vio/jpeg/encoder.hpp"
 
 using namespace vio;
-using cli::keymatch;
 using namespace cli;
 
 namespace {
@@ -119,10 +118,7 @@ int parse_switches(Options& o, jpeg::detail::CState& cs, int argc, char** argv, 
       }
       if (*ptr) std::sscanf(ptr, "%d", &pt);
     } else if (keymatch(arg, "maxmemory", 3)) {
-      long lval;
-      char ch = 'x';
-      if (++argn >= argc) usage();
-      if (std::sscanf(argv[argn], "%ld%c", &lval, &ch) < 1) usage();
+      if (++argn >= argc || !cli::valid_maxmemory(argv[argn])) usage();
     } else if (keymatch(arg, "optimize", 1) || keymatch(arg, "optimise", 1)) {
       cs.optimize_coding = true;
     } else if (keymatch(arg, "outfile", 4)) {
@@ -152,17 +148,7 @@ int parse_switches(Options& o, jpeg::detail::CState& cs, int argc, char** argv, 
     } else if (keymatch(arg, "report", 3)) {
       o.report = true;
     } else if (keymatch(arg, "restart", 1)) {
-      long lval;
-      char ch = 'x';
-      if (++argn >= argc) usage();
-      if (std::sscanf(argv[argn], "%ld%c", &lval, &ch) < 1) usage();
-      if (lval < 0 || lval > 65535L) usage();
-      if (ch == 'b' || ch == 'B') {
-        cs.restart_interval = static_cast<unsigned>(lval);
-        cs.restart_in_rows = 0;
-      } else {
-        cs.restart_in_rows = static_cast<int>(lval);
-      }
+      if (++argn >= argc || !cli::parse_restart(argv[argn], cs)) usage();
     } else if (keymatch(arg, "sample", 2)) {
       if (++argn >= argc) usage();
       samplearg = argv[argn];
@@ -237,7 +223,6 @@ void compress(Options& o, jpeg::Encoder& enc, const std::vector<std::uint8_t>& i
   auto src = select_file_type<T>(o, input, cs.data_precision);
   src->color = cs.in_color_space;
   src->precision = cs.data_precision;
-  if (auto* bmp = dynamic_cast<vio::bmp::Reader*>(src.get())) bmp->use_inversion_array = true;
   src->diag.on_warning = [&](const std::string& msg) { enc.core().cs.warn(msg); };
   src->start(input);
   cs.in_color_space = src->color;
@@ -280,47 +265,20 @@ int main(int argc, char** argv) {
     usage();
   }
   std::vector<std::uint8_t> input;
-  if (file_index < argc) {
-    if (!cli::read_file(argv[file_index], input)) {
-      std::fprintf(stderr, "%s: can't open %s\n", progname, argv[file_index]);
-      return EXIT_FAILURE;
-    }
-  } else {
-    input = cli::read_stream(stdin);
-  }
+  if (!cli::read_input(file_index < argc ? argv[file_index] : nullptr, input, progname))
+    return EXIT_FAILURE;
   std::FILE* output_file = nullptr;
   if (o.outfilename) {
-    if (o.nooverwrite) {
-      if (std::FILE* f = std::fopen(o.outfilename, "rb")) {
-        std::fclose(f);
-        std::fprintf(stderr, "%s: can't open %s; file exists\n", progname, o.outfilename);
-        return EXIT_FAILURE;
-      }
-    }
-    if ((output_file = std::fopen(o.outfilename, "wb")) == nullptr) {
-      std::fprintf(stderr, "%s: can't open %s\n", progname, o.outfilename);
-      return EXIT_FAILURE;
-    }
+    output_file = cli::open_output(o.outfilename, o.nooverwrite, progname);
+    if (!output_file) return EXIT_FAILURE;
   } else if (!o.memdst) {
     output_file = stdout;
   }
   std::vector<std::uint8_t> icc_profile;
-  if (o.icc_filename) {
-    if (!cli::read_file(o.icc_filename, icc_profile)) {
-      std::fprintf(stderr, "%s: can't open %s\n", progname, o.icc_filename);
-      return EXIT_FAILURE;
-    }
-    if (icc_profile.empty()) {
-      std::fprintf(stderr, "%s: can't determine size of %s\n", progname, o.icc_filename);
-      return EXIT_FAILURE;
-    }
-  }
+  if (o.icc_filename && !cli::read_icc(o.icc_filename, icc_profile, progname))
+    return EXIT_FAILURE;
   bool first_warning = true;
-  enc.diagnostics().on_warning = [&](const std::string& msg) {
-    if (o.strict) throw Error(msg);
-    if (first_warning || o.trace_level >= 3) std::fprintf(stderr, "%s\n", msg.c_str());
-    first_warning = false;
-  };
+  enc.diagnostics().on_warning = [&](const std::string& msg) { cli::warn(msg, o.strict, o.trace_level, first_warning); };
   std::vector<std::uint8_t> out;
   try {
     int p = cs.data_precision;

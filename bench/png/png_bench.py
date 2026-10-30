@@ -38,12 +38,8 @@ import zlib
 
 
 def corpus_files(root, sample):
-    files = []
-    for d, _, names in os.walk(root):
-        for n in names:
-            if n.lower().endswith(".png"):
-                files.append(os.path.join(d, n))
-    files.sort()
+    files = sorted(os.path.join(d, n) for d, _, names in os.walk(root)
+                   for n in names if n.lower().endswith(".png"))
     if sample > 1:
         files = [f for f in files if zlib.crc32(os.path.relpath(f, root).encode()) % sample == 0]
     return files
@@ -113,6 +109,13 @@ def category(file):
     return parts[-2] if len(parts) > 1 else ""
 
 
+def group_files(files, by_category):
+    groups = {"all": sorted(files)}
+    for f in sorted(files) if by_category else []:
+        groups.setdefault(category(f), []).append(f)
+    return groups
+
+
 def summarize(rows, files):
     speeds = [rows[f][0] / rows[f][1] for f in files if rows[f][1] > 0]
     mp = sum(rows[f][0] for f in files)
@@ -138,10 +141,7 @@ def report(args):
     for mode in sorted({m for m, _ in data}):
         impls = sorted(i for m, i in data if m == mode)
         common = set.intersection(*(set(data[(mode, i)]) for i in impls))
-        groups = {"all": sorted(common)}
-        if args.by_category:
-            for f in sorted(common):
-                groups.setdefault(category(f), []).append(f)
+        groups = group_files(common, args.by_category)
         print(f"\n{mode}: {len(common)} files")
         hdr = f"{'set':<22}{'impl':<12}{'mean MP/s':>11}{'geomean':>10}"
         if mode == "encode":
@@ -164,10 +164,7 @@ def report(args):
 def compare(args):
     data = load(args.results)
     vio = data[(args.mode, args.base)]
-    groups = {"all": sorted(vio)}
-    if args.by_category:
-        for f in sorted(vio):
-            groups.setdefault(category(f), []).append(f)
+    groups = group_files(vio, args.by_category)
     for g, files in groups.items():
         cells = []
         for impl in args.vs:

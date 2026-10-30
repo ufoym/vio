@@ -12,10 +12,8 @@
 # vio: the float DCT/IDCT kernels perform explicit fused multiply-adds at the
 # points where Clang contracts libjpeg-turbo's C code, so results always match
 # libjpeg-turbo built by Clang with floating point expression contraction.
-set(CPU_TYPE vio)
 set(DEFAULT_FLOATTEST8 fp-contract)
 set(DEFAULT_FLOATTEST12 fp-contract)
-set(VIO_FP_CONTRACT_MATCHES_CLANG TRUE)
 
 # vio: test images come from the libjpeg-turbo submodule.
 set(TESTIMAGES ${LJT_SOURCE_DIR}/testimages)
@@ -47,35 +45,6 @@ endif()
 #        with a 32-bit version of Visual C++ and /arch:IA32 (which was the
 #        default in Visual C++ 2010 and earlier)
 
-if(CPU_TYPE STREQUAL "x86_64" OR CPU_TYPE STREQUAL "i386")
-  if(WITH_SIMD)
-    set(DEFAULT_FLOATTEST8 sse)
-  elseif(CPU_TYPE STREQUAL "x86_64")
-    set(DEFAULT_FLOATTEST8 no-fp-contract)
-  endif()
-elseif(CPU_TYPE STREQUAL "powerpc" OR CPU_TYPE STREQUAL "arm64")
-  if(VIO_FP_CONTRACT_MATCHES_CLANG)
-    if(CMAKE_C_COMPILER_ID MATCHES "AppleClang")
-      # Xcode 14.3 and later
-      set(MIN_FP_CONTRACT_VERSION 14.0.1)
-    else()
-      set(MIN_FP_CONTRACT_VERSION 14.0.0)
-    endif()
-    if(CMAKE_C_COMPILER_VERSION VERSION_EQUAL ${MIN_FP_CONTRACT_VERSION} OR
-      CMAKE_C_COMPILER_VERSION VERSION_GREATER ${MIN_FP_CONTRACT_VERSION})
-      set(DEFAULT_FLOATTEST8 fp-contract)
-    else()
-      set(DEFAULT_FLOATTEST8 no-fp-contract)
-    endif()
-  elseif(CMAKE_COMPILER_IS_GNUCC)
-    set(DEFAULT_FLOATTEST8 fp-contract)
-  endif()
-# else we can't really set an intelligent default for FLOATTEST8.  The
-# appropriate value could be no-fp-contract, fp-contract, 387, or msvc,
-# depending on the compiler and compiler options.  We leave it to the user to
-# set FLOATTEST8 manually.
-endif()
-
 # This causes FLOATTEST8 to reset to the default value if WITH_SIMD has
 # changed.
 if(DEFINED WITH_SIMD_INT AND NOT WITH_SIMD EQUAL WITH_SIMD_INT)
@@ -97,31 +66,6 @@ if(FLOATTEST8)
     NOT FLOATTEST8 STREQUAL "msvc")
     message(FATAL_ERROR "\"${FLOATTEST8}\" is not a valid value for FLOATTEST8.")
   endif()
-endif()
-
-if(CPU_TYPE STREQUAL "x86_64")
-  set(DEFAULT_FLOATTEST12 no-fp-contract)
-elseif(CPU_TYPE STREQUAL "powerpc" OR CPU_TYPE STREQUAL "arm64")
-  if(VIO_FP_CONTRACT_MATCHES_CLANG)
-    if(CMAKE_C_COMPILER_ID MATCHES "AppleClang")
-      # Xcode 14.3 and later
-      set(MIN_FP_CONTRACT_VERSION 14.0.1)
-    else()
-      set(MIN_FP_CONTRACT_VERSION 14.0.0)
-    endif()
-    if(CMAKE_C_COMPILER_VERSION VERSION_EQUAL ${MIN_FP_CONTRACT_VERSION} OR
-      CMAKE_C_COMPILER_VERSION VERSION_GREATER ${MIN_FP_CONTRACT_VERSION})
-      set(DEFAULT_FLOATTEST12 fp-contract)
-    else()
-      set(DEFAULT_FLOATTEST12 no-fp-contract)
-    endif()
-  elseif(CMAKE_COMPILER_IS_GNUCC)
-    set(DEFAULT_FLOATTEST12 fp-contract)
-  endif()
-# else we can't really set an intelligent default for FLOATTEST12.  The
-# appropriate value could be no-fp-contract, fp-contract, or something else,
-# depending on the compiler and compiler options.  We leave it to the user to
-# set FLOATTEST12 manually.
 endif()
 
 set(FLOATTEST12 ${DEFAULT_FLOATTEST12} CACHE STRING
@@ -386,11 +330,7 @@ foreach(libtype ${TEST_LIBTYPES})
         ${MD5_JPEG_3x2_FLOAT_PROG_SSE})
       set(MD5_PNG_3x2_FLOAT_NO_FP_CONTRACT ${MD5_PNG_3x2_FLOAT_SSE})
       set(MD5_JPEG_3x2_FLOAT_PROG_FP_CONTRACT ${MD5_JPEG_3x2_FLOAT_PROG_SSE})
-      if(VIO_FP_CONTRACT_MATCHES_CLANG)
-        set(MD5_PNG_3x2_FLOAT_FP_CONTRACT ${MD5_PNG_3x2_FLOAT_SSE})
-      else()
-        set(MD5_PNG_3x2_FLOAT_FP_CONTRACT 824f3b074f5166e20313615e5b0a3b9c)
-      endif()
+      set(MD5_PNG_3x2_FLOAT_FP_CONTRACT ${MD5_PNG_3x2_FLOAT_SSE})
       set(MD5_JPEG_3x2_FLOAT_PROG_387 5d203a595f448cf19ce86c9bb2c52dfe)
       set(MD5_PNG_3x2_FLOAT_387 05e50fa2fb929d335a144813cd97cd82)
       set(MD5_JPEG_3x2_FLOAT_PROG_MSVC af7f873ea14136271cc21ddbc4bee46c)
@@ -461,11 +401,7 @@ foreach(libtype ${TEST_LIBTYPES})
       set(MD5_PPM_3x2_FLOAT_NO_FP_CONTRACT f6bfab038438ed8f5522fbd33595dcdc)
       set(MD5_JPEG_3x2_FLOAT_PROG_FP_CONTRACT
         ${MD5_JPEG_3x2_FLOAT_PROG_NO_FP_CONTRACT})
-      if(VIO_FP_CONTRACT_MATCHES_CLANG)
-        set(MD5_PPM_3x2_FLOAT_FP_CONTRACT ${MD5_PPM_3x2_FLOAT_NO_FP_CONTRACT})
-      else()
-        set(MD5_PPM_3x2_FLOAT_FP_CONTRACT 0e917a34193ef976b679a6b069b1be26)
-      endif()
+      set(MD5_PPM_3x2_FLOAT_FP_CONTRACT ${MD5_PPM_3x2_FLOAT_NO_FP_CONTRACT})
       set(MD5_JPEG_3x2_FLOAT_PROG_387 1657664a410e0822c924b54f6f65e6e9)
       set(MD5_PPM_3x2_FLOAT_387 cb0a1f027f3d2917c902b5640214e025)
       set(MD5_JPEG_3x2_FLOAT_PROG_MSVC 7999ce9cd0ee9b6c7043b7351ab7639d)

@@ -20,21 +20,7 @@ class ArithEncoder final : public EntropyEncoder {
     } else {
       mode_ = SEQUENTIAL;
     }
-    for (int ci = 0; ci < cs_.comps_in_scan; ci++) {
-      ComponentInfo* c = cs_.cur_comp_info[ci];
-      if (!cs_.progressive_mode || (cs_.Ss == 0 && cs_.Ah == 0)) {
-        int tbl = c->dc_tbl_no;
-        if (tbl < 0 || tbl >= NUM_ARITH_TBLS) VIO_FAIL("Arithmetic table 0x%02x was not defined", tbl);
-        std::memset(dc_stats_[tbl], 0, DC_STAT_BINS);
-        last_dc_val_[ci] = 0;
-        dc_context_[ci] = 0;
-      }
-      if (!cs_.progressive_mode || cs_.Se) {
-        int tbl = c->ac_tbl_no;
-        if (tbl < 0 || tbl >= NUM_ARITH_TBLS) VIO_FAIL("Arithmetic table 0x%02x was not defined", tbl);
-        std::memset(ac_stats_[tbl], 0, AC_STAT_BINS);
-      }
-    }
+    reset_statistics<true>();
     reset_coder();
     restarts_to_go_ = cs_.restart_interval;
     next_restart_num_ = 0;
@@ -63,29 +49,8 @@ class ArithEncoder final : public EntropyEncoder {
     if ((temp = (a_ - 1 + c_) & 0xFFFF0000L) < c_) c_ = temp + 0x8000L;
     else c_ = temp;
     c_ <<= ct_;
-    if (c_ & 0xF8000000L) {
-      if (buffer_ >= 0) {
-        flush_zeros();
-        emit_byte(buffer_ + 1);
-        if (buffer_ + 1 == 0xFF) emit_byte(0x00);
-      }
-      zc_ += sc_;
-      sc_ = 0;
-    } else {
-      if (buffer_ == 0) {
-        ++zc_;
-      } else if (buffer_ >= 0) {
-        flush_zeros();
-        emit_byte(buffer_);
-      }
-      if (sc_) {
-        flush_zeros();
-        do {
-          emit_byte(0xFF);
-          emit_byte(0x00);
-        } while (--sc_);
-      }
-    }
+    if (c_ & 0xF8000000L) flush_pending<true>();
+    else flush_pending<false>();
     if (c_ & 0x7FFF800L) {
       flush_zeros();
       emit_byte(static_cast<int>((c_ >> 19) & 0xFF));
@@ -109,6 +74,33 @@ class ArithEncoder final : public EntropyEncoder {
       while (--zc_);
   }
 
+  template <bool carry>
+  VIO_INLINE void flush_pending() {
+    if constexpr (carry) {
+      if (buffer_ >= 0) {
+        flush_zeros();
+        emit_byte(buffer_ + 1);
+        if (buffer_ + 1 == 0xFF) emit_byte(0x00);
+      }
+      zc_ += sc_;
+      sc_ = 0;
+    } else {
+      if (buffer_ == 0) {
+        ++zc_;
+      } else if (buffer_ >= 0) {
+        flush_zeros();
+        emit_byte(buffer_);
+      }
+      if (sc_) {
+        flush_zeros();
+        do {
+          emit_byte(0xFF);
+          emit_byte(0x00);
+        } while (--sc_);
+      }
+    }
+  }
+
   void reset_coder() {
     c_ = 0;
     a_ = 0x10000L;
@@ -116,6 +108,27 @@ class ArithEncoder final : public EntropyEncoder {
     zc_ = 0;
     ct_ = 11;
     buffer_ = -1;
+  }
+
+  template <bool validate>
+  VIO_INLINE void reset_statistics() {
+    for (int ci = 0; ci < cs_.comps_in_scan; ci++) {
+      ComponentInfo* c = cs_.cur_comp_info[ci];
+      if (!cs_.progressive_mode || (cs_.Ss == 0 && cs_.Ah == 0)) {
+        int tbl = c->dc_tbl_no;
+        if (validate && (tbl < 0 || tbl >= NUM_ARITH_TBLS))
+          VIO_FAIL("Arithmetic table 0x%02x was not defined", tbl);
+        std::memset(dc_stats_[tbl], 0, DC_STAT_BINS);
+        last_dc_val_[ci] = 0;
+        dc_context_[ci] = 0;
+      }
+      if (!cs_.progressive_mode || cs_.Se) {
+        int tbl = c->ac_tbl_no;
+        if (validate && (tbl < 0 || tbl >= NUM_ARITH_TBLS))
+          VIO_FAIL("Arithmetic table 0x%02x was not defined", tbl);
+        std::memset(ac_stats_[tbl], 0, AC_STAT_BINS);
+      }
+    }
   }
 
   // Coder registers.  The encoding routines work on a local copy, which the
@@ -136,30 +149,12 @@ class ArithEncoder final : public EntropyEncoder {
   VIO_NOINLINE JLong byte_out(JLong c) {
     JLong temp = c >> 19;
     if (temp > 0xFF) {
-      if (buffer_ >= 0) {
-        flush_zeros();
-        emit_byte(buffer_ + 1);
-        if (buffer_ + 1 == 0xFF) emit_byte(0x00);
-      }
-      zc_ += sc_;
-      sc_ = 0;
+      flush_pending<true>();
       buffer_ = static_cast<int>(temp & 0xFF);
     } else if (temp == 0xFF) {
       ++sc_;
     } else {
-      if (buffer_ == 0) {
-        ++zc_;
-      } else if (buffer_ >= 0) {
-        flush_zeros();
-        emit_byte(buffer_);
-      }
-      if (sc_) {
-        flush_zeros();
-        do {
-          emit_byte(0xFF);
-          emit_byte(0x00);
-        } while (--sc_);
-      }
+      flush_pending<false>();
       buffer_ = static_cast<int>(temp & 0xFF);
     }
     return c & 0x7FFFFL;
@@ -213,15 +208,7 @@ class ArithEncoder final : public EntropyEncoder {
     finish_pass();
     emit_byte(0xFF);
     emit_byte(M_RST0 + restart_num);
-    for (int ci = 0; ci < cs_.comps_in_scan; ci++) {
-      ComponentInfo* c = cs_.cur_comp_info[ci];
-      if (!cs_.progressive_mode || (cs_.Ss == 0 && cs_.Ah == 0)) {
-        std::memset(dc_stats_[c->dc_tbl_no], 0, DC_STAT_BINS);
-        last_dc_val_[ci] = 0;
-        dc_context_[ci] = 0;
-      }
-      if (!cs_.progressive_mode || cs_.Se) std::memset(ac_stats_[c->ac_tbl_no], 0, AC_STAT_BINS);
-    }
+    reset_statistics<false>();
     reset_coder();
   }
 
@@ -344,31 +331,21 @@ class ArithEncoder final : public EntropyEncoder {
     int Al = cs_.Al;
     int ke, v;
     for (ke = cs_.Se; ke > 0; ke--) {
-      if ((v = block[natural_order[ke]]) >= 0) {
-        if (v >>= Al) break;
-      } else {
-        v = -v;
-        if (v >>= Al) break;
-      }
+      v = block[natural_order[ke]];
+      if ((v < 0 ? -v : v) >> Al) break;
     }
     int k;
     for (k = cs_.Ss; k <= ke; k++) {
       std::uint8_t* st = ac_stats_[tbl] + 3 * (k - 1);
       encode(q, st, 0);
       for (;;) {
-        if ((v = block[natural_order[k]]) >= 0) {
-          if (v >>= Al) {
-            encode(q, st + 1, 1);
-            encode(q, fixed_bin_, 0);
-            break;
-          }
-        } else {
-          v = -v;
-          if (v >>= Al) {
-            encode(q, st + 1, 1);
-            encode(q, fixed_bin_, 1);
-            break;
-          }
+        v = block[natural_order[k]];
+        const bool negative = v < 0;
+        v = (negative ? -v : v) >> Al;
+        if (v) {
+          encode(q, st + 1, 1);
+          encode(q, fixed_bin_, negative);
+          break;
         }
         encode(q, st + 1, 0);
         st += 3;
@@ -395,47 +372,29 @@ class ArithEncoder final : public EntropyEncoder {
     int Al = cs_.Al, Ah = cs_.Ah;
     int ke, kex, v;
     for (ke = cs_.Se; ke > 0; ke--) {
-      if ((v = block[natural_order[ke]]) >= 0) {
-        if (v >>= Al) break;
-      } else {
-        v = -v;
-        if (v >>= Al) break;
-      }
+      v = block[natural_order[ke]];
+      if ((v < 0 ? -v : v) >> Al) break;
     }
     for (kex = ke; kex > 0; kex--) {
-      if ((v = block[natural_order[kex]]) >= 0) {
-        if (v >>= Ah) break;
-      } else {
-        v = -v;
-        if (v >>= Ah) break;
-      }
+      v = block[natural_order[kex]];
+      if ((v < 0 ? -v : v) >> Ah) break;
     }
     int k;
     for (k = cs_.Ss; k <= ke; k++) {
       std::uint8_t* st = ac_stats_[tbl] + 3 * (k - 1);
       if (k > kex) encode(q, st, 0);
       for (;;) {
-        if ((v = block[natural_order[k]]) >= 0) {
-          if (v >>= Al) {
-            if (v >> 1) {
-              encode(q, st + 2, v & 1);
-            } else {
-              encode(q, st + 1, 1);
-              encode(q, fixed_bin_, 0);
-            }
-            break;
+        v = block[natural_order[k]];
+        const bool negative = v < 0;
+        v = (negative ? -v : v) >> Al;
+        if (v) {
+          if (v >> 1) {
+            encode(q, st + 2, v & 1);
+          } else {
+            encode(q, st + 1, 1);
+            encode(q, fixed_bin_, negative);
           }
-        } else {
-          v = -v;
-          if (v >>= Al) {
-            if (v >> 1) {
-              encode(q, st + 2, v & 1);
-            } else {
-              encode(q, st + 1, 1);
-              encode(q, fixed_bin_, 1);
-            }
-            break;
-          }
+          break;
         }
         encode(q, st + 1, 0);
         st += 3;
