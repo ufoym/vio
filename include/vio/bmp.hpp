@@ -261,10 +261,8 @@ class Writer : public ImageWriter<std::uint8_t> {
       std::memcpy(outptr, inptr, static_cast<std::size_t>(width) * 3);
       outptr += static_cast<std::size_t>(width) * 3;
     } else if (color == ColorSpace::RGB565) {
-      const auto* in2 = reinterpret_cast<const std::uint16_t*>(inptr);
       for (unsigned col = 0; col < width; col++, outptr += 3) {
-        std::uint16_t v;
-        std::memcpy(&v, in2 + col, 2);
+        unsigned v = inptr[2 * col] | (static_cast<unsigned>(inptr[2 * col + 1]) << 8);
         outptr[0] = static_cast<std::uint8_t>((v << 3) & 0xF8);
         outptr[1] = static_cast<std::uint8_t>((v >> 3) & 0xFC);
         outptr[2] = static_cast<std::uint8_t>((v >> 8) & 0xF8);

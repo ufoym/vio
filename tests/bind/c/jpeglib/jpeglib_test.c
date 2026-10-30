@@ -851,6 +851,45 @@ static void test_progress(const buffer *jpeg)
         "progress monitor: %ld calls, %ld bad", progress_calls, progress_bad);
 }
 
+/* RGB565 scanlines have little-endian pixels on every host. */
+static void test_rgb565(const buffer *jpeg, const unsigned char *rgb)
+{
+  struct jpeg_decompress_struct d;
+  struct error_mgr err;
+  JSAMPROW row;
+  size_t offset = 0;
+
+  d.err = init_err(&err);
+  if (setjmp(err.jmp)) {
+    CHECK(0, "RGB565: %s", err.msg);
+    jpeg_destroy_decompress(&d);
+    return;
+  }
+  jpeg_create_decompress(&d);
+  jpeg_mem_src(&d, jpeg->data, (unsigned long)jpeg->size);
+  jpeg_read_header(&d, TRUE);
+  d.out_color_space = JCS_RGB565;
+  d.dither_mode = JDITHER_NONE;
+  jpeg_start_decompress(&d);
+  row = (JSAMPROW)malloc((size_t)d.output_width * 2);
+  while (d.output_scanline < d.output_height) {
+    JDIMENSION x;
+    jpeg_read_scanlines(&d, &row, 1);
+    for (x = 0; x < d.output_width; x++, offset += 3) {
+      unsigned value = ((unsigned)(rgb[offset] & 0xf8) << 8) |
+                       ((unsigned)(rgb[offset + 1] & 0xfc) << 3) |
+                       (rgb[offset + 2] >> 3);
+      if (row[2 * x] != (value & 0xff) || row[2 * x + 1] != (value >> 8)) {
+        CHECK(0, "RGB565 pixel byte order or value differs at byte %zu", offset);
+        goto done;
+      }
+    }
+  }
+done:
+  free(row);
+  jpeg_destroy_decompress(&d);
+}
+
 int main(int argc, char **argv)
 {
   buffer seq, prog;
@@ -877,6 +916,7 @@ int main(int argc, char **argv)
   test_raw(&seq);
   test_suspending_dest();
   test_progress(&prog);
+  test_rgb565(&seq, pixels);
 
   free(pixels);
   free(seq.data);

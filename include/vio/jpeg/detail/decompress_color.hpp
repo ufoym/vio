@@ -366,8 +366,8 @@ class ColorDeconverter {
   void emit565(T* outbase, unsigned num_cols, bool dither, JLong& d0, PixelFn&& pixel) {
     auto* outptr = reinterpret_cast<std::uint8_t*>(outbase);
     auto put = [&](unsigned v) {
-      std::uint16_t s = static_cast<std::uint16_t>(v);
-      std::memcpy(outptr, &s, 2);
+      outptr[0] = static_cast<std::uint8_t>(v);
+      outptr[1] = static_cast<std::uint8_t>(v >> 8);
       outptr += 2;
     };
     unsigned col = 0;

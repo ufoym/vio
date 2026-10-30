@@ -595,8 +595,8 @@ class MergedUpsampler final : public Upsampler<T> {
       }
     };
     auto put = [&](unsigned v) {
-      std::uint16_t s = static_cast<std::uint16_t>(v);
-      std::memcpy(out, &s, 2);
+      out[0] = static_cast<std::uint8_t>(v);
+      out[1] = static_cast<std::uint8_t>(v >> 8);
       out += 2;
     };
     for (unsigned col = st_.output_width >> 1; col > 0; col--) {
